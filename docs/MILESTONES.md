@@ -24,7 +24,7 @@
 
 | 里程碑 | 名称 | 主力 | 状态 | 完成日期 | 交付物 |
 |---|---|---|---|---|---|
-| M0 | 骨架与连通 | 🖥️ 先 → 💻 后 | ⬜ 未开始 | — | 服务器可访问 + WS 握手 |
+| M0 | 骨架与连通 | 🖥️ 先 → 💻 后 | 🟡 进行中 | — | 服务器可访问 + WS 握手 |
 | M1 | 战斗核心 | 🤝 并行 | ⬜ 未开始 | — | 能打死敌人 |
 | M2 | AI 队友 | 🖥️ 主力 | ⬜ 未开始 | — | 4 队友分守三路 |
 | M3 | **完整单局** | 🤝 并行 | ⬜ 未开始 | — | **停下来交 watson 试玩** |
@@ -46,16 +46,16 @@
 > `shared/protocol.ts` 由 Debian 先定义并推送，Mac 直接 import，不要自己写一份。
 
 **🤝 先约定（Debian 起草，推送后 Mac 拉取）**
-- [ ] `shared/protocol.ts` 定义基础消息类型（`join` / `snapshot` / `ping` / `pong`）
+- [x] `shared/protocol.ts` 定义基础消息类型（`join` / `snapshot` / `ping` / `pong`）
 
 **🖥️ Debian**
-- [ ] `server/` Node.js + TypeScript 工程初始化（`tsc --noEmit` 通过）
-- [ ] `shared/config/*.json` 加载器 + 启动校验（复用 `tools/verify-config.js` 的规则，不通过拒绝启动）
+- [x] `server/` Node.js + TypeScript 工程初始化（`tsc --noEmit` 通过）
+- [x] `shared/config/*.json` 加载器 + 启动校验（复用 `tools/verify-config.js` 的规则，不通过拒绝启动）
 - [ ] HTTP 静态服务监听 `0.0.0.0`，托管客户端构建产物
-- [ ] WebSocket 服务监听 `0.0.0.0`（或同端口 `/ws` 升级）
-- [ ] 心跳与延迟计算
-- [ ] PM2 常驻，`pm2 startup` 开机自启
-- [ ] 验证 `tools/check-ws.js` 可连通
+- [x] WebSocket 服务监听 `0.0.0.0`（或同端口 `/ws` 升级）
+- [x] 心跳与延迟计算
+- [x] PM2 常驻，`pm2 startup` 开机自启
+- [x] 验证 `tools/check-ws.js` 可连通
 - [ ] 把实际端口写进 `docs/DEPLOY.md`（Mac 需要知道）
 
 **💻 Mac**
@@ -79,7 +79,13 @@ node tools/check-ws.js ws://127.0.0.1:8081/ws   # 握手成功 + 收到心跳
 ### 完成记录
 
 #### 🖥️ Debian
-> 填写：日期、实际端口、PM2 服务名、遇到的问题
+
+2026-09-04（进行中）：WS 已监听 `0.0.0.0:8081/ws`，PM2 服务名为
+`langyashan-server`，`pm2-root.service` 已启用并由 systemd 实际拉起。
+本机、局域网 `192.168.1.80`、当前 Tailscale `100.74.3.56` 均通过
+`snapshot + pong` 自测。机器当前 Node.js 为 `20.19.2`，且未安装 Nginx；
+安装系统级 Nginx、升级 Node.js 22 需按铁律 10 获得 watson 明确授权。
+文档原定 Tailscale 地址 `100.126.150.80` 当前不属于本机，需确认地址变更。
 
 #### 💻 Mac
 > 填写：日期、Cocos 版本、构建耗时、遇到的问题
