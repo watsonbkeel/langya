@@ -1,0 +1,89 @@
+{
+  "_comment": "波次配置。四波总和必须恰好 200，服务端启动时校验。对应 PRD 2.3 / 5.7",
+  "totalEnemies": 200,
+  "matchDurationSec": 300,
+  "deployPhaseSec": 10,
+  "maxAliveEnemies": 40,
+  "waves": [
+    {
+      "index": 1,
+      "enemyCount": 30,
+      "startSec": 10,
+      "squadSize": 10,
+      "squadIntervalSec": 15,
+      "accuracy": 0.55,
+      "composition": {
+        "rifleman": 0.9,
+        "machineGunner": 0.1,
+        "assault": 0.0
+      },
+      "comment": "试探进攻，教学引导波，容错高"
+    },
+    {
+      "index": 2,
+      "enemyCount": 50,
+      "startSec": 87,
+      "squadSize": 12,
+      "squadIntervalSec": 12,
+      "accuracy": 0.65,
+      "composition": {
+        "rifleman": 0.7,
+        "machineGunner": 0.2,
+        "assault": 0.1
+      },
+      "comment": "加入轻机枪火力组，开始多路并进"
+    },
+    {
+      "index": 3,
+      "enemyCount": 60,
+      "startSec": 164,
+      "squadSize": 15,
+      "squadIntervalSec": 12,
+      "accuracy": 0.72,
+      "composition": {
+        "rifleman": 0.65,
+        "machineGunner": 0.2,
+        "assault": 0.15
+      },
+      "comment": "全线压上，三路同时进攻"
+    },
+    {
+      "index": 4,
+      "enemyCount": 60,
+      "startSec": 244,
+      "squadSize": 15,
+      "squadIntervalSec": 10,
+      "accuracy": 0.8,
+      "composition": {
+        "rifleman": 0.55,
+        "machineGunner": 0.2,
+        "assault": 0.25
+      },
+      "comment": "最后总攻，突击兵比例大幅提升"
+    }
+  ],
+  "intermissionSec": 12,
+  "routes": {
+    "A": {
+      "name": "正面陡坡",
+      "lengthM": 60,
+      "coverDensity": "low",
+      "travelTimeSec": 18,
+      "enemyRatio": 0.5
+    },
+    "B": {
+      "name": "侧翼缓坡",
+      "lengthM": 90,
+      "coverDensity": "medium",
+      "travelTimeSec": 28,
+      "enemyRatio": 0.3
+    },
+    "C": {
+      "name": "背面绕行",
+      "lengthM": 130,
+      "coverDensity": "high",
+      "travelTimeSec": 40,
+      "enemyRatio": 0.2
+    }
+  }
+}
