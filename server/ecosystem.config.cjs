@@ -10,7 +10,13 @@ module.exports = {
       autorestart: true,
       max_memory_restart: '512M',
       time: true,
-      filter_env: true,
+      filter_env: [
+        'OPENAI_',
+        'CODEX_',
+        'SSH_',
+        'GITHUB_',
+        'GH_',
+      ],
       env: {
         NODE_ENV: 'production',
         PROJECT_ROOT: '..',
