@@ -8,6 +8,8 @@ import {
   type FireResultMessage,
   type InputStateMessage,
   type ReloadMessage,
+  type RoomStateMessage,
+  type RouteId,
   type Vector3,
   type WeaponState,
   type WorldSnapshotMessage,
@@ -98,7 +100,7 @@ export interface M2EnemyUnitConfig extends EnemyBehaviorConfig {
 }
 
 export interface M2BattleConfig<
-  TRouteId extends string,
+  TRouteId extends RouteId,
   TEnemyType extends string,
 > {
   readonly player: M2PlayerConfig;
@@ -127,7 +129,7 @@ export interface M2BattleConfig<
 }
 
 export interface M2BattleSessionOptions<
-  TRouteId extends string,
+  TRouteId extends RouteId,
   TEnemyType extends string,
 > {
   readonly roomId: string;
@@ -163,7 +165,7 @@ interface EnemyRuntime<TRouteId extends string, TEnemyType extends string> {
   hp: number;
 }
 
-export type M2BattleEvent<TRouteId extends string> =
+export type M2BattleEvent<TRouteId extends RouteId> =
   | EnemyAiEvent
   | AllyCallout<TRouteId>
   | {
@@ -192,7 +194,7 @@ export interface M2FireResolution {
 }
 
 export class M2BattleSession<
-  TRouteId extends string,
+  TRouteId extends RouteId,
   TEnemyType extends string,
 > {
   readonly room: SoloRoom<TRouteId>;
@@ -641,10 +643,17 @@ export class M2BattleSession<
   }
 
   createSnapshot(tick: number, serverTimeMs: number): WorldSnapshotMessage {
+    const playerSeat = this.getSeatByOccupantId(this.player.id);
     const allies: AllyState[] = [
       {
         id: this.player.id,
         isBot: false,
+        seatIndex: playerSeat.index,
+        heroName: playerSeat.heroName,
+        routeId: findNearestRoute(
+          this.player.position,
+          this.config.routes,
+        ),
         hp: this.player.hp,
         maxHp: this.player.maxHp,
         position: this.player.position,
@@ -653,23 +662,38 @@ export class M2BattleSession<
         isCrouch: this.player.isCrouch,
         weapon: this.getPlayerWeaponState(),
       },
-      ...this.allies.map((ally) => ({
-        id: ally.id,
-        isBot: true,
-        hp: ally.hp,
-        maxHp: ally.maxHp,
-        position: ally.position,
-        aimYaw: 0,
-        aimPitch: 0,
-        isCrouch: ally.isCrouching,
-        weapon: this.getAllyWeaponState(ally),
-      })),
+      ...this.allies.map((ally) => {
+        const seat = this.getSeatByOccupantId(ally.id);
+        return {
+          id: ally.id,
+          isBot: true,
+          seatIndex: seat.index,
+          heroName: ally.heroName,
+          routeId: ally.routeId,
+          aiState: ally.state,
+          hp: ally.hp,
+          maxHp: ally.maxHp,
+          position: ally.position,
+          aimYaw: 0,
+          aimPitch: 0,
+          isCrouch: ally.isCrouching,
+          weapon: this.getAllyWeaponState(ally),
+        };
+      }),
     ];
     const enemies: EnemyState[] = this.enemies
       .filter((enemy) => enemy.hp > 0)
       .map((enemy) => ({
         id: enemy.agent.id,
         enemyType: enemy.enemyType,
+        routeId: enemy.agent.routeId,
+        aiState: enemy.agent.state,
+        ...(enemy.agent.fireWarningEndsAtMs === undefined
+          ? {}
+          : {
+              fireWarningEndsAtMs:
+                enemy.agent.fireWarningEndsAtMs,
+            }),
         hp: enemy.hp,
         maxHp: enemy.maxHp,
         position: enemy.agent.position,
@@ -684,6 +708,52 @@ export class M2BattleSession<
         allies,
         enemies,
         items: [],
+      },
+    };
+  }
+
+  createRoomState(): RoomStateMessage {
+    const seats = this.room.seats
+      .map((seat) => {
+        if (!seat.occupant.isBot) {
+          return {
+            seatIndex: seat.index,
+            heroName: seat.heroName,
+            occupantId: seat.occupant.id,
+            displayName: this.player.name,
+            isBot: false,
+            alive: this.player.hp > 0,
+            routeId: findNearestRoute(
+              this.player.position,
+              this.config.routes,
+            ),
+          };
+        }
+
+        const ally = this.allies.find(
+          (candidate) => candidate.id === seat.occupant.id,
+        );
+        if (!ally) {
+          throw new Error(`席位 ${seat.index} 缺少 AI 队友`);
+        }
+        return {
+          seatIndex: seat.index,
+          heroName: seat.heroName,
+          occupantId: seat.occupant.id,
+          displayName: seat.occupant.displayName,
+          isBot: true,
+          alive: ally.isAlive,
+          routeId: ally.routeId,
+        };
+      })
+      .sort((first, second) => first.seatIndex - second.seatIndex);
+
+    return {
+      type: SERVER_MESSAGE_TYPES.roomState,
+      payload: {
+        roomId: this.room.id,
+        status: this.room.status,
+        seats,
       },
     };
   }
@@ -1018,6 +1088,16 @@ export class M2BattleSession<
       throw new Error(`路线 "${routeId}" 不存在`);
     }
     return route;
+  }
+
+  private getSeatByOccupantId(occupantId: string) {
+    const seat = this.room.seats.find(
+      (candidate) => candidate.occupant.id === occupantId,
+    );
+    if (!seat) {
+      throw new Error(`房间缺少成员 ${occupantId} 的席位`);
+    }
+    return seat;
   }
 
   private createInitialGuardPositions(): ReadonlyMap<number, Vector3> {

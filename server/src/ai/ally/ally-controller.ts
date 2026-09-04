@@ -1,4 +1,7 @@
-import type { Vector3 } from '../../../../shared/protocol';
+import type {
+  AllyAiState,
+  Vector3,
+} from '../../../../shared/protocol';
 import {
   completeReload,
   createWeaponState,
@@ -8,13 +11,6 @@ import {
   type WeaponRuntimeState,
 } from '../../combat/weapon-state';
 import type { RouteLayout } from '../route-layout';
-
-export type AllyAiState =
-  | 'deploy'
-  | 'guard'
-  | 'engage'
-  | 'reassign'
-  | 'dead';
 
 export interface AllyTarget<TRouteId extends string> {
   readonly id: string;

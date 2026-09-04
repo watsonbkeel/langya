@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import gameplayConfig from '../../../shared/config/gameplay.json';
+import alliesConfig from '../../../shared/config/allies.json';
 import weaponsConfig from '../../../shared/config/weapons.json';
 
 import {
@@ -42,10 +43,13 @@ const config: BattleSessionConfig = {
 function createSession(enemyHp = 100): BattleSession {
   return new BattleSession({
     playerId: 'player-1',
+    playerHeroName: alliesConfig.heroNames[alliesConfig.playerDefaultSeat]!,
+    playerRouteId: 'A',
     playerPosition: { x: 0, y: 1, z: 0 },
     enemy: {
       id: 'enemy-1',
       enemyType: 'rifleman',
+      routeId: 'A',
       hp: enemyHp,
       position: { x: 0, y: 0, z: -10 },
     },

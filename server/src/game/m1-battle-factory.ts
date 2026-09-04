@@ -1,4 +1,5 @@
 import type { ProjectConfig } from '../config/project-config';
+import type { RouteId } from '../../../shared/protocol';
 import {
   BattleSession,
   type BattleSessionConfig,
@@ -98,15 +99,20 @@ export function createM1BattleRuntime(
   };
   const playerHeightM =
     (combat.torsoHitboxStartM + combat.headHitboxStartM) / 2;
+  const playerRouteId = findPrimaryRouteId(config);
 
   return {
     tickRateHz: gameplay.server.tickRateHz,
     battle: new BattleSession({
       playerId,
+      playerHeroName:
+        config.allies.heroNames[config.allies.playerDefaultSeat]!,
+      playerRouteId,
       playerPosition: { x: 0, y: playerHeightM, z: 0 },
       enemy: {
         id: `${playerId}:m1-enemy`,
         enemyType,
+        routeId: playerRouteId,
         hp: enemyConfig.hp,
         position: {
           x: 0,
@@ -117,4 +123,20 @@ export function createM1BattleRuntime(
       config: battleConfig,
     }),
   };
+}
+
+function findPrimaryRouteId(config: ProjectConfig): RouteId {
+  const routes = Object.entries(config.waves.routes) as [
+    RouteId,
+    ProjectConfig['waves']['routes'][RouteId],
+  ][];
+  const first = routes[0];
+  if (!first) {
+    throw new Error('至少需要一条进攻路线');
+  }
+  return routes.slice(1).reduce(
+    (selected, route) =>
+      route[1].enemyRatio > selected[1].enemyRatio ? route : selected,
+    first,
+  )[0];
 }

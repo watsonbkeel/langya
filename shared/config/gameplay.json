@@ -23,7 +23,8 @@
 
   "server": {
     "tickRateHz": 20,
-    "comment": "权威服务器固定 20Hz 更新与状态同步"
+    "maxSingleMatchCpuPercent": 20,
+    "comment": "权威服务器固定 20Hz 更新与状态同步；单局 CPU 红线按单核占比计算"
   },
 
   "combat": {
@@ -33,7 +34,8 @@
     "enemyHitboxHeightM": 1.8,
     "headHitboxStartM": 1.4,
     "torsoHitboxStartM": 0.5,
-    "comment": "M1 服务端射击请求校验与彩色占位敌人碰撞体"
+    "defenderCoverExposureMultiplier": 0.15,
+    "comment": "服务端射击校验、彩色占位敌人碰撞体与山顶石垒对防守者的暴露修正"
   },
 
   "medkit": {

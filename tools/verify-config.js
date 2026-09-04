@@ -240,6 +240,12 @@ if (gameplay) {
   if (server.tickRateHz !== 20) {
     err(`server.tickRateHz = ${server.tickRateHz}，PRD 规定为 20Hz`);
   }
+  if (
+    !(server.maxSingleMatchCpuPercent > 0) ||
+    server.maxSingleMatchCpuPercent > 100
+  ) {
+    err('server.maxSingleMatchCpuPercent 必须大于 0 且不超过 100');
+  }
 
   const combat = gameplay.combat || {};
   if (!(combat.fireOriginToleranceM > 0)) {
@@ -256,6 +262,12 @@ if (gameplay) {
   }
   if (!(combat.enemyHitboxHeightM > 0)) {
     err('combat.enemyHitboxHeightM 必须为正数');
+  }
+  if (
+    !(combat.defenderCoverExposureMultiplier > 0) ||
+    combat.defenderCoverExposureMultiplier > 1
+  ) {
+    err('combat.defenderCoverExposureMultiplier 必须大于 0 且不超过 1');
   }
   if (
     !(combat.torsoHitboxStartM >= 0) ||

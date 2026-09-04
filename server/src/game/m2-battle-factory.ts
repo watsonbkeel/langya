@@ -1,4 +1,5 @@
 import type { ProjectConfig } from '../config/project-config';
+import type { RouteId } from '../../../shared/protocol';
 import { createRouteLayouts } from '../ai/route-layout';
 import { SeededRandom } from '../ai/seeded-random';
 import { findPlayerWeaponConfig } from './m1-battle-factory';
@@ -9,7 +10,10 @@ import {
   type M2EnemyWeaponConfig,
 } from './m2-battle-session';
 
-export type M2RouteId = keyof ProjectConfig['waves']['routes'];
+export type M2RouteId = Extract<
+  keyof ProjectConfig['waves']['routes'],
+  RouteId
+>;
 export type M2EnemyType = keyof ProjectConfig['enemies']['units'];
 
 export interface M2BattleRuntime {
@@ -17,16 +21,11 @@ export interface M2BattleRuntime {
   readonly tickRateHz: number;
 }
 
-export interface M2BattleRuntimeOptions {
-  readonly defenderCoverExposureMultiplier?: number;
-}
-
 export function createM2BattleRuntime(
   config: ProjectConfig,
   playerId: string,
   playerName: string,
   seed: number,
-  options: M2BattleRuntimeOptions = {},
 ): M2BattleRuntime {
   const routes = createRouteLayouts(
     config.waves.routes,
@@ -73,7 +72,7 @@ export function createM2BattleRuntime(
     routeNames,
     seatSpacingM: config.gameplay.arena.elements.spawnSpacingM,
     defenderCoverExposureMultiplier:
-      options.defenderCoverExposureMultiplier ?? 1,
+      config.gameplay.combat.defenderCoverExposureMultiplier,
     aiUpdateGroups: config.enemies.performance.aiUpdateGroups,
     enemyShared: config.enemies.sharedRules,
     enemySpawnOffsetX: config.enemies.pathing.randomOffsetX,

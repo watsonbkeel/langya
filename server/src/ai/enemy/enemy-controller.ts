@@ -1,7 +1,8 @@
-import type { Vector3 } from '../../../../shared/protocol';
+import type {
+  EnemyAiState,
+  Vector3,
+} from '../../../../shared/protocol';
 import type { RouteLayout } from '../route-layout';
-
-export type EnemyAiState = 'advance' | 'engage' | 'dead';
 
 export interface EnemyTarget {
   readonly id: string;

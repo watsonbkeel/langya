@@ -8,6 +8,7 @@ import {
   type FireResultMessage,
   type InputStateMessage,
   type ReloadMessage,
+  type RouteId,
   type Vector3,
   type WeaponState,
   type WorldSnapshotMessage,
@@ -66,12 +67,15 @@ export interface BattleSessionConfig {
 export interface BattleEnemySeed {
   readonly id: string;
   readonly enemyType: string;
+  readonly routeId: RouteId;
   readonly hp: number;
   readonly position: Vector3;
 }
 
 export interface BattleSessionOptions {
   readonly playerId: string;
+  readonly playerHeroName: string;
+  readonly playerRouteId: RouteId;
   readonly playerPosition: Vector3;
   readonly enemy: BattleEnemySeed;
   readonly config: BattleSessionConfig;
@@ -79,6 +83,8 @@ export interface BattleSessionOptions {
 
 interface MutablePlayer {
   readonly id: string;
+  readonly heroName: string;
+  readonly routeId: RouteId;
   readonly hp: number;
   position: Vector3;
   aimYaw: number;
@@ -92,6 +98,7 @@ interface MutablePlayer {
 interface MutableEnemy {
   readonly id: string;
   readonly enemyType: string;
+  readonly routeId: RouteId;
   readonly maxHp: number;
   readonly position: Vector3;
   hp: number;
@@ -127,6 +134,8 @@ export class BattleSession {
     this.config = options.config;
     this.player = {
       id: options.playerId,
+      heroName: options.playerHeroName,
+      routeId: options.playerRouteId,
       hp: options.config.player.maxHp,
       position: options.playerPosition,
       aimYaw: 0,
@@ -336,6 +345,9 @@ export class BattleSession {
     const ally: AllyState = {
       id: this.player.id,
       isBot: false,
+      seatIndex: 0,
+      heroName: this.player.heroName,
+      routeId: this.player.routeId,
       hp: this.player.hp,
       maxHp: this.config.player.maxHp,
       position: this.player.position,
@@ -349,6 +361,8 @@ export class BattleSession {
       enemies.push({
         id: enemy.id,
         enemyType: enemy.enemyType,
+        routeId: enemy.routeId,
+        aiState: 'advance',
         hp: enemy.hp,
         maxHp: enemy.maxHp,
         position: enemy.position,

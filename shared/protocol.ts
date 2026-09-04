@@ -11,9 +11,13 @@ export const CLIENT_MESSAGE_TYPES = {
 export const SERVER_MESSAGE_TYPES = {
   snapshot: 'snapshot',
   pong: 'pong',
+  roomState: 'room_state',
   worldSnapshot: 'world_snapshot',
   fireResult: 'fire_result',
   enemyDied: 'enemy_died',
+  allyCallout: 'ally_callout',
+  allyDamaged: 'ally_damaged',
+  allyDied: 'ally_died',
 } as const;
 
 export type ClientMessageType =
@@ -57,6 +61,15 @@ export interface Vector3 {
   readonly z: number;
 }
 
+export type RouteId = 'A' | 'B' | 'C';
+export type AllyAiState =
+  | 'deploy'
+  | 'guard'
+  | 'engage'
+  | 'reassign'
+  | 'dead';
+export type EnemyAiState = 'advance' | 'engage' | 'dead';
+export type RoomStatus = 'forming' | 'active' | 'ended';
 export type HitPart = 'head' | 'torso' | 'limb';
 
 export type FireRejectReason =
@@ -131,6 +144,27 @@ export type PongMessage = MessageEnvelope<
   PongPayload
 >;
 
+export interface RoomSeatState {
+  readonly seatIndex: number;
+  readonly heroName: string;
+  readonly occupantId: string;
+  readonly displayName: string;
+  readonly isBot: boolean;
+  readonly alive: boolean;
+  readonly routeId: RouteId;
+}
+
+export interface RoomStatePayload {
+  readonly roomId: string;
+  readonly status: RoomStatus;
+  readonly seats: readonly RoomSeatState[];
+}
+
+export type RoomStateMessage = MessageEnvelope<
+  typeof SERVER_MESSAGE_TYPES.roomState,
+  RoomStatePayload
+>;
+
 export interface WeaponState {
   readonly weaponId: string;
   readonly magazineAmmo: number;
@@ -142,6 +176,10 @@ export interface WeaponState {
 export interface AllyState {
   readonly id: string;
   readonly isBot: boolean;
+  readonly seatIndex: number;
+  readonly heroName: string;
+  readonly routeId: RouteId;
+  readonly aiState?: AllyAiState;
   readonly hp: number;
   readonly maxHp: number;
   readonly position: Vector3;
@@ -154,6 +192,9 @@ export interface AllyState {
 export interface EnemyState {
   readonly id: string;
   readonly enemyType: string;
+  readonly routeId: RouteId;
+  readonly aiState: EnemyAiState;
+  readonly fireWarningEndsAtMs?: number;
   readonly hp: number;
   readonly maxHp: number;
   readonly position: Vector3;
@@ -227,6 +268,39 @@ export type EnemyDiedMessage = MessageEnvelope<
   EnemyDiedPayload
 >;
 
+export interface AllyCalloutPayload {
+  readonly allyId: string;
+  readonly routeId: RouteId;
+  readonly text: string;
+}
+
+export type AllyCalloutMessage = MessageEnvelope<
+  typeof SERVER_MESSAGE_TYPES.allyCallout,
+  AllyCalloutPayload
+>;
+
+export interface AllyDamagedPayload {
+  readonly allyId: string;
+  readonly hp: number;
+  readonly fromDir: Vector3;
+}
+
+export type AllyDamagedMessage = MessageEnvelope<
+  typeof SERVER_MESSAGE_TYPES.allyDamaged,
+  AllyDamagedPayload
+>;
+
+export interface AllyDiedPayload {
+  readonly allyId: string;
+  readonly isBot: boolean;
+  readonly killerType: string;
+}
+
+export type AllyDiedMessage = MessageEnvelope<
+  typeof SERVER_MESSAGE_TYPES.allyDied,
+  AllyDiedPayload
+>;
+
 export type ClientMessage =
   | JoinMessage
   | PingMessage
@@ -237,6 +311,10 @@ export type ClientMessage =
 export type ServerMessage =
   | SnapshotMessage
   | PongMessage
+  | RoomStateMessage
   | WorldSnapshotMessage
   | FireResultMessage
-  | EnemyDiedMessage;
+  | EnemyDiedMessage
+  | AllyCalloutMessage
+  | AllyDamagedMessage
+  | AllyDiedMessage;

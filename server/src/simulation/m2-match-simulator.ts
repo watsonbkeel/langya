@@ -36,10 +36,6 @@ export interface M2MatchSimulationResult {
   readonly ticks: number;
 }
 
-export interface M2MatchSimulationOptions {
-  readonly defenderCoverExposureMultiplier?: number;
-}
-
 export function createEnemySpawnPlan(
   config: ProjectConfig,
   random: RandomSource,
@@ -89,14 +85,12 @@ export function createEnemySpawnPlan(
 export function simulateM2Match(
   config: ProjectConfig,
   seed: number,
-  options: M2MatchSimulationOptions = {},
 ): M2MatchSimulationResult {
   const { battle, tickRateHz } = createM2BattleRuntime(
     config,
     `calibration-player-${seed}`,
     '校准玩家',
     seed,
-    options,
   );
   const spawnPlan = createEnemySpawnPlan(
     config,
