@@ -10,6 +10,7 @@ module.exports = {
       autorestart: true,
       max_memory_restart: '512M',
       time: true,
+      filter_env: true,
       env: {
         NODE_ENV: 'production',
         PROJECT_ROOT: '..',
