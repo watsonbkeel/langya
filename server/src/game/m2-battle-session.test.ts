@@ -308,6 +308,7 @@ describe('M2BattleSession', () => {
     );
 
     assert.equal(battle.usePlayerMedkit(0), false);
+    assert.equal(battle.tryUsePlayerMedkit(0), 'unavailable');
     assert.equal(battle.playerIsUsingMedkit, false);
   });
 });

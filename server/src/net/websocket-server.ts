@@ -6,6 +6,9 @@ import { WebSocket, WebSocketServer } from 'ws';
 import {
   CLIENT_MESSAGE_TYPES,
   SERVER_MESSAGE_TYPES,
+  type ActionRejectReason,
+  type ActionResultMessage,
+  type ActionType,
   type AllyCalloutMessage,
   type AllyDamagedMessage,
   type AllyDiedMessage,
@@ -234,6 +237,31 @@ export class GameWebSocketServer {
             session.battle.reload(message, Date.now());
           }
           return;
+        case CLIENT_MESSAGE_TYPES.useMedkit:
+          if (
+            !session.joined ||
+            session.matchEnded ||
+            !session.battle
+          ) {
+            this.sendActionResult(
+              session,
+              message.payload.clientTick,
+              'use_medkit',
+              'invalid_state',
+            );
+            return;
+          }
+          if (!this.acceptClientTick(session, message.payload.clientTick)) {
+            socket.close(1008, 'clientTick 必须严格递增');
+            return;
+          }
+          this.sendActionResult(
+            session,
+            message.payload.clientTick,
+            'use_medkit',
+            session.battle.tryUsePlayerMedkit(Date.now()),
+          );
+          return;
       }
     });
 
@@ -357,6 +385,34 @@ export class GameWebSocketServer {
         totalEnemies: this.projectConfig.waves.totalEnemies,
       },
     };
+    this.send(session.socket, message);
+  }
+
+  private sendActionResult(
+    session: ClientSession,
+    clientTick: number,
+    action: ActionType,
+    rejectReason?: ActionRejectReason,
+  ): void {
+    const message: ActionResultMessage =
+      rejectReason === undefined
+        ? {
+            type: SERVER_MESSAGE_TYPES.actionResult,
+            payload: {
+              clientTick,
+              action,
+              accepted: true,
+            },
+          }
+        : {
+            type: SERVER_MESSAGE_TYPES.actionResult,
+            payload: {
+              clientTick,
+              action,
+              accepted: false,
+              rejectReason,
+            },
+          };
     this.send(session.socket, message);
   }
 

@@ -1,5 +1,6 @@
 import {
   SERVER_MESSAGE_TYPES,
+  type ActionRejectReason,
   type AllyState,
   type EnemyDiedMessage,
   type EnemyState,
@@ -578,21 +579,32 @@ export class M2BattleSession<
   }
 
   usePlayerMedkit(nowMs: number): boolean {
-    if (
-      this.player.hp === 0 ||
-      this.player.medkitsRemaining === 0 ||
-      this.player.medkitEndsAtMs !== undefined ||
-      this.player.hp >
-        this.player.maxHp - this.config.medkit.carriedHeal
-    ) {
-      return false;
-    }
+    return this.tryUsePlayerMedkit(nowMs) === undefined;
+  }
 
+  tryUsePlayerMedkit(
+    nowMs: number,
+  ): ActionRejectReason | undefined {
+    if (this.player.hp === 0) {
+      return 'dead';
+    }
+    if (this.player.medkitsRemaining === 0) {
+      return 'no_resource';
+    }
+    if (this.player.medkitEndsAtMs !== undefined) {
+      return 'invalid_state';
+    }
+    if (
+      this.player.hp >
+      this.player.maxHp - this.config.medkit.carriedHeal
+    ) {
+      return 'unavailable';
+    }
     this.player.medkitsRemaining -= 1;
     this.player.medkitEndsAtMs =
       nowMs + this.config.medkit.carriedUseSec * 1000;
     this.scoreTracker.recordMedkitUsed(this.player.id);
-    return true;
+    return undefined;
   }
 
   createScoreboard(
