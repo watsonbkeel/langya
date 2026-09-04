@@ -1,0 +1,997 @@
+import {
+  SERVER_MESSAGE_TYPES,
+  type AllyState,
+  type EnemyDiedMessage,
+  type EnemyState,
+  type FireMessage,
+  type FireRejectReason,
+  type FireResultMessage,
+  type InputStateMessage,
+  type ReloadMessage,
+  type Vector3,
+  type WeaponState,
+  type WorldSnapshotMessage,
+} from '../../../shared/protocol';
+import {
+  AllyAgent,
+  AllyController,
+  type AllyBotConfig,
+  type AllyMedkitConfig,
+  type AllyShotIntent,
+} from '../ai/ally/ally-controller';
+import {
+  CalloutController,
+  type AllyCallout,
+  type CalloutConfig,
+} from '../ai/ally/callout-controller';
+import {
+  AllyDeploymentManager,
+  type AllyReassignment,
+  type DeploymentConfig,
+} from '../ai/ally/deployment-manager';
+import {
+  EnemyAgent,
+  EnemyController,
+  type EnemyAiEvent,
+  type EnemyBehaviorConfig,
+  type EnemySharedAiConfig,
+  type EnemyShotIntent,
+} from '../ai/enemy/enemy-controller';
+import type { RandomSource } from '../ai/seeded-random';
+import {
+  findNearestRoute,
+  type RouteLayout,
+} from '../ai/route-layout';
+import {
+  calculateDamage,
+  type WeaponDamageConfig,
+} from '../combat/damage';
+import {
+  raycastNearestEnemy,
+  type EnemyHitboxConfig,
+  type RaycastEnemy,
+} from '../combat/raycast';
+import {
+  completeReload,
+  createWeaponState,
+  startReload,
+  tryFire,
+  type WeaponRuntimeConfig,
+  type WeaponRuntimeState,
+} from '../combat/weapon-state';
+import { SoloRoom, type SoloRoomConfig } from '../room/solo-room';
+
+export interface M2PlayerConfig {
+  readonly maxHp: number;
+  readonly moveSpeed: number;
+  readonly crouchSpeed: number;
+  readonly aimPitchMinDeg: number;
+  readonly aimPitchMaxDeg: number;
+}
+
+export interface M2ArenaConfig {
+  readonly widthM: number;
+  readonly depthM: number;
+}
+
+export interface M2ValidationConfig {
+  readonly fireOriginToleranceM: number;
+  readonly directionMagnitudeTolerance: number;
+}
+
+export interface M2PlayerWeaponConfig
+  extends WeaponRuntimeConfig,
+    Omit<WeaponDamageConfig, 'hitPartMultiplier'> {
+  readonly weaponId: string;
+}
+
+export interface M2EnemyWeaponConfig
+  extends Omit<WeaponDamageConfig, 'hitPartMultiplier'> {
+  readonly fireRate: number;
+}
+
+export interface M2EnemyUnitConfig extends EnemyBehaviorConfig {
+  readonly hp: number;
+  readonly weapon: string;
+}
+
+export interface M2BattleConfig<
+  TRouteId extends string,
+  TEnemyType extends string,
+> {
+  readonly player: M2PlayerConfig;
+  readonly arena: M2ArenaConfig;
+  readonly validation: M2ValidationConfig;
+  readonly playerWeapon: M2PlayerWeaponConfig;
+  readonly hitPartMultiplier: WeaponDamageConfig['hitPartMultiplier'];
+  readonly enemyHitbox: EnemyHitboxConfig;
+  readonly room: SoloRoomConfig<TRouteId>;
+  readonly bot: AllyBotConfig;
+  readonly deployment: DeploymentConfig;
+  readonly callout: CalloutConfig;
+  readonly medkit: AllyMedkitConfig;
+  readonly routes: readonly RouteLayout<TRouteId>[];
+  readonly routeNames: Readonly<Record<TRouteId, string>>;
+  readonly aiUpdateGroups: number;
+  readonly enemyShared: EnemySharedAiConfig;
+  readonly enemySpawnOffsetX: number;
+  readonly enemySpawnOffsetZ: number;
+  readonly enemyUnits: Readonly<Record<TEnemyType, M2EnemyUnitConfig>>;
+  readonly enemyWeapons: Readonly<Record<string, M2EnemyWeaponConfig>>;
+  readonly maxAliveEnemies: number;
+}
+
+export interface M2BattleSessionOptions<
+  TRouteId extends string,
+  TEnemyType extends string,
+> {
+  readonly roomId: string;
+  readonly playerId: string;
+  readonly playerName: string;
+  readonly config: M2BattleConfig<TRouteId, TEnemyType>;
+  readonly random: RandomSource;
+}
+
+interface MutablePlayer {
+  readonly id: string;
+  readonly name: string;
+  readonly maxHp: number;
+  hp: number;
+  position: Vector3;
+  aimYaw: number;
+  aimPitch: number;
+  isCrouch: boolean;
+  moveDirX: number;
+  moveDirY: number;
+  weapon: WeaponRuntimeState;
+  kills: number;
+}
+
+interface EnemyRuntime<TRouteId extends string, TEnemyType extends string> {
+  readonly agent: EnemyAgent<TRouteId>;
+  readonly enemyType: TEnemyType;
+  readonly maxHp: number;
+  readonly accuracy: number;
+  readonly weaponId: string;
+  hp: number;
+}
+
+export type M2BattleEvent<TRouteId extends string> =
+  | EnemyAiEvent
+  | AllyCallout<TRouteId>
+  | {
+      readonly type: 'ally_damaged';
+      readonly allyId: string;
+      readonly hp: number;
+      readonly fromDir: Vector3;
+    }
+  | {
+      readonly type: 'ally_died';
+      readonly allyId: string;
+      readonly isBot: boolean;
+      readonly killerType: string;
+    }
+  | {
+      readonly type: 'enemy_died';
+      readonly enemyId: string;
+      readonly killerId: string;
+      readonly killerIsBot: boolean;
+    }
+  | ({ readonly type: 'ally_reassigned' } & AllyReassignment<TRouteId>);
+
+export interface M2FireResolution {
+  readonly result: FireResultMessage;
+  readonly death?: EnemyDiedMessage;
+}
+
+export class M2BattleSession<
+  TRouteId extends string,
+  TEnemyType extends string,
+> {
+  readonly room: SoloRoom<TRouteId>;
+
+  private readonly config: M2BattleConfig<TRouteId, TEnemyType>;
+  private readonly random: RandomSource;
+  private readonly player: MutablePlayer;
+  private readonly allies: AllyAgent<TRouteId>[] = [];
+  private readonly enemies: EnemyRuntime<TRouteId, TEnemyType>[] = [];
+  private readonly enemyAgents: EnemyAgent<TRouteId>[] = [];
+  private readonly allyController: AllyController<TRouteId>;
+  private readonly enemyController: EnemyController<TRouteId>;
+  private readonly deploymentManager: AllyDeploymentManager<TRouteId>;
+  private readonly calloutController: CalloutController<TRouteId>;
+  private enemySequence = 0;
+  private elapsedSec = 0;
+
+  constructor(options: M2BattleSessionOptions<TRouteId, TEnemyType>) {
+    this.config = options.config;
+    this.random = options.random;
+    this.room = new SoloRoom({
+      roomId: options.roomId,
+      playerId: options.playerId,
+      playerName: options.playerName,
+      config: options.config.room,
+    });
+    const playerHeightM =
+      (options.config.enemyHitbox.torsoStartM +
+        options.config.enemyHitbox.headStartM) /
+      2;
+    const playerRoute = this.getRoute(options.config.room.playerRoute);
+    this.player = {
+      id: options.playerId,
+      name: options.playerName,
+      maxHp: options.config.player.maxHp,
+      hp: options.config.player.maxHp,
+      position: {
+        ...playerRoute.guardPosition,
+        y: playerHeightM,
+      },
+      aimYaw: 0,
+      aimPitch: 0,
+      isCrouch: false,
+      moveDirX: 0,
+      moveDirY: 0,
+      weapon: createWeaponState(options.config.playerWeapon),
+      kills: 0,
+    };
+
+    for (const seat of this.room.seats) {
+      if (!seat.occupant.isBot) {
+        continue;
+      }
+      const route = this.getRoute(seat.routeId);
+      this.allies.push(
+        new AllyAgent({
+          id: seat.occupant.id,
+          heroName: seat.heroName,
+          route,
+          position: route.guardPosition,
+          bot: options.config.bot,
+          weapon: options.config.playerWeapon,
+          medkit: options.config.medkit,
+        }),
+      );
+    }
+
+    this.allyController = new AllyController(
+      { aiUpdateGroups: options.config.aiUpdateGroups },
+      this.allies,
+    );
+    this.enemyController = new EnemyController(
+      { aiUpdateGroups: options.config.aiUpdateGroups },
+      this.enemyAgents,
+    );
+    this.deploymentManager = new AllyDeploymentManager(
+      options.config.deployment,
+      options.config.routes,
+    );
+    this.calloutController = new CalloutController(
+      options.config.callout,
+      options.config.routeNames,
+    );
+  }
+
+  get aliveEnemyCount(): number {
+    return this.enemies.reduce(
+      (count, enemy) => count + (enemy.hp > 0 ? 1 : 0),
+      0,
+    );
+  }
+
+  get totalEnemyCount(): number {
+    return this.enemies.length;
+  }
+
+  get playerKills(): number {
+    return this.player.kills;
+  }
+
+  get allyKills(): readonly number[] {
+    return this.allies.map((ally) => this.getKillsFor(ally.id));
+  }
+
+  get allySurvivalSec(): readonly number[] {
+    return this.allies.map((ally) =>
+      ally.isAlive ? this.elapsedSec : this.getDeathSec(ally.id),
+    );
+  }
+
+  get playerHp(): number {
+    return this.player.hp;
+  }
+
+  applyInput(message: InputStateMessage): boolean {
+    const { payload } = message;
+    if (
+      payload.aimPitch < this.config.player.aimPitchMinDeg ||
+      payload.aimPitch > this.config.player.aimPitchMaxDeg
+    ) {
+      return false;
+    }
+
+    const moveLength = Math.hypot(payload.moveDir.x, payload.moveDir.y);
+    const moveScale = moveLength > 1 ? 1 / moveLength : 1;
+    this.player.moveDirX = payload.moveDir.x * moveScale;
+    this.player.moveDirY = payload.moveDir.y * moveScale;
+    this.player.aimYaw = payload.aimYaw;
+    this.player.aimPitch = payload.aimPitch;
+    this.player.isCrouch = payload.isCrouch;
+    return true;
+  }
+
+  update(
+    deltaSec: number,
+    tick: number,
+    nowMs: number,
+  ): readonly M2BattleEvent<TRouteId>[] {
+    this.elapsedSec = Math.max(this.elapsedSec, nowMs / 1000);
+    this.updatePlayer(deltaSec, nowMs);
+    const events: M2BattleEvent<TRouteId>[] = [];
+
+    const reassignment = this.deploymentManager.update(
+      this.player.position,
+      this.allies,
+      nowMs,
+    );
+    if (reassignment) {
+      const ally = this.allies.find(
+        (candidate) => candidate.id === reassignment.allyId,
+      );
+      ally?.assignRoute(this.getRoute(reassignment.toRouteId));
+      events.push({ type: 'ally_reassigned', ...reassignment });
+    }
+
+    const enemyTargets = this.getFriendlyTargets();
+    const enemyEvents = this.enemyController.update(
+      deltaSec,
+      tick,
+      nowMs,
+      enemyTargets,
+    );
+    const allyShots = this.allyController.update(
+      deltaSec,
+      tick,
+      nowMs,
+      this.getEnemyTargets(),
+    );
+
+    for (const event of enemyEvents) {
+      if (event.type === 'shot') {
+        events.push(...this.resolveEnemyShot(event, nowMs));
+      } else {
+        events.push(event);
+      }
+    }
+    for (const shot of allyShots) {
+      const death = this.resolveAllyShot(shot);
+      if (death) {
+        events.push(death);
+      }
+    }
+
+    const callout = this.calloutController.update(
+      nowMs,
+      this.allies.map((ally) => ({
+        id: ally.id,
+        heroName: ally.heroName,
+        routeId: ally.routeId,
+        alive: ally.isAlive,
+      })),
+      this.countEnemiesByRoute(),
+    );
+    if (callout) {
+      events.push(callout);
+    }
+    return events;
+  }
+
+  spawnEnemy(
+    enemyType: TEnemyType,
+    routeId: TRouteId,
+    accuracy: number,
+    nowMs: number,
+  ): string | undefined {
+    if (this.aliveEnemyCount >= this.config.maxAliveEnemies) {
+      return undefined;
+    }
+
+    const unit = this.config.enemyUnits[enemyType];
+    const weapon = this.config.enemyWeapons[unit.weapon];
+    if (!weapon) {
+      throw new Error(`日军武器 "${unit.weapon}" 不存在`);
+    }
+    const route = this.getRoute(routeId);
+    const id = `${this.room.id}:enemy:${this.enemySequence}`;
+    this.enemySequence += 1;
+    const randomOffsetX =
+      (this.random.next() - 0.5) * this.config.enemySpawnOffsetX;
+    const randomOffsetZ =
+      (this.random.next() - 0.5) * this.config.enemySpawnOffsetZ;
+    const agent = new EnemyAgent({
+      id,
+      enemyType,
+      route,
+      spawnOffset: { x: randomOffsetX, y: 0, z: randomOffsetZ },
+      behavior: unit,
+      shared: this.config.enemyShared,
+      weapon,
+      spawnedAtMs: nowMs,
+    });
+    this.enemyAgents.push(agent);
+    this.enemies.push({
+      agent,
+      enemyType,
+      hp: unit.hp,
+      maxHp: unit.hp,
+      accuracy,
+      weaponId: unit.weapon,
+    });
+    return id;
+  }
+
+  reload(message: ReloadMessage, nowMs: number): void {
+    if (message.payload.weaponId !== this.config.playerWeapon.weaponId) {
+      return;
+    }
+    this.player.weapon = startReload(
+      this.player.weapon,
+      this.config.playerWeapon,
+      nowMs,
+    );
+  }
+
+  fire(message: FireMessage, nowMs: number): M2FireResolution {
+    const { payload } = message;
+    if (this.player.hp === 0) {
+      return this.rejectFire(message, 'dead');
+    }
+    if (payload.weaponId !== this.config.playerWeapon.weaponId) {
+      return this.rejectFire(message, 'invalid_weapon');
+    }
+    if (
+      distanceBetween(payload.originPos, this.player.position) >
+      this.config.validation.fireOriginToleranceM
+    ) {
+      return this.rejectFire(message, 'invalid_origin');
+    }
+    const magnitude = vectorMagnitude(payload.dirVec);
+    if (
+      !Number.isFinite(magnitude) ||
+      Math.abs(magnitude - 1) >
+        this.config.validation.directionMagnitudeTolerance
+    ) {
+      return this.rejectFire(message, 'invalid_direction');
+    }
+
+    const fireState = tryFire(
+      this.player.weapon,
+      this.config.playerWeapon,
+      nowMs,
+    );
+    this.player.weapon = fireState.state;
+    if (!fireState.accepted) {
+      return this.rejectFire(message, fireState.reason);
+    }
+
+    const raycastEnemies: RaycastEnemy[] = this.enemies.map((enemy) => ({
+      id: enemy.agent.id,
+      position: enemy.agent.position,
+      alive: enemy.hp > 0,
+    }));
+    const hit = raycastNearestEnemy(
+      payload.originPos,
+      payload.dirVec,
+      raycastEnemies,
+      this.config.enemyHitbox,
+    );
+    if (!hit) {
+      return { result: this.createMissResult(message) };
+    }
+
+    const enemy = this.enemies.find(
+      (candidate) => candidate.agent.id === hit.targetId,
+    );
+    if (!enemy || enemy.hp <= 0) {
+      return { result: this.createMissResult(message) };
+    }
+
+    const damage = calculateDamage(
+      {
+        ...this.config.playerWeapon,
+        hitPartMultiplier: this.config.hitPartMultiplier,
+      },
+      hit.distanceM,
+      hit.hitPart,
+    ).damage;
+    enemy.hp = Math.max(0, enemy.hp - damage);
+    const isKill = enemy.hp === 0;
+    if (isKill) {
+      enemy.agent.markDead();
+      this.player.kills += 1;
+      this.killCounts.set(
+        this.player.id,
+        this.getKillsFor(this.player.id) + 1,
+      );
+    }
+
+    return {
+      result: {
+        type: SERVER_MESSAGE_TYPES.fireResult,
+        payload: {
+          clientTick: payload.clientTick,
+          weaponId: payload.weaponId,
+          accepted: true,
+          hit: true,
+          targetId: enemy.agent.id,
+          damage,
+          isKill,
+          hitPart: hit.hitPart,
+          ...this.getAmmoState(),
+        },
+      },
+      ...(isKill
+        ? {
+            death: {
+              type: SERVER_MESSAGE_TYPES.enemyDied,
+              payload: {
+                enemyId: enemy.agent.id,
+                killerId: this.player.id,
+                killerIsBot: false,
+              },
+            },
+          }
+        : {}),
+    };
+  }
+
+  createSnapshot(tick: number, serverTimeMs: number): WorldSnapshotMessage {
+    const allies: AllyState[] = [
+      {
+        id: this.player.id,
+        isBot: false,
+        hp: this.player.hp,
+        maxHp: this.player.maxHp,
+        position: this.player.position,
+        aimYaw: this.player.aimYaw,
+        aimPitch: this.player.aimPitch,
+        isCrouch: this.player.isCrouch,
+        weapon: this.getPlayerWeaponState(),
+      },
+      ...this.allies.map((ally) => ({
+        id: ally.id,
+        isBot: true,
+        hp: ally.hp,
+        maxHp: ally.maxHp,
+        position: ally.position,
+        aimYaw: 0,
+        aimPitch: 0,
+        isCrouch: ally.isCrouching,
+        weapon: this.getAllyWeaponState(ally),
+      })),
+    ];
+    const enemies: EnemyState[] = this.enemies
+      .filter((enemy) => enemy.hp > 0)
+      .map((enemy) => ({
+        id: enemy.agent.id,
+        enemyType: enemy.enemyType,
+        hp: enemy.hp,
+        maxHp: enemy.maxHp,
+        position: enemy.agent.position,
+        alive: true,
+      }));
+
+    return {
+      type: SERVER_MESSAGE_TYPES.worldSnapshot,
+      payload: {
+        tick,
+        serverTimeMs,
+        allies,
+        enemies,
+        items: [],
+      },
+    };
+  }
+
+  createFireMessageForEnemy(
+    enemyId: string,
+    clientTick: number,
+    hitPart: 'head' | 'torso' | 'limb',
+  ): FireMessage | undefined {
+    const enemy = this.enemies.find(
+      (candidate) => candidate.agent.id === enemyId && candidate.hp > 0,
+    );
+    if (!enemy) {
+      return undefined;
+    }
+
+    const targetY =
+      hitPart === 'head'
+        ? (this.config.enemyHitbox.headStartM +
+            this.config.enemyHitbox.heightM) /
+          2
+        : hitPart === 'torso'
+          ? (this.config.enemyHitbox.torsoStartM +
+              this.config.enemyHitbox.headStartM) /
+            2
+          : this.config.enemyHitbox.torsoStartM / 2;
+    const direction = normalizeVector({
+      x: enemy.agent.position.x - this.player.position.x,
+      y: enemy.agent.position.y + targetY - this.player.position.y,
+      z: enemy.agent.position.z - this.player.position.z,
+    });
+    return {
+      type: 'fire',
+      payload: {
+        weaponId: this.config.playerWeapon.weaponId,
+        originPos: this.player.position,
+        dirVec: direction,
+        clientTick,
+      },
+    };
+  }
+
+  findNearestAliveEnemyId(): string | undefined {
+    let nearestId: string | undefined;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    for (const enemy of this.enemies) {
+      if (enemy.hp <= 0) {
+        continue;
+      }
+      const distance = distanceBetween(
+        this.player.position,
+        enemy.agent.position,
+      );
+      if (distance < nearestDistance) {
+        nearestId = enemy.agent.id;
+        nearestDistance = distance;
+      }
+    }
+    return nearestId;
+  }
+
+  private readonly killCounts = new Map<string, number>();
+  private readonly deathTimesSec = new Map<string, number>();
+
+  private resolveAllyShot(
+    shot: AllyShotIntent,
+  ): M2BattleEvent<TRouteId> | undefined {
+    const enemy = this.enemies.find(
+      (candidate) => candidate.agent.id === shot.targetId,
+    );
+    if (!enemy || enemy.hp <= 0 || this.random.next() > shot.accuracy) {
+      return undefined;
+    }
+
+    const damage = calculateDamage(
+      {
+        ...this.config.playerWeapon,
+        hitPartMultiplier: this.config.hitPartMultiplier,
+      },
+      shot.distanceM,
+      'torso',
+    ).damage;
+    enemy.hp = Math.max(0, enemy.hp - damage);
+    if (enemy.hp > 0) {
+      return undefined;
+    }
+
+    enemy.agent.markDead();
+    this.killCounts.set(
+      shot.allyId,
+      this.getKillsFor(shot.allyId) + 1,
+    );
+    return {
+      type: 'enemy_died',
+      enemyId: enemy.agent.id,
+      killerId: shot.allyId,
+      killerIsBot: true,
+    };
+  }
+
+  private resolveEnemyShot(
+    shot: EnemyShotIntent,
+    nowMs: number,
+  ): readonly M2BattleEvent<TRouteId>[] {
+    const enemy = this.enemies.find(
+      (candidate) => candidate.agent.id === shot.enemyId,
+    );
+    if (!enemy || enemy.hp <= 0 || this.random.next() > enemy.accuracy) {
+      return [];
+    }
+    const weapon = this.config.enemyWeapons[enemy.weaponId];
+    if (!weapon) {
+      return [];
+    }
+    const damage = calculateDamage(
+      {
+        ...weapon,
+        hitPartMultiplier: this.config.hitPartMultiplier,
+      },
+      shot.distanceM,
+      'torso',
+    ).damage;
+    const fromDir = directionFromAttacker(
+      enemy.agent.position,
+      this.getFriendlyPosition(shot.targetId),
+    );
+
+    if (shot.targetId === this.player.id) {
+      if (this.player.hp === 0) {
+        return [];
+      }
+      this.player.hp = Math.max(0, this.player.hp - damage);
+      return [
+        {
+          type: 'ally_damaged',
+          allyId: this.player.id,
+          hp: this.player.hp,
+          fromDir,
+        },
+        ...(this.player.hp === 0
+          ? [
+              {
+                type: 'ally_died' as const,
+                allyId: this.player.id,
+                isBot: false,
+                killerType: shot.enemyType,
+              },
+            ]
+          : []),
+      ];
+    }
+
+    const ally = this.allies.find(
+      (candidate) => candidate.id === shot.targetId,
+    );
+    if (!ally) {
+      return [];
+    }
+    if (!ally.isAlive) {
+      return [];
+    }
+    const died = ally.takeDamage(damage, nowMs);
+    if (died) {
+      this.deathTimesSec.set(ally.id, nowMs / 1000);
+    }
+    return [
+      {
+        type: 'ally_damaged',
+        allyId: ally.id,
+        hp: ally.hp,
+        fromDir,
+      },
+      ...(died
+        ? [
+            {
+              type: 'ally_died' as const,
+              allyId: ally.id,
+              isBot: true,
+              killerType: shot.enemyType,
+            },
+          ]
+        : []),
+    ];
+  }
+
+  private updatePlayer(deltaSec: number, nowMs: number): void {
+    this.player.weapon = completeReload(
+      this.player.weapon,
+      this.config.playerWeapon,
+      nowMs,
+    );
+    if (this.player.hp === 0) {
+      return;
+    }
+
+    const yawRad = (this.player.aimYaw * Math.PI) / 180;
+    const speed = this.player.isCrouch
+      ? this.config.player.crouchSpeed
+      : this.config.player.moveSpeed;
+    const rightX = Math.cos(yawRad);
+    const rightZ = -Math.sin(yawRad);
+    const forwardX = -Math.sin(yawRad);
+    const forwardZ = -Math.cos(yawRad);
+    const halfWidth = this.config.arena.widthM / 2;
+    const halfDepth = this.config.arena.depthM / 2;
+
+    this.player.position = {
+      x: clamp(
+        this.player.position.x +
+          (rightX * this.player.moveDirX +
+            forwardX * this.player.moveDirY) *
+            speed *
+            deltaSec,
+        -halfWidth,
+        halfWidth,
+      ),
+      y: this.player.position.y,
+      z: clamp(
+        this.player.position.z +
+          (rightZ * this.player.moveDirX +
+            forwardZ * this.player.moveDirY) *
+            speed *
+            deltaSec,
+        -halfDepth,
+        halfDepth,
+      ),
+    };
+  }
+
+  private rejectFire(
+    message: FireMessage,
+    rejectReason: FireRejectReason,
+  ): M2FireResolution {
+    return {
+      result: {
+        type: SERVER_MESSAGE_TYPES.fireResult,
+        payload: {
+          clientTick: message.payload.clientTick,
+          weaponId: message.payload.weaponId,
+          accepted: false,
+          rejectReason,
+          hit: false,
+          damage: 0,
+          isKill: false,
+          ...this.getAmmoState(),
+        },
+      },
+    };
+  }
+
+  private createMissResult(message: FireMessage): FireResultMessage {
+    return {
+      type: SERVER_MESSAGE_TYPES.fireResult,
+      payload: {
+        clientTick: message.payload.clientTick,
+        weaponId: message.payload.weaponId,
+        accepted: true,
+        hit: false,
+        damage: 0,
+        isKill: false,
+        ...this.getAmmoState(),
+      },
+    };
+  }
+
+  private getFriendlyTargets() {
+    return [
+      {
+        id: this.player.id,
+        position: this.player.position,
+        alive: this.player.hp > 0,
+      },
+      ...this.allies.map((ally) => ({
+        id: ally.id,
+        position: ally.position,
+        alive: ally.isAlive,
+      })),
+    ];
+  }
+
+  private getEnemyTargets() {
+    return this.enemies.map((enemy) => ({
+      id: enemy.agent.id,
+      routeId: enemy.agent.routeId,
+      position: enemy.agent.position,
+      alive: enemy.hp > 0,
+    }));
+  }
+
+  private countEnemiesByRoute(): Readonly<Record<TRouteId, number>> {
+    const counts = Object.fromEntries(
+      this.config.routes.map((route) => [route.routeId, 0]),
+    ) as Record<TRouteId, number>;
+    for (const enemy of this.enemies) {
+      if (enemy.hp > 0) {
+        counts[enemy.agent.routeId] += 1;
+      }
+    }
+    return counts;
+  }
+
+  private getRoute(routeId: TRouteId): RouteLayout<TRouteId> {
+    const route = this.config.routes.find(
+      (candidate) => candidate.routeId === routeId,
+    );
+    if (!route) {
+      throw new Error(`路线 "${routeId}" 不存在`);
+    }
+    return route;
+  }
+
+  private getFriendlyPosition(allyId: string): Vector3 {
+    if (allyId === this.player.id) {
+      return this.player.position;
+    }
+    return (
+      this.allies.find((ally) => ally.id === allyId)?.position ??
+      this.player.position
+    );
+  }
+
+  private getKillsFor(allyId: string): number {
+    return this.killCounts.get(allyId) ?? 0;
+  }
+
+  private getDeathSec(allyId: string): number {
+    return this.deathTimesSec.get(allyId) ?? 0;
+  }
+
+  private getAmmoState(): Pick<
+    WeaponState,
+    'magazineAmmo' | 'reserveAmmo'
+  > {
+    return {
+      magazineAmmo: this.player.weapon.magazineAmmo,
+      reserveAmmo: this.player.weapon.reserveAmmo,
+    };
+  }
+
+  private getPlayerWeaponState(): WeaponState {
+    return toProtocolWeaponState(
+      this.config.playerWeapon.weaponId,
+      this.player.weapon,
+    );
+  }
+
+  private getAllyWeaponState(ally: AllyAgent<TRouteId>): WeaponState {
+    return toProtocolWeaponState(
+      this.config.bot.weapon,
+      ally.weaponState,
+    );
+  }
+}
+
+function toProtocolWeaponState(
+  weaponId: string,
+  weapon: WeaponRuntimeState,
+): WeaponState {
+  const common = {
+    weaponId,
+    magazineAmmo: weapon.magazineAmmo,
+    reserveAmmo: weapon.reserveAmmo,
+    isReloading: weapon.reloadEndsAtMs !== undefined,
+  };
+  return weapon.reloadEndsAtMs === undefined
+    ? common
+    : { ...common, reloadEndsAtMs: weapon.reloadEndsAtMs };
+}
+
+function directionFromAttacker(
+  attacker: Vector3,
+  target: Vector3,
+): Vector3 {
+  return normalizeVector({
+    x: attacker.x - target.x,
+    y: attacker.y - target.y,
+    z: attacker.z - target.z,
+  });
+}
+
+function normalizeVector(vector: Vector3): Vector3 {
+  const magnitude = vectorMagnitude(vector);
+  if (magnitude === 0) {
+    return { x: 0, y: 0, z: 0 };
+  }
+  return {
+    x: vector.x / magnitude,
+    y: vector.y / magnitude,
+    z: vector.z / magnitude,
+  };
+}
+
+function vectorMagnitude(vector: Vector3): number {
+  return Math.hypot(vector.x, vector.y, vector.z);
+}
+
+function distanceBetween(first: Vector3, second: Vector3): number {
+  return Math.hypot(
+    first.x - second.x,
+    first.y - second.y,
+    first.z - second.z,
+  );
+}
+
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.min(maximum, Math.max(minimum, value));
+}

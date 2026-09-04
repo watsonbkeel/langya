@@ -74,6 +74,7 @@ describe('AllyDeploymentManager', () => {
       fromRouteId: 'A',
       toRouteId: 'C',
     });
+    allies[0]!.routeId = reassignment.toRouteId;
     assert.deepEqual(
       allies.map((ally) => ally.routeId),
       ['C', 'B', 'B', 'C'],
@@ -88,7 +89,9 @@ describe('AllyDeploymentManager', () => {
       alliesConfig.deployment.playerRouteDetectSec * 1000;
 
     manager.update(routeA.guardPosition, allies, 0);
-    manager.update(routeA.guardPosition, allies, thresholdMs);
+    const first = manager.update(routeA.guardPosition, allies, thresholdMs);
+    assert.ok(first);
+    allies[0]!.routeId = first.toRouteId;
     const duringCooldown = manager.update(
       routeA.guardPosition,
       allies,

@@ -42,7 +42,7 @@ function parseBattleWeapon(
   };
 }
 
-function findConfiguredWeapon(
+export function findPlayerWeaponConfig(
   config: ProjectConfig,
   weaponId: string,
 ): BattleWeaponConfig {
@@ -68,7 +68,7 @@ export function createM1BattleRuntime(
   const gameplay = config.gameplay;
   const combat = gameplay.combat;
   const weaponId = gameplay.player.defaultLoadout.primary;
-  const weapon = findConfiguredWeapon(config, weaponId);
+  const weapon = findPlayerWeaponConfig(config, weaponId);
   const enemyType = 'rifleman';
   const enemyConfig = config.enemies.units[enemyType];
   const battleConfig: BattleSessionConfig = {

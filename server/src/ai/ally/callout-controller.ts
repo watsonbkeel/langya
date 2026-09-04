@@ -15,6 +15,7 @@ export interface CalloutAlly<TRouteId extends string> {
 }
 
 export interface AllyCallout<TRouteId extends string> {
+  readonly type: 'ally_callout';
   readonly allyId: string;
   readonly routeId: TRouteId;
   readonly text: string;
@@ -54,6 +55,7 @@ export class CalloutController<TRouteId extends string> {
 
       this.lastCalloutAtMs.set(ally.id, nowMs);
       return {
+        type: 'ally_callout',
         allyId: ally.id,
         routeId: ally.routeId,
         text: this.config.templates.routeThreat

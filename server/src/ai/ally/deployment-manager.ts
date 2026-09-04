@@ -77,7 +77,6 @@ export class AllyDeploymentManager<TRouteId extends string> {
       fromRouteId: ally.routeId,
       toRouteId: destination,
     };
-    ally.routeId = destination;
     this.lastReassignedAtMs = nowMs;
     return reassignment;
   }
