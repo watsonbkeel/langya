@@ -66,6 +66,7 @@ export function createM2BattleRuntime(
     medkit: config.gameplay.medkit,
     routes,
     routeNames,
+    seatSpacingM: config.gameplay.arena.elements.spawnSpacingM,
     aiUpdateGroups: config.enemies.performance.aiUpdateGroups,
     enemyShared: config.enemies.sharedRules,
     enemySpawnOffsetX: config.enemies.pathing.randomOffsetX,
@@ -73,6 +74,7 @@ export function createM2BattleRuntime(
     enemyUnits,
     enemyWeapons,
     maxAliveEnemies: config.waves.maxAliveEnemies,
+    ammoBoxCooldownSec: config.gameplay.arena.ammoBoxCooldownSec,
   };
 
   return {

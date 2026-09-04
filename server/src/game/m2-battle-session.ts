@@ -65,6 +65,7 @@ export interface M2PlayerConfig {
   readonly maxHp: number;
   readonly moveSpeed: number;
   readonly crouchSpeed: number;
+  readonly crouchHitboxMultiplier: number;
   readonly aimPitchMinDeg: number;
   readonly aimPitchMaxDeg: number;
 }
@@ -112,6 +113,7 @@ export interface M2BattleConfig<
   readonly medkit: AllyMedkitConfig;
   readonly routes: readonly RouteLayout<TRouteId>[];
   readonly routeNames: Readonly<Record<TRouteId, string>>;
+  readonly seatSpacingM: number;
   readonly aiUpdateGroups: number;
   readonly enemyShared: EnemySharedAiConfig;
   readonly enemySpawnOffsetX: number;
@@ -119,6 +121,7 @@ export interface M2BattleConfig<
   readonly enemyUnits: Readonly<Record<TEnemyType, M2EnemyUnitConfig>>;
   readonly enemyWeapons: Readonly<Record<string, M2EnemyWeaponConfig>>;
   readonly maxAliveEnemies: number;
+  readonly ammoBoxCooldownSec: number;
 }
 
 export interface M2BattleSessionOptions<
@@ -202,6 +205,8 @@ export class M2BattleSession<
   private readonly calloutController: CalloutController<TRouteId>;
   private enemySequence = 0;
   private elapsedSec = 0;
+  private startedAtMs: number | undefined;
+  private lastPlayerResupplyAtMs: number | undefined;
 
   constructor(options: M2BattleSessionOptions<TRouteId, TEnemyType>) {
     this.config = options.config;
@@ -212,18 +217,28 @@ export class M2BattleSession<
       playerName: options.playerName,
       config: options.config.room,
     });
+    const guardPositions = this.createInitialGuardPositions();
     const playerHeightM =
       (options.config.enemyHitbox.torsoStartM +
         options.config.enemyHitbox.headStartM) /
       2;
-    const playerRoute = this.getRoute(options.config.room.playerRoute);
+    const playerSeat = this.room.seats.find(
+      (seat) => seat.occupant.id === options.playerId,
+    );
+    if (!playerSeat) {
+      throw new Error('单人房间缺少真人席位');
+    }
+    const playerPosition = guardPositions.get(playerSeat.index);
+    if (!playerPosition) {
+      throw new Error('真人席位缺少防守位置');
+    }
     this.player = {
       id: options.playerId,
       name: options.playerName,
       maxHp: options.config.player.maxHp,
       hp: options.config.player.maxHp,
       position: {
-        ...playerRoute.guardPosition,
+        ...playerPosition,
         y: playerHeightM,
       },
       aimYaw: 0,
@@ -240,12 +255,16 @@ export class M2BattleSession<
         continue;
       }
       const route = this.getRoute(seat.routeId);
+      const guardPosition = guardPositions.get(seat.index);
+      if (!guardPosition) {
+        throw new Error(`AI 席位 ${seat.index} 缺少防守位置`);
+      }
       this.allies.push(
         new AllyAgent({
           id: seat.occupant.id,
           heroName: seat.heroName,
-          route,
-          position: route.guardPosition,
+          route: { ...route, guardPosition },
+          position: guardPosition,
           bot: options.config.bot,
           weapon: options.config.playerWeapon,
           medkit: options.config.medkit,
@@ -300,6 +319,10 @@ export class M2BattleSession<
     return this.player.hp;
   }
 
+  get playerWeaponState(): WeaponState {
+    return this.getPlayerWeaponState();
+  }
+
   applyInput(message: InputStateMessage): boolean {
     const { payload } = message;
     if (
@@ -324,7 +347,13 @@ export class M2BattleSession<
     tick: number,
     nowMs: number,
   ): readonly M2BattleEvent<TRouteId>[] {
-    this.elapsedSec = Math.max(this.elapsedSec, nowMs / 1000);
+    if (this.startedAtMs === undefined) {
+      this.startedAtMs = nowMs - deltaSec * 1000;
+    }
+    this.elapsedSec = Math.max(
+      this.elapsedSec,
+      (nowMs - this.startedAtMs) / 1000,
+    );
     this.updatePlayer(deltaSec, nowMs);
     const events: M2BattleEvent<TRouteId>[] = [];
 
@@ -337,7 +366,14 @@ export class M2BattleSession<
       const ally = this.allies.find(
         (candidate) => candidate.id === reassignment.allyId,
       );
-      ally?.assignRoute(this.getRoute(reassignment.toRouteId));
+      if (ally) {
+        ally.assignRoute(
+          this.createReassignmentRoute(
+            reassignment.toRouteId,
+            ally.id,
+          ),
+        );
+      }
       events.push({ type: 'ally_reassigned', ...reassignment });
     }
 
@@ -438,6 +474,29 @@ export class M2BattleSession<
       this.config.playerWeapon,
       nowMs,
     );
+  }
+
+  resupplyPlayerAmmo(nowMs: number): boolean {
+    if (
+      this.lastPlayerResupplyAtMs !== undefined &&
+      nowMs - this.lastPlayerResupplyAtMs <
+        this.config.ammoBoxCooldownSec * 1000
+    ) {
+      return false;
+    }
+    if (
+      this.player.weapon.reserveAmmo >=
+      this.config.playerWeapon.reserveAmmo
+    ) {
+      return false;
+    }
+
+    this.player.weapon = {
+      ...this.player.weapon,
+      reserveAmmo: this.config.playerWeapon.reserveAmmo,
+    };
+    this.lastPlayerResupplyAtMs = nowMs;
+    return true;
   }
 
   fire(message: FireMessage, nowMs: number): M2FireResolution {
@@ -695,7 +754,14 @@ export class M2BattleSession<
     const enemy = this.enemies.find(
       (candidate) => candidate.agent.id === shot.enemyId,
     );
-    if (!enemy || enemy.hp <= 0 || this.random.next() > enemy.accuracy) {
+    if (!enemy || enemy.hp <= 0) {
+      return [];
+    }
+    const targetExposure = this.getFriendlyExposure(shot.targetId);
+    if (
+      targetExposure === undefined ||
+      this.random.next() > enemy.accuracy * targetExposure
+    ) {
       return [];
     }
     const weapon = this.config.enemyWeapons[enemy.weaponId];
@@ -751,7 +817,7 @@ export class M2BattleSession<
     }
     const died = ally.takeDamage(damage, nowMs);
     if (died) {
-      this.deathTimesSec.set(ally.id, nowMs / 1000);
+      this.deathTimesSec.set(ally.id, this.elapsedSec);
     }
     return [
       {
@@ -899,6 +965,51 @@ export class M2BattleSession<
     return route;
   }
 
+  private createInitialGuardPositions(): ReadonlyMap<number, Vector3> {
+    const positions = new Map<number, Vector3>();
+    for (const route of this.config.routes) {
+      const routeSeats = this.room.seats.filter(
+        (seat) => seat.routeId === route.routeId,
+      );
+      const firstOffset =
+        -(this.config.seatSpacingM * (routeSeats.length - 1)) / 2;
+      routeSeats.forEach((seat, index) => {
+        positions.set(seat.index, {
+          ...route.guardPosition,
+          x:
+            route.guardPosition.x +
+            firstOffset +
+            index * this.config.seatSpacingM,
+        });
+      });
+    }
+    return positions;
+  }
+
+  private createReassignmentRoute(
+    routeId: TRouteId,
+    reassignedAllyId: string,
+  ): RouteLayout<TRouteId> {
+    const route = this.getRoute(routeId);
+    const occupiedCount = this.allies.filter(
+      (ally) =>
+        ally.id !== reassignedAllyId &&
+        ally.isAlive &&
+        ally.routeId === routeId,
+    ).length;
+    const direction = occupiedCount % 2 === 0 ? 1 : -1;
+    const offsetSlots = Math.floor(occupiedCount / 2) + 1;
+    return {
+      ...route,
+      guardPosition: {
+        ...route.guardPosition,
+        x:
+          route.guardPosition.x +
+          direction * offsetSlots * this.config.seatSpacingM,
+      },
+    };
+  }
+
   private getFriendlyPosition(allyId: string): Vector3 {
     if (allyId === this.player.id) {
       return this.player.position;
@@ -907,6 +1018,23 @@ export class M2BattleSession<
       this.allies.find((ally) => ally.id === allyId)?.position ??
       this.player.position
     );
+  }
+
+  private getFriendlyExposure(allyId: string): number | undefined {
+    if (allyId === this.player.id) {
+      return this.player.hp > 0
+        ? this.player.isCrouch
+          ? this.config.player.crouchHitboxMultiplier
+          : 1
+        : undefined;
+    }
+    const ally = this.allies.find((candidate) => candidate.id === allyId);
+    if (!ally?.isAlive) {
+      return undefined;
+    }
+    return ally.isCrouching
+      ? this.config.player.crouchHitboxMultiplier
+      : 1;
   }
 
   private getKillsFor(allyId: string): number {

@@ -4,7 +4,7 @@
 |---|---|---|---|
 | `verify-config.js` | 校验 `shared/config/*.json` 合法性与自洽性 | 每次改配置后、服务启动前 | ✅ 可用 |
 | `check-ws.js` | WebSocket 连通性自测 | 每次部署后 | ✅ 可用 |
-| `simulate-match.js` | 批量模拟单局，校准 AI 队友数值 | M2 | 🟡 骨架待实现 |
+| `simulate-match.js` | 批量模拟单局，校准 AI 队友数值 | M2 | ✅ 可用 |
 | `asset-pipeline/` | 素材抠图裁切缩放 | M4 | ✅ 可用（需 pillow+numpy） |
 | `deploy.sh` | 更新部署流程 | Codex 部署时创建 | ⬜ 待创建 |
 

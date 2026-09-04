@@ -169,7 +169,16 @@ export class AllyAgent<TRouteId extends string> {
       return undefined;
     }
 
-    const target = selectTarget(this.position, this.routeId, targets);
+    const currentTarget =
+      this.targetId === undefined
+        ? undefined
+        : targets.find(
+            (candidate) =>
+              candidate.id === this.targetId && candidate.alive,
+          );
+    const target =
+      currentTarget ??
+      selectTarget(this.position, this.routeId, targets);
     if (!target) {
       this.targetId = undefined;
       this.targetAcquiredAtMs = undefined;

@@ -121,7 +121,8 @@ describe('M2BattleSession', () => {
     );
     const elapsedSec = config.allies.calibration.minAvgSurvivalSec;
 
-    battle.update(1 / tickRateHz, 0, elapsedSec * 1000);
+    battle.update(1 / tickRateHz, 0, 1000 / tickRateHz);
+    battle.update(1 / tickRateHz, 1, elapsedSec * 1000);
 
     assert.deepEqual(
       battle.allySurvivalSec,
@@ -129,6 +130,64 @@ describe('M2BattleSession', () => {
         { length: config.allies.seatCount - 1 },
         () => elapsedSec,
       ),
+    );
+  });
+
+  it('按弹药箱冷却补充真人备弹', () => {
+    const { battle } = createM2BattleRuntime(
+      config,
+      'player-5',
+      '测试玩家',
+      5,
+    );
+    const enemyId = battle.spawnEnemy(
+      'rifleman',
+      'A',
+      config.waves.waves[0]!.accuracy,
+      0,
+    );
+    assert.ok(enemyId);
+    const fire = battle.createFireMessageForEnemy(enemyId, 1, 'head');
+    assert.ok(fire);
+    battle.fire(fire, 0);
+    battle.reload(
+      {
+        type: 'reload',
+        payload: {
+          weaponId:
+            config.gameplay.player.defaultLoadout.primary,
+        },
+      },
+      0,
+    );
+    battle.update(
+      config.weapons.player.liaoshi13.reloadSec,
+      1,
+      config.weapons.player.liaoshi13.reloadSec * 1000,
+    );
+
+    assert.equal(
+      battle.playerWeaponState.reserveAmmo <
+        config.weapons.player.liaoshi13.reserveAmmo,
+      true,
+    );
+    assert.equal(
+      battle.resupplyPlayerAmmo(
+        config.weapons.player.liaoshi13.reloadSec * 1000,
+      ),
+      true,
+    );
+    assert.equal(
+      battle.playerWeaponState.reserveAmmo,
+      config.weapons.player.liaoshi13.reserveAmmo,
+    );
+    assert.equal(
+      battle.resupplyPlayerAmmo(
+        (config.weapons.player.liaoshi13.reloadSec +
+          config.gameplay.arena.ammoBoxCooldownSec / 2) *
+          1000,
+      ),
+      false,
     );
   });
 });
