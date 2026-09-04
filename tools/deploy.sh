@@ -71,12 +71,16 @@ echo "-> 验证 HTTP 与 WebSocket"
 curl -fsSI http://127.0.0.1:8080 >/dev/null
 node tools/check-ws.js ws://127.0.0.1:8081/ws
 node tools/check-ws.js ws://127.0.0.1:8080/ws
+node tools/check-m1-ws.js ws://127.0.0.1:8081/ws
+node tools/check-m1-ws.js ws://127.0.0.1:8080/ws
 
 TAILSCALE_IP="$(tailscale ip -4 2>/dev/null | head -n 1 || true)"
 if [[ -n "${TAILSCALE_IP}" ]]; then
   curl -fsSI "http://${TAILSCALE_IP}:8080" >/dev/null
   node tools/check-ws.js "ws://${TAILSCALE_IP}:8081/ws"
   node tools/check-ws.js "ws://${TAILSCALE_IP}:8080/ws"
+  node tools/check-m1-ws.js "ws://${TAILSCALE_IP}:8081/ws"
+  node tools/check-m1-ws.js "ws://${TAILSCALE_IP}:8080/ws"
 fi
 
 echo "部署完成"

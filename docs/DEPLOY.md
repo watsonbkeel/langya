@@ -114,6 +114,10 @@ node tools/check-ws.js ws://100.74.3.56:8081/ws
 # Nginx 同源 WebSocket 反代
 node tools/check-ws.js ws://127.0.0.1:8080/ws
 node tools/check-ws.js ws://100.74.3.56:8080/ws
+
+# M1 权威战斗链路（移动、命中、击杀、换弹、死亡移除）
+node tools/check-m1-ws.js ws://127.0.0.1:8080/ws
+node tools/check-m1-ws.js ws://100.74.3.56:8080/ws
 ```
 
 浏览器（同一 Tailscale 网络的机器）打开 `http://100.74.3.56:8080`。当前部署

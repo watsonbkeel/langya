@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * M1 权威战斗链路自测：
- * join -> world_snapshot -> fire -> fire_result -> enemy_died -> 敌人移除。
+ * join -> 移动 -> fire -> fire_result -> reload -> enemy_died -> 敌人移除。
  */
 
 'use strict';
@@ -32,10 +32,14 @@ if (!weapon) {
 }
 
 let targetId;
+let initialPlayerX;
+let movementSent = false;
+let movementObserved = false;
 let shotSent = false;
 let receivedKill = false;
 let receivedDeath = false;
 let observedRemoval = false;
+let reloadObserved = false;
 let finished = false;
 
 console.log(`→ 正在验证 M1 战斗链路 ${url} ...`);
@@ -47,7 +51,14 @@ const timer = setTimeout(() => {
 }, timeoutMs);
 
 function finishIfComplete() {
-  if (!receivedKill || !receivedDeath || !observedRemoval || finished) {
+  if (
+    !movementObserved ||
+    !receivedKill ||
+    !receivedDeath ||
+    !observedRemoval ||
+    !reloadObserved ||
+    finished
+  ) {
     return;
   }
 
@@ -82,15 +93,57 @@ socket.on('message', (data) => {
       ? message.payload.enemies.find((item) => item.id === targetId)
       : message.payload.enemies[0];
 
-    if (targetId && !enemy) {
+    if (receivedKill && player?.weapon.isReloading && !reloadObserved) {
+      reloadObserved = true;
+      console.log('✅ 权威快照确认换弹状态');
+    }
+
+    if (targetId && !enemy && !observedRemoval) {
       observedRemoval = true;
-      console.log('✅ 后续快照已移除死亡敌人');
+      if (receivedKill) {
+        console.log('✅ 后续快照已移除死亡敌人');
+      }
       finishIfComplete();
       return;
     }
 
-    if (!shotSent && player && enemy) {
+    if (!movementSent && player && enemy) {
       targetId = enemy.id;
+      initialPlayerX = player.position.x;
+      movementSent = true;
+      socket.send(JSON.stringify({
+        type: 'input_state',
+        payload: {
+          clientTick: 0,
+          moveDir: { x: 1, y: 0 },
+          aimYaw: 0,
+          aimPitch: 0,
+          isCrouch: false,
+        },
+      }));
+      return;
+    }
+
+    if (
+      movementSent &&
+      !movementObserved &&
+      player &&
+      enemy &&
+      player.position.x > initialPlayerX
+    ) {
+      movementObserved = true;
+      console.log(`✅ 权威快照确认移动（x=${player.position.x.toFixed(2)}）`);
+      socket.send(JSON.stringify({
+        type: 'input_state',
+        payload: {
+          clientTick: 1,
+          moveDir: { x: 0, y: 0 },
+          aimYaw: 0,
+          aimPitch: 0,
+          isCrouch: false,
+        },
+      }));
+
       const target = {
         x: enemy.position.x,
         y:
@@ -118,7 +171,7 @@ socket.on('message', (data) => {
             y: delta.y / length,
             z: delta.z / length,
           },
-          clientTick: 0,
+          clientTick: 2,
         },
       }));
     }
@@ -142,6 +195,10 @@ socket.on('message', (data) => {
     console.log(
       `✅ 服务端确认爆头击杀（伤害 ${payload.damage}，弹匣 ${payload.magazineAmmo}）`,
     );
+    socket.send(JSON.stringify({
+      type: 'reload',
+      payload: { weaponId },
+    }));
     finishIfComplete();
     return;
   }
