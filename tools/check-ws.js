@@ -30,11 +30,15 @@ try {
 
 const url = process.argv[2] || 'ws://127.0.0.1:8081/ws';
 const TIMEOUT_MS = 5000;
+const PROTOCOL_VERSION = 1;
 
 console.log(`→ 正在连接 ${url} ...`);
 
 const started = Date.now();
 const ws = new WebSocket(url);
+let receivedSnapshot = false;
+let receivedPong = false;
+let finished = false;
 
 const timer = setTimeout(() => {
   console.error(`❌ 连接超时（${TIMEOUT_MS}ms 内未收到服务端消息）`);
@@ -48,19 +52,51 @@ const timer = setTimeout(() => {
 
 ws.on('open', () => {
   console.log(`✅ 握手成功（${Date.now() - started}ms）`);
-  // 主动发一条 ping，服务端应回 pong 或推送 snapshot
   try {
-    ws.send(JSON.stringify({ t: 'ping', ts: Date.now() }));
+    ws.send(JSON.stringify({
+      type: 'join',
+      payload: {
+        playerName: 'M0 自测',
+        protocolVersion: PROTOCOL_VERSION,
+      },
+    }));
+    ws.send(JSON.stringify({
+      type: 'ping',
+      payload: {
+        clientTimeMs: Date.now(),
+      },
+    }));
   } catch (_) {}
 });
 
 ws.on('message', (data) => {
   const raw = data.toString();
-  console.log(`✅ 收到服务端消息：${raw.slice(0, 200)}${raw.length > 200 ? ' ...' : ''}`);
-  console.log(`✅ 全部检查通过（总耗时 ${Date.now() - started}ms）`);
-  clearTimeout(timer);
-  ws.close();
-  process.exit(0);
+  let message;
+  try {
+    message = JSON.parse(raw);
+  } catch (_) {
+    console.error(`❌ 服务端返回了非 JSON 消息：${raw.slice(0, 200)}`);
+    process.exit(1);
+  }
+
+  if (message.type === 'snapshot') {
+    receivedSnapshot = true;
+    console.log(`✅ 收到 snapshot（在线连接 ${message.payload.onlineClients}）`);
+  } else if (message.type === 'pong') {
+    receivedPong = true;
+    const latencyMs = Date.now() - message.payload.clientTimeMs;
+    console.log(`✅ 收到 pong（往返延迟 ${latencyMs}ms）`);
+  } else {
+    console.error(`❌ 收到未知消息类型：${String(message.type)}`);
+    process.exit(1);
+  }
+
+  if (receivedSnapshot && receivedPong) {
+    finished = true;
+    console.log(`✅ 全部检查通过（总耗时 ${Date.now() - started}ms）`);
+    clearTimeout(timer);
+    ws.close();
+  }
 });
 
 ws.on('error', (err) => {
@@ -70,8 +106,10 @@ ws.on('error', (err) => {
 });
 
 ws.on('close', (code) => {
-  // 正常路径在 message 回调里已 exit(0)，走到这里说明没收到消息就断了
   clearTimeout(timer);
+  if (finished) {
+    process.exit(0);
+  }
   console.error(`❌ 连接被关闭（code=${code}），未收到任何服务端消息`);
   process.exit(1);
 });

@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>狼牙山五壮士 - 连通性检查</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: system-ui, sans-serif;
+        background: #17211c;
+        color: #f3f0e5;
+      }
+
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+      }
+
+      main {
+        width: min(36rem, calc(100% - 3rem));
+      }
+
+      h1 {
+        margin: 0 0 1rem;
+        font-size: 2rem;
+        letter-spacing: 0;
+      }
+
+      #status {
+        padding: 1rem;
+        border: 1px solid #7f8f68;
+        border-radius: 6px;
+        background: #202b25;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>狼牙山五壮士</h1>
+      <p id="status">正在连接服务器...</p>
+    </main>
+    <script>
+      const statusElement = document.querySelector('#status');
+      const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+      const socket = new WebSocket(`${scheme}://${location.host}/ws`);
+
+      socket.addEventListener('open', () => {
+        socket.send(
+          JSON.stringify({
+            type: 'join',
+            payload: {
+              playerName: 'M0 连通性检查',
+              protocolVersion: 1,
+            },
+          }),
+        );
+        const clientTimeMs = Date.now();
+        socket.send(
+          JSON.stringify({
+            type: 'ping',
+            payload: { clientTimeMs },
+          }),
+        );
+      });
+
+      socket.addEventListener('message', (event) => {
+        const message = JSON.parse(event.data);
+        if (message.type !== 'pong') {
+          return;
+        }
+
+        const latencyMs = Date.now() - message.payload.clientTimeMs;
+        statusElement.textContent = `已连接，延迟 ${latencyMs} ms`;
+      });
+
+      socket.addEventListener('error', () => {
+        statusElement.textContent = '连接失败';
+      });
+    </script>
+  </body>
+</html>
