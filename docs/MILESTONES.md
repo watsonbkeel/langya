@@ -51,12 +51,12 @@
 **🖥️ Debian**
 - [x] `server/` Node.js + TypeScript 工程初始化（`tsc --noEmit` 通过）
 - [x] `shared/config/*.json` 加载器 + 启动校验（复用 `tools/verify-config.js` 的规则，不通过拒绝启动）
-- [ ] HTTP 静态服务监听 `0.0.0.0`，托管客户端构建产物
+- [x] HTTP 静态服务监听 `0.0.0.0`，托管客户端构建产物
 - [x] WebSocket 服务监听 `0.0.0.0`（或同端口 `/ws` 升级）
 - [x] 心跳与延迟计算
 - [x] PM2 常驻，`pm2 startup` 开机自启
 - [x] 验证 `tools/check-ws.js` 可连通
-- [ ] 把实际端口写进 `docs/DEPLOY.md`（Mac 需要知道）
+- [x] 把实际端口写进 `docs/DEPLOY.md`（Mac 需要知道）
 
 **💻 Mac**
 - [ ] `client/` Cocos Creator 3.8 工程初始化
@@ -80,12 +80,13 @@ node tools/check-ws.js ws://127.0.0.1:8081/ws   # 握手成功 + 收到心跳
 
 #### 🖥️ Debian
 
-2026-09-04（进行中）：WS 已监听 `0.0.0.0:8081/ws`，PM2 服务名为
-`langyashan-server`，`pm2-root.service` 已启用并由 systemd 实际拉起。
-本机、局域网 `192.168.1.80`、当前 Tailscale `100.74.3.56` 均通过
-`snapshot + pong` 自测。机器当前 Node.js 为 `20.19.2`，且未安装 Nginx；
-安装系统级 Nginx、升级 Node.js 22 需按铁律 10 获得 watson 明确授权。
-文档原定 Tailscale 地址 `100.126.150.80` 当前不属于本机，需确认地址变更。
+2026-09-04：Debian M0 已完成。Nginx 静态站监听 `0.0.0.0:8080`，WS
+监听 `0.0.0.0:8081/ws`，PM2 服务名为 `langyashan-server`；
+`nginx.service` 与 `pm2-root.service` 均为 `active + enabled`。应用由项目专用
+Node.js `22.23.2` 执行。本机、局域网 `192.168.1.80`、当前 Tailscale
+`100.74.3.56` 均通过 HTTP 200、直连 WS 和 Nginx 同源 WS 自测。系统原有
+Apache 80 端口服务未修改。PRD 原定 Tailscale 地址 `100.126.150.80`
+当前不属于本机，实际地址已写入 `docs/DEPLOY.md`。
 
 #### 💻 Mac
 > 填写：日期、Cocos 版本、构建耗时、遇到的问题

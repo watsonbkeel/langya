@@ -4,6 +4,7 @@ module.exports = {
       name: 'langyashan-server',
       script: 'dist/index.js',
       cwd: __dirname,
+      interpreter: '/opt/langyashan/node22/bin/node',
       instances: 1,
       exec_mode: 'fork',
       autorestart: true,
