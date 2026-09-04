@@ -43,6 +43,7 @@ export interface AllyBotConfig {
 export interface AllyMedkitConfig {
   readonly carriedHeal: number;
   readonly carriedUseSec: number;
+  readonly carriedBlocksFire: boolean;
 }
 
 export interface AllyAgentOptions<TRouteId extends string> {

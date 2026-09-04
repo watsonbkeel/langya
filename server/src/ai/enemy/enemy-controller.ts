@@ -52,6 +52,7 @@ export interface EnemyShotIntent {
   readonly targetId: string;
   readonly enemyType: string;
   readonly distanceM: number;
+  readonly aimedPosition: Vector3;
 }
 
 export type EnemyAiEvent = EnemyFireWarning | EnemyShotIntent;
@@ -79,6 +80,7 @@ export class EnemyAgent<TRouteId extends string> {
   private readonly weapon: EnemyWeaponAiConfig;
   private stateStartedAtMs: number;
   private targetId: string | undefined;
+  private aimedPosition: Vector3 | undefined;
   private nextFireAtMs: number;
 
   constructor(options: EnemyAgentOptions<TRouteId>) {
@@ -124,12 +126,14 @@ export class EnemyAgent<TRouteId extends string> {
     }
 
     this.fireWarningEndsAtMs = undefined;
+    const aimedPosition = this.aimedPosition;
+    this.aimedPosition = undefined;
     const target = targets.find(
       (candidate) => candidate.id === this.targetId && candidate.alive,
     );
     this.targetId = undefined;
     this.nextFireAtMs = nowMs + 1000 / this.weapon.fireRate;
-    if (!target) {
+    if (!target || !aimedPosition) {
       return undefined;
     }
 
@@ -139,6 +143,7 @@ export class EnemyAgent<TRouteId extends string> {
       targetId: target.id,
       enemyType: this.enemyType,
       distanceM: distanceBetween(this.position, target.position),
+      aimedPosition,
     };
   }
 
@@ -167,6 +172,7 @@ export class EnemyAgent<TRouteId extends string> {
     }
 
     this.targetId = target.id;
+    this.aimedPosition = { ...target.position };
     this.fireWarningEndsAtMs =
       nowMs + this.shared.fireWarningSec * 1000;
     return {
@@ -181,6 +187,7 @@ export class EnemyAgent<TRouteId extends string> {
     this.state = 'dead';
     this.fireWarningEndsAtMs = undefined;
     this.targetId = undefined;
+    this.aimedPosition = undefined;
   }
 
   private updateBehaviorState(distanceM: number, nowMs: number): void {

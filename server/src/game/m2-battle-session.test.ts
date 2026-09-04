@@ -190,4 +190,16 @@ describe('M2BattleSession', () => {
       false,
     );
   });
+
+  it('真人血包使用受数量和治疗时间约束', () => {
+    const { battle } = createM2BattleRuntime(
+      config,
+      'player-6',
+      '测试玩家',
+      6,
+    );
+
+    assert.equal(battle.usePlayerMedkit(0), false);
+    assert.equal(battle.playerIsUsingMedkit, false);
+  });
 });

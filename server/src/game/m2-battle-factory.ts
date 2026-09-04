@@ -17,11 +17,16 @@ export interface M2BattleRuntime {
   readonly tickRateHz: number;
 }
 
+export interface M2BattleRuntimeOptions {
+  readonly defenderCoverExposureMultiplier?: number;
+}
+
 export function createM2BattleRuntime(
   config: ProjectConfig,
   playerId: string,
   playerName: string,
   seed: number,
+  options: M2BattleRuntimeOptions = {},
 ): M2BattleRuntime {
   const routes = createRouteLayouts(
     config.waves.routes,
@@ -67,6 +72,8 @@ export function createM2BattleRuntime(
     routes,
     routeNames,
     seatSpacingM: config.gameplay.arena.elements.spawnSpacingM,
+    defenderCoverExposureMultiplier:
+      options.defenderCoverExposureMultiplier ?? 1,
     aiUpdateGroups: config.enemies.performance.aiUpdateGroups,
     enemyShared: config.enemies.sharedRules,
     enemySpawnOffsetX: config.enemies.pathing.randomOffsetX,

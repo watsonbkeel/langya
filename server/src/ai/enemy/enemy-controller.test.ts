@@ -64,6 +64,23 @@ describe('EnemyAgent', () => {
     );
   });
 
+  it('攻击意图保留预警开始时的瞄准位置', () => {
+    const enemy = createRifleman();
+    const engageAtMs = enemiesConfig.units.rifleman.advanceSec * 1000;
+    const warning = enemy.think(engageAtMs, [target]);
+    const movedTarget: EnemyTarget = {
+      ...target,
+      position: { x: 1, y: 0, z: 0 },
+    };
+    const shot = enemy.resolvePendingAttack(
+      warning?.firesAtMs ?? 0,
+      [movedTarget],
+    );
+
+    assert.deepEqual(shot?.aimedPosition, target.position);
+    assert.deepEqual(movedTarget.position, { x: 1, y: 0, z: 0 });
+  });
+
   it('目标超出最大射程时继续推进且不发出预警', () => {
     const enemy = createRifleman();
     const distantTarget: EnemyTarget = {

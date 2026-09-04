@@ -66,6 +66,7 @@ export interface M2PlayerConfig {
   readonly moveSpeed: number;
   readonly crouchSpeed: number;
   readonly crouchHitboxMultiplier: number;
+  readonly medkitCount: number;
   readonly aimPitchMinDeg: number;
   readonly aimPitchMaxDeg: number;
 }
@@ -114,6 +115,7 @@ export interface M2BattleConfig<
   readonly routes: readonly RouteLayout<TRouteId>[];
   readonly routeNames: Readonly<Record<TRouteId, string>>;
   readonly seatSpacingM: number;
+  readonly defenderCoverExposureMultiplier: number;
   readonly aiUpdateGroups: number;
   readonly enemyShared: EnemySharedAiConfig;
   readonly enemySpawnOffsetX: number;
@@ -147,6 +149,8 @@ interface MutablePlayer {
   moveDirX: number;
   moveDirY: number;
   weapon: WeaponRuntimeState;
+  medkitsRemaining: number;
+  medkitEndsAtMs: number | undefined;
   kills: number;
 }
 
@@ -247,6 +251,8 @@ export class M2BattleSession<
       moveDirX: 0,
       moveDirY: 0,
       weapon: createWeaponState(options.config.playerWeapon),
+      medkitsRemaining: options.config.player.medkitCount,
+      medkitEndsAtMs: undefined,
       kills: 0,
     };
 
@@ -319,8 +325,16 @@ export class M2BattleSession<
     return this.player.hp;
   }
 
+  get playerPosition(): Vector3 {
+    return this.player.position;
+  }
+
   get playerWeaponState(): WeaponState {
     return this.getPlayerWeaponState();
+  }
+
+  get playerIsUsingMedkit(): boolean {
+    return this.player.medkitEndsAtMs !== undefined;
   }
 
   applyInput(message: InputStateMessage): boolean {
@@ -499,10 +513,33 @@ export class M2BattleSession<
     return true;
   }
 
+  usePlayerMedkit(nowMs: number): boolean {
+    if (
+      this.player.hp === 0 ||
+      this.player.medkitsRemaining === 0 ||
+      this.player.medkitEndsAtMs !== undefined ||
+      this.player.hp >
+        this.player.maxHp - this.config.medkit.carriedHeal
+    ) {
+      return false;
+    }
+
+    this.player.medkitsRemaining -= 1;
+    this.player.medkitEndsAtMs =
+      nowMs + this.config.medkit.carriedUseSec * 1000;
+    return true;
+  }
+
   fire(message: FireMessage, nowMs: number): M2FireResolution {
     const { payload } = message;
     if (this.player.hp === 0) {
       return this.rejectFire(message, 'dead');
+    }
+    if (
+      this.config.medkit.carriedBlocksFire &&
+      this.player.medkitEndsAtMs !== undefined
+    ) {
+      return this.rejectFire(message, 'cooldown');
     }
     if (payload.weaponId !== this.config.playerWeapon.weaponId) {
       return this.rejectFire(message, 'invalid_weapon');
@@ -757,6 +794,14 @@ export class M2BattleSession<
     if (!enemy || enemy.hp <= 0) {
       return [];
     }
+    const targetPosition = this.getFriendlyPosition(shot.targetId);
+    if (
+      !targetPosition ||
+      distanceBetween(shot.aimedPosition, targetPosition) >
+        this.config.enemyHitbox.radiusM
+    ) {
+      return [];
+    }
     const targetExposure = this.getFriendlyExposure(shot.targetId);
     if (
       targetExposure === undefined ||
@@ -778,7 +823,7 @@ export class M2BattleSession<
     ).damage;
     const fromDir = directionFromAttacker(
       enemy.agent.position,
-      this.getFriendlyPosition(shot.targetId),
+      targetPosition,
     );
 
     if (shot.targetId === this.player.id) {
@@ -845,6 +890,16 @@ export class M2BattleSession<
       this.config.playerWeapon,
       nowMs,
     );
+    if (
+      this.player.medkitEndsAtMs !== undefined &&
+      nowMs >= this.player.medkitEndsAtMs
+    ) {
+      this.player.hp = Math.min(
+        this.player.maxHp,
+        this.player.hp + this.config.medkit.carriedHeal,
+      );
+      this.player.medkitEndsAtMs = undefined;
+    }
     if (this.player.hp === 0) {
       return;
     }
@@ -1010,22 +1065,25 @@ export class M2BattleSession<
     };
   }
 
-  private getFriendlyPosition(allyId: string): Vector3 {
+  private getFriendlyPosition(allyId: string): Vector3 | undefined {
     if (allyId === this.player.id) {
-      return this.player.position;
+      return this.player.hp > 0 ? this.player.position : undefined;
     }
-    return (
-      this.allies.find((ally) => ally.id === allyId)?.position ??
-      this.player.position
+    const ally = this.allies.find(
+      (candidate) => candidate.id === allyId && candidate.isAlive,
     );
+    return ally?.position;
   }
 
   private getFriendlyExposure(allyId: string): number | undefined {
+    const coverExposure =
+      this.config.defenderCoverExposureMultiplier;
     if (allyId === this.player.id) {
       return this.player.hp > 0
         ? this.player.isCrouch
-          ? this.config.player.crouchHitboxMultiplier
-          : 1
+          ? coverExposure *
+            this.config.player.crouchHitboxMultiplier
+          : coverExposure
         : undefined;
     }
     const ally = this.allies.find((candidate) => candidate.id === allyId);
@@ -1033,8 +1091,9 @@ export class M2BattleSession<
       return undefined;
     }
     return ally.isCrouching
-      ? this.config.player.crouchHitboxMultiplier
-      : 1;
+      ? coverExposure *
+          this.config.player.crouchHitboxMultiplier
+      : coverExposure;
   }
 
   private getKillsFor(allyId: string): number {

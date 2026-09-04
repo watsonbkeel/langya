@@ -1,5 +1,6 @@
 import type { ProjectConfig } from '../config/project-config';
 import { SeededRandom, type RandomSource } from '../ai/seeded-random';
+import { createRouteLayouts } from '../ai/route-layout';
 import {
   createM2BattleRuntime,
   type M2EnemyType,
@@ -33,6 +34,10 @@ export interface M2MatchSimulationResult {
   readonly cpuPercentSingleCore: number;
   readonly wallMs: number;
   readonly ticks: number;
+}
+
+export interface M2MatchSimulationOptions {
+  readonly defenderCoverExposureMultiplier?: number;
 }
 
 export function createEnemySpawnPlan(
@@ -84,12 +89,14 @@ export function createEnemySpawnPlan(
 export function simulateM2Match(
   config: ProjectConfig,
   seed: number,
+  options: M2MatchSimulationOptions = {},
 ): M2MatchSimulationResult {
   const { battle, tickRateHz } = createM2BattleRuntime(
     config,
     `calibration-player-${seed}`,
     '校准玩家',
     seed,
+    options,
   );
   const spawnPlan = createEnemySpawnPlan(
     config,
@@ -107,12 +114,27 @@ export function simulateM2Match(
   let nextPlayerFireAtMs = config.waves.deployPhaseSec * 1000;
   let clientTick = 0;
   let maxAliveEnemies = 0;
+  let moveDirection = 1;
+  const routes = createRouteLayouts(
+    config.waves.routes,
+    config.gameplay.arena,
+  );
+  const primaryRoute = routes.reduce((selected, route) =>
+    config.waves.routes[route.routeId].enemyRatio >
+    config.waves.routes[selected.routeId].enemyRatio
+      ? route
+      : selected,
+  );
+  const routeHalfWidth =
+    config.gameplay.arena.widthM / routes.length / 2;
+  const routeMinX = primaryRoute.guardPosition.x - routeHalfWidth;
+  const routeMaxX = primaryRoute.guardPosition.x + routeHalfWidth;
 
   battle.applyInput({
     type: 'input_state',
     payload: {
       clientTick,
-      moveDir: { x: 0, y: 0 },
+      moveDir: { x: moveDirection, y: 0 },
       aimYaw: 0,
       aimPitch: 0,
       isCrouch: true,
@@ -143,11 +165,35 @@ export function simulateM2Match(
       nextSpawnIndex += 1;
     }
 
+    const playerX = battle.playerPosition.x;
+    if (
+      (moveDirection > 0 && playerX >= routeMaxX) ||
+      (moveDirection < 0 && playerX <= routeMinX)
+    ) {
+      moveDirection *= -1;
+      battle.applyInput({
+        type: 'input_state',
+        payload: {
+          clientTick,
+          moveDir: { x: moveDirection, y: 0 },
+          aimYaw: 0,
+          aimPitch: 0,
+          isCrouch: true,
+        },
+      });
+      clientTick += 1;
+    }
+
     battle.update(tickDurationSec, tick, nowMs);
     maxAliveEnemies = Math.max(maxAliveEnemies, battle.aliveEnemyCount);
     battle.resupplyPlayerAmmo(nowMs);
+    battle.usePlayerMedkit(nowMs);
 
-    if (battle.playerHp <= 0 || nowMs < nextPlayerFireAtMs) {
+    if (
+      battle.playerHp <= 0 ||
+      battle.playerIsUsingMedkit ||
+      nowMs < nextPlayerFireAtMs
+    ) {
       continue;
     }
 
