@@ -21,6 +21,46 @@ export interface M2BattleRuntime {
   readonly tickRateHz: number;
 }
 
+export function populateM2Battlefield(
+  config: ProjectConfig,
+  battle: M2BattleSession<M2RouteId, M2EnemyType>,
+  nowMs: number,
+): number {
+  const firstWave = config.waves.waves[0];
+  const routeIds = Object.keys(config.waves.routes) as M2RouteId[];
+  if (!firstWave || routeIds.length === 0) {
+    throw new Error('M2 战场初始化需要第一波配置和至少一条路线');
+  }
+
+  // M2 尚未接入完整波次调度，先按配置生成足以触发三路威胁提示的首批敌人。
+  const enemyCount = Math.min(
+    config.waves.maxAliveEnemies,
+    config.allies.callout.enemyThreshold * routeIds.length,
+  );
+  const enemyTypes = allocateEnemyTypes(
+    enemyCount,
+    firstWave.composition,
+  );
+  let spawned = 0;
+  for (let index = 0; index < enemyTypes.length; index += 1) {
+    const routeId = routeIds[index % routeIds.length];
+    const enemyType = enemyTypes[index];
+    if (
+      routeId !== undefined &&
+      enemyType !== undefined &&
+      battle.spawnEnemy(
+        enemyType,
+        routeId,
+        firstWave.accuracy,
+        nowMs,
+      )
+    ) {
+      spawned += 1;
+    }
+  }
+  return spawned;
+}
+
 export function createM2BattleRuntime(
   config: ProjectConfig,
   playerId: string,
@@ -93,6 +133,44 @@ export function createM2BattleRuntime(
       random: new SeededRandom(seed),
     }),
   };
+}
+
+function allocateEnemyTypes(
+  total: number,
+  composition: Readonly<Record<M2EnemyType, number>>,
+): M2EnemyType[] {
+  const allocations = Object.entries(composition).map(
+    ([enemyType, ratio]) => {
+      const exact = total * ratio;
+      const count = Math.floor(exact);
+      return {
+        enemyType: enemyType as M2EnemyType,
+        count,
+        remainder: exact - count,
+      };
+    },
+  );
+  let assigned = allocations.reduce(
+    (sum, allocation) => sum + allocation.count,
+    0,
+  );
+  allocations.sort((first, second) => second.remainder - first.remainder);
+  for (
+    let index = 0;
+    assigned < total && allocations.length > 0;
+    index = (index + 1) % allocations.length
+  ) {
+    allocations[index]!.count += 1;
+    assigned += 1;
+  }
+
+  const result: M2EnemyType[] = [];
+  for (const allocation of allocations) {
+    for (let index = 0; index < allocation.count; index += 1) {
+      result.push(allocation.enemyType);
+    }
+  }
+  return result;
 }
 
 function findPrimaryRoute(config: ProjectConfig): M2RouteId {

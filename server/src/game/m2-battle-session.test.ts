@@ -5,7 +5,10 @@ import {
   findRepositoryRoot,
   loadProjectConfig,
 } from '../config/project-config';
-import { createM2BattleRuntime } from './m2-battle-factory';
+import {
+  createM2BattleRuntime,
+  populateM2Battlefield,
+} from './m2-battle-factory';
 
 const config = loadProjectConfig(findRepositoryRoot());
 
@@ -44,6 +47,41 @@ describe('M2BattleSession', () => {
       snapshot.payload.enemies.length,
       config.waves.maxAliveEnemies,
     );
+    assert.deepEqual(
+      battle.createRoomState().payload.seats.map((seat) => seat.seatIndex),
+      [0, 1, 2, 3, 4],
+    );
+    assert.equal(
+      battle.createRoomState().payload.seats.every(
+        (seat) => seat.alive,
+      ),
+      true,
+    );
+  });
+
+  it('M2 联调战场按存活敌人的 routeId 提供三路威胁数据', () => {
+    const { battle } = createM2BattleRuntime(
+      config,
+      'player-routes',
+      '测试玩家',
+      7,
+    );
+    const spawned = populateM2Battlefield(config, battle, 0);
+    const snapshot = battle.createSnapshot(0, 0);
+    const threatCounts = snapshot.payload.enemies.reduce(
+      (counts, enemy) => {
+        counts[enemy.routeId] += 1;
+        return counts;
+      },
+      { A: 0, B: 0, C: 0 },
+    );
+
+    assert.equal(spawned, snapshot.payload.enemies.length);
+    assert.deepEqual(threatCounts, {
+      A: config.allies.callout.enemyThreshold,
+      B: config.allies.callout.enemyThreshold,
+      C: config.allies.callout.enemyThreshold,
+    });
   });
 
   it('真人射击继续使用服务端射线和伤害裁决', () => {
@@ -110,6 +148,66 @@ describe('M2BattleSession', () => {
       true,
     );
     assert.equal(firstWave.accuracy > 0, true);
+  });
+
+  it('预警使用服务器时间且受击方向从受击者指向攻击者', () => {
+    const warningConfig = {
+      ...config,
+      allies: {
+        ...config.allies,
+        bot: {
+          ...config.allies.bot,
+          accuracy: 0,
+          accuracyLongRange: 0,
+        },
+      },
+    };
+    const { battle, tickRateHz } = createM2BattleRuntime(
+      warningConfig,
+      'player-warning',
+      '测试玩家',
+      1,
+    );
+    battle.spawnEnemy('rifleman', 'A', 1, 0);
+
+    const stepMs = 1000 / tickRateHz;
+    let warningChecked = false;
+    let directionChecked = false;
+    for (let nowMs = 0, tick = 0; nowMs <= 10_000; nowMs += stepMs, tick += 1) {
+      const events = battle.update(stepMs / 1000, tick, nowMs);
+      const snapshot = battle.createSnapshot(tick, nowMs);
+      const warningEnemy = snapshot.payload.enemies.find(
+        (enemy) => enemy.fireWarningEndsAtMs !== undefined,
+      );
+      if (warningEnemy?.fireWarningEndsAtMs !== undefined) {
+        assert.equal(warningEnemy.fireWarningEndsAtMs > nowMs, true);
+        warningChecked = true;
+      }
+
+      const damage = events.find(
+        (event) => event.type === 'ally_damaged',
+      );
+      if (damage?.type === 'ally_damaged') {
+        const victim = snapshot.payload.allies.find(
+          (ally) => ally.id === damage.allyId,
+        );
+        const attacker = snapshot.payload.enemies[0];
+        assert.ok(victim);
+        assert.ok(attacker);
+        const expected = normalize({
+          x: attacker.position.x - victim.position.x,
+          y: attacker.position.y - victim.position.y,
+          z: attacker.position.z - victim.position.z,
+        });
+        assert.ok(Math.abs(vectorLength(damage.fromDir) - 1) < 1e-9);
+        assert.ok(dot(damage.fromDir, expected) > 0.999999);
+        directionChecked = true;
+        break;
+      }
+    }
+
+    assert.equal(warningChecked, true);
+    assert.equal(directionChecked, true);
   });
 
   it('存活队友的生存时长按当前模拟时间结算', () => {
@@ -203,3 +301,27 @@ describe('M2BattleSession', () => {
     assert.equal(battle.playerIsUsingMedkit, false);
   });
 });
+
+function normalize(vector: { x: number; y: number; z: number }) {
+  const length = vectorLength(vector);
+  return {
+    x: vector.x / length,
+    y: vector.y / length,
+    z: vector.z / length,
+  };
+}
+
+function vectorLength(vector: { x: number; y: number; z: number }) {
+  return Math.hypot(vector.x, vector.y, vector.z);
+}
+
+function dot(
+  first: { x: number; y: number; z: number },
+  second: { x: number; y: number; z: number },
+) {
+  return (
+    first.x * second.x +
+    first.y * second.y +
+    first.z * second.z
+  );
+}

@@ -164,7 +164,10 @@ function summarize(
       avgAllySurvivalSec >=
         config.allies.calibration.minAvgSurvivalSec &&
       allEnemiesSpawned &&
-      maxAliveEnemiesObserved <= config.waves.maxAliveEnemies,
+      maxAliveEnemiesObserved <= config.waves.maxAliveEnemies &&
+      Math.max(
+        ...results.map((result) => result.cpuPercentSingleCore),
+      ) < config.gameplay.server.maxSingleMatchCpuPercent,
   };
 }
 

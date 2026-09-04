@@ -6,6 +6,10 @@ import { WebSocket, WebSocketServer } from 'ws';
 import {
   CLIENT_MESSAGE_TYPES,
   SERVER_MESSAGE_TYPES,
+  type AllyCalloutMessage,
+  type AllyDamagedMessage,
+  type AllyDiedMessage,
+  type EnemyDiedMessage,
   type FireMessage,
   type PongMessage,
   type ServerMessage,
@@ -13,17 +17,27 @@ import {
 } from '../../../shared/protocol';
 import type { ProjectConfig } from '../config/project-config';
 import type { RuntimeConfig } from '../config/runtime-config';
-import { BattleSession } from '../game/battle-session';
 import { GameLoop } from '../game/game-loop';
-import { createM1BattleRuntime } from '../game/m1-battle-factory';
+import { findPlayerWeaponConfig } from '../game/m1-battle-factory';
+import {
+  createM2BattleRuntime,
+  populateM2Battlefield,
+  type M2EnemyType,
+  type M2RouteId,
+} from '../game/m2-battle-factory';
+import {
+  type M2BattleEvent,
+  type M2BattleSession,
+  type M2FireResolution,
+} from '../game/m2-battle-session';
 import { ClientTickTracker } from './client-tick-tracker';
 import { parseClientMessage } from './message-parser';
 
 interface ClientSession {
   readonly id: string;
   readonly socket: WebSocket;
-  readonly battle: BattleSession;
   readonly tickTracker: ClientTickTracker;
+  battle?: M2BattleSession<M2RouteId, M2EnemyType>;
   loop: GameLoop | undefined;
   playerName?: string;
   joined: boolean;
@@ -106,30 +120,13 @@ export class GameWebSocketServer {
 
   private handleConnection(socket: WebSocket): void {
     const id = randomUUID();
-    const runtime = createM1BattleRuntime(this.projectConfig, id);
     const session: ClientSession = {
       id,
       socket,
-      battle: runtime.battle,
       tickTracker: new ClientTickTracker(),
       loop: undefined,
       joined: false,
     };
-    session.loop = new GameLoop({
-      tickRateHz: runtime.tickRateHz,
-      onTick: ({ tick, deltaSec }) => {
-        if (!session.joined) {
-          return;
-        }
-
-        const nowMs = Date.now();
-        session.battle.update(deltaSec, nowMs);
-        this.send(
-          session.socket,
-          session.battle.createSnapshot(tick, nowMs),
-        );
-      },
-    });
     this.clients.set(socket, session);
     this.sendSnapshot(session);
 
@@ -147,13 +144,19 @@ export class GameWebSocketServer {
 
       switch (message.type) {
         case CLIENT_MESSAGE_TYPES.join:
+          if (session.joined) {
+            socket.close(1008, '不能重复加入房间');
+            return;
+          }
           session.playerName = message.payload.playerName.trim();
+          this.startBattle(session);
           session.joined = true;
           session.loop?.start();
           this.broadcastSnapshots();
+          this.send(session.socket, session.battle!.createRoomState());
           this.send(
             session.socket,
-            session.battle.createSnapshot(
+            session.battle!.createSnapshot(
               session.loop?.currentTick ?? 0,
               Date.now(),
             ),
@@ -173,6 +176,7 @@ export class GameWebSocketServer {
         case CLIENT_MESSAGE_TYPES.inputState:
           if (
             !session.joined ||
+            !session.battle ||
             !this.acceptClientTick(session, message.payload.clientTick) ||
             !session.battle.applyInput(message)
           ) {
@@ -180,10 +184,10 @@ export class GameWebSocketServer {
           }
           return;
         case CLIENT_MESSAGE_TYPES.fire:
-          if (!session.joined) {
+          if (!session.joined || !session.battle) {
             this.sendFireResolution(
               session,
-              session.battle.rejectFire(message, 'not_joined'),
+              this.rejectFireBeforeJoin(message),
             );
             return;
           }
@@ -197,7 +201,7 @@ export class GameWebSocketServer {
           );
           return;
         case CLIENT_MESSAGE_TYPES.reload:
-          if (session.joined) {
+          if (session.joined && session.battle) {
             session.battle.reload(message, Date.now());
           }
           return;
@@ -215,6 +219,35 @@ export class GameWebSocketServer {
     });
   }
 
+  private startBattle(session: ClientSession): void {
+    const runtime = createM2BattleRuntime(
+      this.projectConfig,
+      session.id,
+      session.playerName ?? session.id,
+      Date.now(),
+    );
+    const nowMs = Date.now();
+    populateM2Battlefield(this.projectConfig, runtime.battle, nowMs);
+    session.battle = runtime.battle;
+    session.loop = new GameLoop({
+      tickRateHz: runtime.tickRateHz,
+      onTick: ({ tick, deltaSec }) => {
+        const battle = session.battle;
+        if (!session.joined || !battle) {
+          return;
+        }
+
+        const tickNowMs = Date.now();
+        const events = battle.update(deltaSec, tick, tickNowMs);
+        this.sendBattleEvents(session, events);
+        this.send(
+          session.socket,
+          battle.createSnapshot(tick, tickNowMs),
+        );
+      },
+    });
+  }
+
   private acceptClientTick(
     session: ClientSession,
     clientTick: number,
@@ -224,11 +257,102 @@ export class GameWebSocketServer {
 
   private sendFireResolution(
     session: ClientSession,
-    resolution: ReturnType<BattleSession['fire']>,
+    resolution: M2FireResolution,
   ): void {
     this.send(session.socket, resolution.result);
     if (resolution.death) {
       this.send(session.socket, resolution.death);
+    }
+  }
+
+  private rejectFireBeforeJoin(message: FireMessage): M2FireResolution {
+    const weaponId = this.projectConfig.gameplay.player.defaultLoadout.primary;
+    const weapon = findPlayerWeaponConfig(this.projectConfig, weaponId);
+    return {
+      result: {
+        type: SERVER_MESSAGE_TYPES.fireResult,
+        payload: {
+          clientTick: message.payload.clientTick,
+          weaponId: message.payload.weaponId,
+          accepted: false,
+          rejectReason: 'not_joined',
+          hit: false,
+          damage: 0,
+          isKill: false,
+          magazineAmmo: weapon.magazine,
+          reserveAmmo: weapon.reserveAmmo,
+        },
+      },
+    };
+  }
+
+  private sendBattleEvents(
+    session: ClientSession,
+    events: readonly M2BattleEvent<M2RouteId>[],
+  ): void {
+    let roomStateChanged = false;
+    for (const event of events) {
+      switch (event.type) {
+        case 'enemy_died': {
+          const message: EnemyDiedMessage = {
+            type: SERVER_MESSAGE_TYPES.enemyDied,
+            payload: {
+              enemyId: event.enemyId,
+              killerId: event.killerId,
+              killerIsBot: event.killerIsBot,
+            },
+          };
+          this.send(session.socket, message);
+          break;
+        }
+        case 'ally_callout': {
+          const message: AllyCalloutMessage = {
+            type: SERVER_MESSAGE_TYPES.allyCallout,
+            payload: {
+              allyId: event.allyId,
+              routeId: event.routeId,
+              text: event.text,
+            },
+          };
+          this.send(session.socket, message);
+          break;
+        }
+        case 'ally_damaged': {
+          const message: AllyDamagedMessage = {
+            type: SERVER_MESSAGE_TYPES.allyDamaged,
+            payload: {
+              allyId: event.allyId,
+              hp: event.hp,
+              fromDir: event.fromDir,
+            },
+          };
+          this.send(session.socket, message);
+          break;
+        }
+        case 'ally_died': {
+          const message: AllyDiedMessage = {
+            type: SERVER_MESSAGE_TYPES.allyDied,
+            payload: {
+              allyId: event.allyId,
+              isBot: event.isBot,
+              killerType: event.killerType,
+            },
+          };
+          this.send(session.socket, message);
+          roomStateChanged = true;
+          break;
+        }
+        case 'ally_reassigned':
+          roomStateChanged = true;
+          break;
+        case 'fire_warning':
+        case 'shot':
+          break;
+      }
+    }
+
+    if (roomStateChanged && session.battle) {
+      this.send(session.socket, session.battle.createRoomState());
     }
   }
 
