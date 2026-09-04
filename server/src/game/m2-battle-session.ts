@@ -13,6 +13,7 @@ import {
   type RoomStateMessage,
   type RouteId,
   type ScoreboardEntry,
+  type ThrowGrenadeMessage,
   type Vector3,
   type WeaponRackItemState,
   type WeaponState,
@@ -61,6 +62,11 @@ import {
   type WeaponRuntimeConfig,
   type WeaponRuntimeState,
 } from '../combat/weapon-state';
+import {
+  calculateGrenadeImpact,
+  resolveGrenadeBlast,
+  type GrenadeConfig,
+} from '../combat/grenade';
 import {
   PlayerWeaponInventory,
   type InventoryWeaponConfig,
@@ -117,6 +123,10 @@ export interface M2MedkitConfig extends AllyMedkitConfig {
   readonly airdropHeal: number;
 }
 
+export interface M2GrenadeConfig extends GrenadeConfig {
+  readonly weaponId: string;
+}
+
 export interface M2PlayerWeaponConfig
   extends InventoryWeaponConfig,
     Omit<WeaponDamageConfig, 'hitPartMultiplier'> {
@@ -168,6 +178,7 @@ export interface M2BattleConfig<
   readonly ammoBoxCooldownSec: number;
   readonly score: ScoreTrackerConfig;
   readonly airdrop: SupplyDropConfig;
+  readonly grenade: M2GrenadeConfig;
 }
 
 export interface M2BattleSessionOptions<
@@ -206,6 +217,11 @@ interface EnemyRuntime<TRouteId extends string, TEnemyType extends string> {
   readonly accuracy: number;
   readonly weaponId: string;
   hp: number;
+}
+
+interface PendingGrenade {
+  readonly impactPosition: Vector3;
+  readonly detonatesAtMs: number;
 }
 
 export type M2BattleEvent<TRouteId extends RouteId> =
@@ -256,6 +272,7 @@ export class M2BattleSession<
   private readonly scoreTracker: ScoreTracker;
   private readonly supplyDropManager: SupplyDropManager;
   private readonly weaponRacks: readonly WeaponRackItemState[];
+  private readonly pendingGrenades: PendingGrenade[] = [];
   private enemySequence = 0;
   private elapsedSec = 0;
   private startedAtMs: number | undefined;
@@ -524,6 +541,7 @@ export class M2BattleSession<
         events.push(death);
       }
     }
+    events.push(...this.resolvePendingGrenades(nowMs));
 
     const callout = this.calloutController.update(
       nowMs,
@@ -691,6 +709,52 @@ export class M2BattleSession<
       this.player.hp + result.heal,
     );
     this.scoreTracker.recordMedkitUsed(this.player.id);
+    return undefined;
+  }
+
+  throwGrenade(
+    message: ThrowGrenadeMessage,
+    nowMs: number,
+  ): ActionRejectReason | undefined {
+    if (this.player.hp === 0) {
+      return 'dead';
+    }
+    if (this.player.medkitEndsAtMs !== undefined) {
+      return 'invalid_state';
+    }
+    if (this.player.grenadesRemaining === 0) {
+      return 'no_resource';
+    }
+    const { originPos, dirVec, force } = message.payload;
+    if (
+      distanceBetween(originPos, this.player.position) >
+      this.config.validation.fireOriginToleranceM
+    ) {
+      return 'out_of_range';
+    }
+    const magnitude = vectorMagnitude(dirVec);
+    if (
+      !Number.isFinite(magnitude) ||
+      Math.abs(magnitude - 1) >
+        this.config.validation.directionMagnitudeTolerance ||
+      !Number.isFinite(force) ||
+      force < 0 ||
+      force > 1
+    ) {
+      return 'invalid_target';
+    }
+
+    this.player.grenadesRemaining -= 1;
+    this.pendingGrenades.push({
+      impactPosition: calculateGrenadeImpact(
+        originPos,
+        dirVec,
+        force,
+        this.config.grenade,
+      ),
+      detonatesAtMs:
+        nowMs + this.config.grenade.fuseSec * 1000,
+    });
     return undefined;
   }
 
@@ -1198,6 +1262,62 @@ export class M2BattleSession<
           ]
         : []),
     ];
+  }
+
+  private resolvePendingGrenades(
+    nowMs: number,
+  ): readonly M2BattleEvent<TRouteId>[] {
+    const events: M2BattleEvent<TRouteId>[] = [];
+    for (
+      let index = this.pendingGrenades.length - 1;
+      index >= 0;
+      index -= 1
+    ) {
+      const grenade = this.pendingGrenades[index];
+      if (!grenade || nowMs < grenade.detonatesAtMs) {
+        continue;
+      }
+      this.pendingGrenades.splice(index, 1);
+      const hits = resolveGrenadeBlast(
+        grenade.impactPosition,
+        this.enemies.map((enemy) => ({
+          id: enemy.agent.id,
+          position: enemy.agent.position,
+          hp: enemy.hp,
+          alive: enemy.hp > 0,
+        })),
+        this.config.grenade,
+      );
+      for (const hit of hits) {
+        const enemy = this.enemies.find(
+          (candidate) => candidate.agent.id === hit.targetId,
+        );
+        if (!enemy || enemy.hp <= 0) {
+          continue;
+        }
+        const hpBeforeDamage = enemy.hp;
+        enemy.hp = Math.max(0, enemy.hp - hit.damage);
+        const isKill = enemy.hp === 0;
+        this.scoreTracker.recordDamage(
+          this.player.id,
+          hpBeforeDamage - enemy.hp,
+          isKill,
+          false,
+          this.getCurrentWaveIndex(),
+        );
+        if (!isKill) {
+          continue;
+        }
+        enemy.agent.markDead();
+        events.push({
+          type: 'enemy_died',
+          enemyId: enemy.agent.id,
+          killerId: this.player.id,
+          killerIsBot: false,
+        });
+      }
+    }
+    return events;
   }
 
   private updatePlayer(deltaSec: number, nowMs: number): void {

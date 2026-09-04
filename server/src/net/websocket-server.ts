@@ -318,6 +318,31 @@ export class GameWebSocketServer {
             ),
           );
           return;
+        case CLIENT_MESSAGE_TYPES.throwGrenade:
+          if (
+            !session.joined ||
+            session.matchEnded ||
+            !session.battle
+          ) {
+            this.sendActionResult(
+              session,
+              message.payload.clientTick,
+              'throw_grenade',
+              'invalid_state',
+            );
+            return;
+          }
+          if (!this.acceptClientTick(session, message.payload.clientTick)) {
+            socket.close(1008, 'clientTick 必须严格递增');
+            return;
+          }
+          this.sendActionResult(
+            session,
+            message.payload.clientTick,
+            'throw_grenade',
+            session.battle.throwGrenade(message, Date.now()),
+          );
+          return;
       }
     });
 

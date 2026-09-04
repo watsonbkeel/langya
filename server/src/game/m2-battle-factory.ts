@@ -144,6 +144,12 @@ export function createM2BattleRuntime(
         config.gameplay.score.tiebreakOrder as ScoreTiebreakField[],
     },
     airdrop: config.gameplay.airdrop,
+    grenade: {
+      weaponId: config.gameplay.player.defaultLoadout.throwable,
+      ...config.weapons.player.grenade,
+      falloffCurve:
+        config.weapons.player.grenade.falloffCurve as 'linear',
+    },
   };
 
   return {

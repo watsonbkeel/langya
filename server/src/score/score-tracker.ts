@@ -89,19 +89,36 @@ export class ScoreTracker {
     }
 
     score.shotsHit += 1;
-    score.damageDealt += Math.max(0, shot.damage);
     if (shot.hitPart === 'head') {
       score.headshots += 1;
     }
-    if (!shot.isKill) {
+    this.recordDamage(
+      occupantId,
+      shot.damage,
+      shot.isKill,
+      shot.isMachineGun,
+      shot.waveIndex,
+    );
+  }
+
+  recordDamage(
+    occupantId: string,
+    damage: number,
+    isKill: boolean,
+    isMachineGun: boolean,
+    waveIndex: number,
+  ): void {
+    const score = this.requireScore(occupantId);
+    score.damageDealt += Math.max(0, damage);
+    if (!isKill) {
       return;
     }
 
     score.kills += 1;
-    if (shot.isMachineGun) {
+    if (isMachineGun) {
       score.mgKills += 1;
     }
-    const waveOffset = shot.waveIndex - 1;
+    const waveOffset = waveIndex - 1;
     if (waveOffset >= 0 && waveOffset < score.killsByWave.length) {
       score.killsByWave[waveOffset] =
         (score.killsByWave[waveOffset] ?? 0) + 1;

@@ -357,6 +357,44 @@ describe('M2BattleSession', () => {
       true,
     );
   });
+
+  it('手榴弹投掷由服务端校验并扣减权威数量', () => {
+    const { battle } = createM2BattleRuntime(
+      config,
+      'player-grenade',
+      '测试玩家',
+      9,
+    );
+    const originPos = battle.playerPosition;
+    const createMessage = (clientTick: number) => ({
+      type: 'throw_grenade' as const,
+      payload: {
+        originPos,
+        dirVec: { x: 0, y: 0, z: -1 },
+        force: 1,
+        clientTick,
+      },
+    });
+
+    for (
+      let count = 0;
+      count < config.gameplay.player.defaultLoadout.throwableCount;
+      count += 1
+    ) {
+      assert.equal(
+        battle.throwGrenade(createMessage(count), count * 1000),
+        undefined,
+      );
+    }
+    assert.equal(
+      battle.throwGrenade(createMessage(5), 5000),
+      'no_resource',
+    );
+    const player = battle
+      .createSnapshot(0, 0)
+      .payload.allies.find((ally) => !ally.isBot);
+    assert.equal(player?.grenadesRemaining, 0);
+  });
 });
 
 function normalize(vector: { x: number; y: number; z: number }) {
