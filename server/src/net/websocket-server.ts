@@ -44,6 +44,14 @@ import {
 } from '../game/m2-battle-session';
 import { ClientTickTracker } from './client-tick-tracker';
 import { parseClientMessage } from './message-parser';
+import {
+  createWebSocketLogLine,
+  decodeCloseReason,
+  describeWebSocketError,
+  type WebSocketLogContext,
+  type WebSocketLogDetails,
+  WebSocketSendMonitor,
+} from './websocket-observability';
 import type { WaveScheduler } from '../wave/wave-scheduler';
 
 interface ClientSession {
@@ -57,6 +65,7 @@ interface ClientSession {
   loop: GameLoop | undefined;
   playerName?: string;
   joined: boolean;
+  heartbeatAlive: boolean;
 }
 
 export class GameWebSocketServer {
@@ -64,6 +73,8 @@ export class GameWebSocketServer {
   private readonly websocketServer: WebSocketServer;
   private readonly reportRepository: MatchReportRepository;
   private readonly clients = new Map<WebSocket, ClientSession>();
+  private readonly sendMonitor: WebSocketSendMonitor;
+  private heartbeatInterval: ReturnType<typeof setInterval> | undefined;
   private snapshotSequence = 0;
 
   constructor(
@@ -72,6 +83,10 @@ export class GameWebSocketServer {
   ) {
     this.reportRepository = new MatchReportRepository(
       runtimeConfig.dbPath,
+    );
+    this.sendMonitor = new WebSocketSendMonitor(
+      runtimeConfig.wsBackpressureWarnBytes,
+      runtimeConfig.wsBackpressureLogIntervalMs,
     );
     this.httpServer = createServer((request, response) => {
       if (request.url === '/healthz') {
@@ -114,6 +129,7 @@ export class GameWebSocketServer {
         this.runtimeConfig.host,
         () => {
           this.httpServer.off('error', reject);
+          this.startHeartbeat();
           resolve();
         },
       );
@@ -121,9 +137,10 @@ export class GameWebSocketServer {
   }
 
   stop(): Promise<void> {
+    this.stopHeartbeat();
     for (const client of this.clients.values()) {
       client.loop?.stop();
-      client.socket.close();
+      client.socket.close(1001, '服务器正在停止');
     }
 
     return new Promise((resolve, reject) => {
@@ -148,9 +165,15 @@ export class GameWebSocketServer {
       matchEnded: false,
       loop: undefined,
       joined: false,
+      heartbeatAlive: true,
     };
     this.clients.set(socket, session);
+    this.logSocketEvent('info', 'connection_open', session);
     this.sendSnapshot(session);
+
+    socket.on('pong', () => {
+      session.heartbeatAlive = true;
+    });
 
     socket.on('message', (data, isBinary) => {
       if (isBinary) {
@@ -396,15 +419,60 @@ export class GameWebSocketServer {
       }
     });
 
-    socket.on('close', () => {
+    socket.on('close', (code, reason) => {
+      this.logSocketEvent('info', 'connection_close', session, {
+        code,
+        reason: decodeCloseReason(reason),
+      });
       session.loop?.stop();
       this.clients.delete(socket);
       this.broadcastSnapshots();
     });
 
     socket.on('error', (error) => {
-      console.error(`[ws] 客户端 ${session.id} 连接异常`, error);
+      this.logSocketEvent('error', 'connection_error', session, {
+        ...describeWebSocketError(error),
+      });
     });
+  }
+
+  private startHeartbeat(): void {
+    if (this.heartbeatInterval !== undefined) {
+      return;
+    }
+    this.heartbeatInterval = setInterval(() => {
+      this.probeConnections();
+    }, this.runtimeConfig.wsHeartbeatIntervalMs);
+    this.heartbeatInterval.unref();
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatInterval === undefined) {
+      return;
+    }
+    clearInterval(this.heartbeatInterval);
+    this.heartbeatInterval = undefined;
+  }
+
+  private probeConnections(): void {
+    for (const session of this.clients.values()) {
+      if (session.socket.readyState !== WebSocket.OPEN) {
+        continue;
+      }
+      if (!session.heartbeatAlive) {
+        this.logSocketEvent('warn', 'heartbeat_timeout', session);
+        session.socket.terminate();
+        continue;
+      }
+      session.heartbeatAlive = false;
+      try {
+        session.socket.ping();
+      } catch (error: unknown) {
+        this.logSocketEvent('error', 'heartbeat_ping_error', session, {
+          ...describeWebSocketError(error),
+        });
+      }
+    }
   }
 
   private startBattle(session: ClientSession): void {
@@ -780,9 +848,59 @@ export class GameWebSocketServer {
     this.send(session.socket, message);
   }
 
-  private send(socket: WebSocket, message: ServerMessage): void {
-    if (socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify(message));
+  private createLogContext(session: ClientSession): WebSocketLogContext {
+    const startedAtMs = session.matchStartedAtMs;
+    const waveScheduler = session.waveScheduler;
+    let matchPhase = session.joined ? 'starting' : 'not_joined';
+    let currentWaveIndex: number | null = null;
+    let elapsedSec: number | null = null;
+
+    if (startedAtMs !== undefined && waveScheduler) {
+      const elapsedMs = Math.max(0, Date.now() - startedAtMs);
+      const progress = waveScheduler.getProgress(elapsedMs);
+      matchPhase = session.matchEnded ? 'ended' : progress.phase;
+      currentWaveIndex = progress.currentWaveIndex;
+      elapsedSec = Math.round(elapsedMs / 100) / 10;
     }
+
+    return {
+      clientId: session.id,
+      joined: session.joined,
+      roomId: session.battle?.room.id ?? null,
+      matchPhase,
+      currentWaveIndex,
+      playerAlive: session.battle?.playerAlive ?? null,
+      matchEnded: session.matchEnded,
+      elapsedSec,
+      bufferedAmount: session.socket.bufferedAmount,
+    };
+  }
+
+  private logSocketEvent(
+    level: 'info' | 'warn' | 'error',
+    event: string,
+    session: ClientSession,
+    details: WebSocketLogDetails = {},
+  ): void {
+    console[level](
+      createWebSocketLogLine(
+        event,
+        this.createLogContext(session),
+        details,
+      ),
+    );
+  }
+
+  private send(socket: WebSocket, message: ServerMessage): void {
+    const session = this.clients.get(socket);
+    if (!session) {
+      return;
+    }
+    this.sendMonitor.send(
+      socket,
+      JSON.stringify(message),
+      message.type,
+      () => this.createLogContext(session),
+    );
   }
 }
