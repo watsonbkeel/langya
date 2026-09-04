@@ -50,7 +50,7 @@
 
 | # | 提案机器 | 日期 | 改什么 | 为什么 | 影响范围 | 状态 |
 |---|---|---|---|---|---|---|
-| — | — | — | — | — | — | — |
+| 1 | debian | 2026-09-04 | 新建 `shared/protocol.ts`，定义 M0 的 `join` / `snapshot` / `ping` / `pong` 判别联合类型；统一使用 `{ type, payload }` JSON 信封 | 建立客户端与权威服务器的唯一协议真源，供 Mac 侧直接导入并完成 M0 联调 | 服务端 WS 握手、客户端网络层、`tools/check-ws.js` | watson 已指示 Debian 起草并先推送，待 Mac 拉取确认 |
 
 <!-- 示例：
 | 1 | debian | 2026-09-05 | snapshot 增加 allyRoute 字段 | 客户端要显示队友在哪条路线 | 客户端队友面板 | 待确认 |
