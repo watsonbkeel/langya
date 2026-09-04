@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { config as loadEnvFile } from 'dotenv';
 
@@ -7,6 +7,7 @@ export interface RuntimeConfig {
   readonly host: string;
   readonly wsPort: number;
   readonly wsPath: string;
+  readonly dbPath: string;
 }
 
 function parsePort(name: string, fallback: number): number {
@@ -37,5 +38,9 @@ export function loadRuntimeConfig(repositoryRoot: string): RuntimeConfig {
     host: process.env.HOST ?? '0.0.0.0',
     wsPort: parsePort('WS_PORT', 8081),
     wsPath,
+    dbPath: resolve(
+      repositoryRoot,
+      process.env.DB_PATH ?? 'data/matches.sqlite',
+    ),
   });
 }

@@ -21,6 +21,7 @@ import {
 } from '../../../shared/protocol';
 import type { ProjectConfig } from '../config/project-config';
 import type { RuntimeConfig } from '../config/runtime-config';
+import { MatchReportRepository } from '../db/match-report-repository';
 import { GameLoop } from '../game/game-loop';
 import {
   determineMatchEnd,
@@ -57,6 +58,7 @@ interface ClientSession {
 export class GameWebSocketServer {
   private readonly httpServer: Server;
   private readonly websocketServer: WebSocketServer;
+  private readonly reportRepository: MatchReportRepository;
   private readonly clients = new Map<WebSocket, ClientSession>();
   private snapshotSequence = 0;
 
@@ -64,6 +66,9 @@ export class GameWebSocketServer {
     private readonly runtimeConfig: RuntimeConfig,
     private readonly projectConfig: ProjectConfig,
   ) {
+    this.reportRepository = new MatchReportRepository(
+      runtimeConfig.dbPath,
+    );
     this.httpServer = createServer((request, response) => {
       if (request.url === '/healthz') {
         response.writeHead(200, { 'content-type': 'application/json' });
@@ -120,6 +125,7 @@ export class GameWebSocketServer {
     return new Promise((resolve, reject) => {
       this.websocketServer.close();
       this.httpServer.close((error) => {
+        this.reportRepository.close();
         if (error) {
           reject(error);
           return;
@@ -390,6 +396,10 @@ export class GameWebSocketServer {
         totalEnemies: finalProgress.totalEnemies,
       },
     };
+    this.reportRepository.save({
+      ...message.payload,
+      startedAtMs,
+    });
 
     this.send(session.socket, battle.createRoomState());
     this.send(
