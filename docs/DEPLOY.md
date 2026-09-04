@@ -126,9 +126,10 @@ node tools/check-m2-ws.js ws://100.74.3.56:8080/ws
 
 浏览器（同一 Tailscale 网络的机器）打开 `http://100.74.3.56:8080`。当前部署
 的是 Mac 构建并经 Taildrop 传入 Debian 的 Cocos web-mobile 产物，页面应显示
-M1 权威战斗 HUD、敌人占位、生命值、弹药与连接延迟。2026-09-04 使用
-Mac 提交 `59c49dd` 的构建在 Debian Chrome 实测完成命中、服务端裁决击杀及
-敌人移除，Tailscale 页面最近一次有效开火反馈为 6ms。
+M2 权威战斗 HUD、4 名 AI 队友状态、三路敌情、喊话、开火预警、敌人占位、
+生命值、弹药与连接延迟。2026-09-04 使用 Mac 提交 `81c4c2b` 的构建在
+Debian Chrome 经 Tailscale 实测，M2 标题、4 名队友状态、A/B/C 敌情、
+路线告急和权威受伤状态均正常渲染，WebGL 2 上下文正常且无页面脚本异常。
 
 ## 7. Nginx 转发参考（watson 自行配置，不在 Codex 交付范围）
 
@@ -218,3 +219,4 @@ npx --no-install pm2 restart langyashan-server
 | 2026-09-04 | Codex Debian | 部署 Mac 的 Cocos web-mobile 构建并完成浏览器最终验收 |
 | 2026-09-04 | Codex Debian | 发布 `59c49dd` 的 M1 构建并完成 Tailscale 浏览器战斗链路验收 |
 | 2026-09-04 | Codex Debian | M2 服务端增加五席房间、三路 AI 快照与事件的本机/Tailscale 自动验收 |
+| 2026-09-04 | Codex Debian | 发布 `81c4c2b` 的 M2 构建并完成 Tailscale 浏览器最终验收 |
