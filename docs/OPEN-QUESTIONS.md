@@ -50,11 +50,61 @@
 
 | # | 提案机器 | 日期 | 改什么 | 为什么 | 影响范围 | 状态 |
 |---|---|---|---|---|---|---|
-| 1 | debian | 2026-09-04 | 新建 `shared/protocol.ts`，定义 M0 的 `join` / `snapshot` / `ping` / `pong` 判别联合类型；统一使用 `{ type, payload }` JSON 信封 | 建立客户端与权威服务器的唯一协议真源，供 Mac 侧直接导入并完成 M0 联调 | 服务端 WS 握手、客户端网络层、`tools/check-ws.js` | watson 已指示 Debian 起草并先推送，待 Mac 拉取确认 |
+| 1 | debian | 2026-09-04 | 新建 `shared/protocol.ts`，定义 M0 的 `join` / `snapshot` / `ping` / `pong` 判别联合类型；统一使用 `{ type, payload }` JSON 信封 | 建立客户端与权威服务器的唯一协议真源，供 Mac 侧直接导入并完成 M0 联调 | 服务端 WS 握手、客户端网络层、`tools/check-ws.js` | 已完成，Mac 已拉取并通过 M0 联调 |
+| 2 | debian | 2026-09-04 | 在不改动 M0 消息的前提下，增量增加 M1 的 `input_state` / `fire` / `reload` / `world_snapshot` / `fire_result` / `enemy_died` 消息及共享状态类型 | 建立“输入 → 服务端命中裁决 → 扣血/死亡 → 客户端表现”的权威战斗链路，并同步权威弹药状态 | 服务端消息解析、20Hz 战斗循环、射线命中与弹药校验；Mac 输入、敌人占位、HUD 和命中反馈 | 待 watson 通知 Mac 并由双方确认 |
 
 <!-- 示例：
 | 1 | debian | 2026-09-05 | snapshot 增加 allyRoute 字段 | 客户端要显示队友在哪条路线 | 客户端队友面板 | 待确认 |
 -->
+
+### 提案 2：M1 战斗协议字段草案
+
+兼容策略：
+
+- 保留 `PROTOCOL_VERSION = 1`，M0 的四种消息和字段不变。
+- M1 消息继续使用 `{ type, payload }` JSON 信封，属于向后兼容的新增类型。
+- 武器 ID 使用字符串，服务端必须对照 `weapons.json` 校验，不信任客户端。
+- 坐标使用 Cocos 世界坐标米制浮点数，`Vector3.y` 为竖直方向；M5 再按计划增加
+  int16 量化传输，不在 M1 提前改变客户端坐标表示。
+
+客户端到服务端：
+
+| 消息 | payload 字段 |
+|---|---|
+| `input_state` | `clientTick`, `moveDir: Vector2`, `aimYaw`, `aimPitch`, `isCrouch` |
+| `fire` | `weaponId`, `originPos: Vector3`, `dirVec: Vector3`, `clientTick` |
+| `reload` | `weaponId` |
+
+服务端到客户端：
+
+| 消息 | payload 字段 |
+|---|---|
+| `world_snapshot` | `tick`, `serverTimeMs`, `allies: AllyState[]`, `enemies: EnemyState[]`, `items: ItemState[]`；M1 的 `items` 为空数组 |
+| `fire_result` | `clientTick`, `weaponId`, `accepted`, `rejectReason?`, `hit`, `targetId?`, `damage`, `isKill`, `hitPart?`, `magazineAmmo`, `reserveAmmo` |
+| `enemy_died` | `enemyId`, `killerId`, `killerIsBot`；M1 固定为真人击杀，字段为后续 AI 复用预留 |
+
+共享状态：
+
+| 类型 | 字段 |
+|---|---|
+| `Vector2` | `x`, `y` |
+| `Vector3` | `x`, `y`, `z` |
+| `HitPart` | `'head' \| 'torso' \| 'limb'` |
+| `FireRejectReason` | `'not_joined' \| 'invalid_weapon' \| 'invalid_origin' \| 'invalid_direction' \| 'cooldown' \| 'empty_magazine' \| 'reloading' \| 'dead'` |
+| `WeaponState` | `weaponId`, `magazineAmmo`, `reserveAmmo`, `isReloading`, `reloadEndsAtMs?` |
+| `AllyState` | `id`, `isBot`, `hp`, `maxHp`, `position`, `aimYaw`, `aimPitch`, `isCrouch`, `weapon` |
+| `EnemyState` | `id`, `enemyType`, `hp`, `maxHp`, `position`, `alive` |
+| `ItemState` | M1 仅定义空接口占位不合适，因此定义为 `never` 并发送空数组；M3 加空投字段时另走协议提案 |
+
+校验约定：
+
+- `moveDir` 每轴必须有限且位于 `[-1, 1]`，斜向长度由服务端归一化。
+- `aimYaw` / `aimPitch`、所有向量分量和 `clientTick` 必须是有限数；
+  `dirVec` 必须接近单位向量。
+- `originPos` 只能在服务端权威玩家位置的容差范围内，否则以
+  `invalid_origin` 拒绝；具体容差由服务端配置决定，不写进协议。
+- 射速、弹匣、备弹、换弹时间、伤害、距离衰减和部位倍率全部读取
+  `shared/config/*.json`，客户端不得提交命中对象或伤害值。
 
 ## 执行期间新增（Codex 追加区）
 
