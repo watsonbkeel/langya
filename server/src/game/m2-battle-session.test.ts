@@ -110,6 +110,16 @@ describe('M2BattleSession', () => {
     }
     assert.equal(resolution.death?.payload.enemyId, enemyId);
     assert.equal(battle.playerKills, 1);
+    const playerScore = battle
+      .createScoreboard()
+      .find((entry) => entry.occupantId === 'player-2');
+    assert.ok(playerScore);
+    assert.equal(playerScore.kills, 1);
+    assert.equal(playerScore.headshots, 1);
+    assert.equal(playerScore.shotsFired, 1);
+    assert.equal(playerScore.shotsHit, 1);
+    assert.equal(playerScore.damageDealt, config.enemies.units.rifleman.hp);
+    assert.equal(battle.selectMvpPlayerId(), 'player-2');
   });
 
   it('敌我 AI 共用 tick 更新并产生预警、伤害和喊话事件', () => {

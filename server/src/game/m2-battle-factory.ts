@@ -2,6 +2,7 @@ import type { ProjectConfig } from '../config/project-config';
 import type { RouteId } from '../../../shared/protocol';
 import { createRouteLayouts } from '../ai/route-layout';
 import { SeededRandom } from '../ai/seeded-random';
+import type { ScoreTiebreakField } from '../score/score-tracker';
 import { WaveScheduler } from '../wave/wave-scheduler';
 import { findPlayerWeaponConfig } from './m1-battle-factory';
 import {
@@ -131,6 +132,13 @@ export function createM2BattleRuntime(
     enemyWeapons,
     maxAliveEnemies: config.waves.maxAliveEnemies,
     ammoBoxCooldownSec: config.gameplay.arena.ammoBoxCooldownSec,
+    score: {
+      totalWaves: config.waves.waves.length,
+      mvpHumanOnly: config.gameplay.score.mvpHumanOnly,
+      mvpRequiresAlive: config.gameplay.score.mvpRequiresAlive,
+      tiebreakOrder:
+        config.gameplay.score.tiebreakOrder as ScoreTiebreakField[],
+    },
   };
 
   return {

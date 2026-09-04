@@ -11,6 +11,7 @@ import {
   type ReloadMessage,
   type RoomStateMessage,
   type RouteId,
+  type ScoreboardEntry,
   type Vector3,
   type WeaponState,
   type WorldSnapshotMessage,
@@ -63,6 +64,10 @@ import {
   type WeaponRuntimeState,
 } from '../combat/weapon-state';
 import { SoloRoom, type SoloRoomConfig } from '../room/solo-room';
+import {
+  ScoreTracker,
+  type ScoreTrackerConfig,
+} from '../score/score-tracker';
 
 export interface M2PlayerConfig {
   readonly maxHp: number;
@@ -146,6 +151,7 @@ export interface M2BattleConfig<
   readonly enemyWeapons: Readonly<Record<string, M2EnemyWeaponConfig>>;
   readonly maxAliveEnemies: number;
   readonly ammoBoxCooldownSec: number;
+  readonly score: ScoreTrackerConfig;
 }
 
 export interface M2BattleSessionOptions<
@@ -174,7 +180,6 @@ interface MutablePlayer {
   grenadesRemaining: number;
   medkitsRemaining: number;
   medkitEndsAtMs: number | undefined;
-  kills: number;
 }
 
 interface EnemyRuntime<TRouteId extends string, TEnemyType extends string> {
@@ -230,6 +235,7 @@ export class M2BattleSession<
   private readonly enemyController: EnemyController<TRouteId>;
   private readonly deploymentManager: AllyDeploymentManager<TRouteId>;
   private readonly calloutController: CalloutController<TRouteId>;
+  private readonly scoreTracker: ScoreTracker;
   private enemySequence = 0;
   private elapsedSec = 0;
   private startedAtMs: number | undefined;
@@ -278,7 +284,6 @@ export class M2BattleSession<
         options.config.player.defaultLoadout.throwableCount,
       medkitsRemaining: options.config.player.medkitCount,
       medkitEndsAtMs: undefined,
-      kills: 0,
     };
 
     for (const seat of this.room.seats) {
@@ -319,6 +324,18 @@ export class M2BattleSession<
       options.config.callout,
       options.config.routeNames,
     );
+    this.scoreTracker = new ScoreTracker(
+      options.config.score,
+      this.room.seats.map((seat) => ({
+        occupantId: seat.occupant.id,
+        seatIndex: seat.index,
+        heroName: seat.heroName,
+        displayName: seat.occupant.isBot
+          ? seat.occupant.displayName
+          : options.playerName,
+        isBot: seat.occupant.isBot,
+      })),
+    );
   }
 
   get aliveEnemyCount(): number {
@@ -333,7 +350,7 @@ export class M2BattleSession<
   }
 
   get playerKills(): number {
-    return this.player.kills;
+    return this.getKillsFor(this.player.id);
   }
 
   get allyKills(): readonly number[] {
@@ -341,8 +358,11 @@ export class M2BattleSession<
   }
 
   get allySurvivalSec(): readonly number[] {
-    return this.allies.map((ally) =>
-      ally.isAlive ? this.elapsedSec : this.getDeathSec(ally.id),
+    const scoreboard = this.createScoreboard();
+    return this.allies.map(
+      (ally) =>
+        scoreboard.find((entry) => entry.occupantId === ally.id)
+          ?.survivalSec ?? 0,
     );
   }
 
@@ -552,7 +572,20 @@ export class M2BattleSession<
     this.player.medkitsRemaining -= 1;
     this.player.medkitEndsAtMs =
       nowMs + this.config.medkit.carriedUseSec * 1000;
+    this.scoreTracker.recordMedkitUsed(this.player.id);
     return true;
+  }
+
+  createScoreboard(
+    endedAtSec: number = this.elapsedSec,
+  ): readonly ScoreboardEntry[] {
+    return this.scoreTracker.createScoreboard(endedAtSec);
+  }
+
+  selectMvpPlayerId(
+    endedAtSec: number = this.elapsedSec,
+  ): string | undefined {
+    return this.scoreTracker.selectMvpPlayerId(endedAtSec);
   }
 
   fire(message: FireMessage, nowMs: number): M2FireResolution {
@@ -606,6 +639,13 @@ export class M2BattleSession<
       this.config.enemyHitbox,
     );
     if (!hit) {
+      this.scoreTracker.recordShot(this.player.id, {
+        hit: false,
+        damage: 0,
+        isKill: false,
+        isMachineGun: false,
+        waveIndex: this.getCurrentWaveIndex(),
+      });
       return { result: this.createMissResult(message) };
     }
 
@@ -613,9 +653,17 @@ export class M2BattleSession<
       (candidate) => candidate.agent.id === hit.targetId,
     );
     if (!enemy || enemy.hp <= 0) {
+      this.scoreTracker.recordShot(this.player.id, {
+        hit: false,
+        damage: 0,
+        isKill: false,
+        isMachineGun: false,
+        waveIndex: this.getCurrentWaveIndex(),
+      });
       return { result: this.createMissResult(message) };
     }
 
+    const hpBeforeDamage = enemy.hp;
     const damage = calculateDamage(
       {
         ...this.config.playerWeapon,
@@ -628,12 +676,15 @@ export class M2BattleSession<
     const isKill = enemy.hp === 0;
     if (isKill) {
       enemy.agent.markDead();
-      this.player.kills += 1;
-      this.killCounts.set(
-        this.player.id,
-        this.getKillsFor(this.player.id) + 1,
-      );
     }
+    this.scoreTracker.recordShot(this.player.id, {
+      hit: true,
+      damage: hpBeforeDamage - enemy.hp,
+      isKill,
+      isMachineGun: false,
+      hitPart: hit.hitPart,
+      waveIndex: this.getCurrentWaveIndex(),
+    });
 
     return {
       result: {
@@ -857,19 +908,28 @@ export class M2BattleSession<
     return nearestId;
   }
 
-  private readonly killCounts = new Map<string, number>();
-  private readonly deathTimesSec = new Map<string, number>();
-
   private resolveAllyShot(
     shot: AllyShotIntent,
   ): M2BattleEvent<TRouteId> | undefined {
     const enemy = this.enemies.find(
       (candidate) => candidate.agent.id === shot.targetId,
     );
-    if (!enemy || enemy.hp <= 0 || this.random.next() > shot.accuracy) {
+    if (
+      !enemy ||
+      enemy.hp <= 0 ||
+      this.random.next() > shot.accuracy
+    ) {
+      this.scoreTracker.recordShot(shot.allyId, {
+        hit: false,
+        damage: 0,
+        isKill: false,
+        isMachineGun: false,
+        waveIndex: this.getCurrentWaveIndex(),
+      });
       return undefined;
     }
 
+    const hpBeforeDamage = enemy.hp;
     const damage = calculateDamage(
       {
         ...this.config.playerWeapon,
@@ -879,15 +939,20 @@ export class M2BattleSession<
       'torso',
     ).damage;
     enemy.hp = Math.max(0, enemy.hp - damage);
-    if (enemy.hp > 0) {
+    const isKill = enemy.hp === 0;
+    this.scoreTracker.recordShot(shot.allyId, {
+      hit: true,
+      damage: hpBeforeDamage - enemy.hp,
+      isKill,
+      isMachineGun: false,
+      hitPart: 'torso',
+      waveIndex: this.getCurrentWaveIndex(),
+    });
+    if (!isKill) {
       return undefined;
     }
 
     enemy.agent.markDead();
-    this.killCounts.set(
-      shot.allyId,
-      this.getKillsFor(shot.allyId) + 1,
-    );
     return {
       type: 'enemy_died',
       enemyId: enemy.agent.id,
@@ -942,7 +1007,15 @@ export class M2BattleSession<
       if (this.player.hp === 0) {
         return [];
       }
+      const hpBeforeDamage = this.player.hp;
       this.player.hp = Math.max(0, this.player.hp - damage);
+      this.scoreTracker.recordDamageTaken(
+        this.player.id,
+        hpBeforeDamage - this.player.hp,
+      );
+      if (this.player.hp === 0) {
+        this.scoreTracker.markDead(this.player.id, this.elapsedSec);
+      }
       return [
         {
           type: 'ally_damaged',
@@ -972,9 +1045,18 @@ export class M2BattleSession<
     if (!ally.isAlive) {
       return [];
     }
+    const hpBeforeDamage = ally.hp;
+    const medkitsBeforeDamage = ally.medkitsRemaining;
     const died = ally.takeDamage(damage, nowMs);
+    this.scoreTracker.recordDamageTaken(
+      ally.id,
+      hpBeforeDamage - ally.hp,
+    );
+    if (ally.medkitsRemaining < medkitsBeforeDamage) {
+      this.scoreTracker.recordMedkitUsed(ally.id);
+    }
     if (died) {
-      this.deathTimesSec.set(ally.id, this.elapsedSec);
+      this.scoreTracker.markDead(ally.id, this.elapsedSec);
     }
     return [
       {
@@ -1110,6 +1192,17 @@ export class M2BattleSession<
     }));
   }
 
+  private getCurrentWaveIndex(): number {
+    let waveIndex = 0;
+    for (const wave of this.config.waves) {
+      if (this.elapsedSec < wave.startSec) {
+        break;
+      }
+      waveIndex = wave.index;
+    }
+    return waveIndex;
+  }
+
   private countEnemiesByRoute(): Readonly<Record<TRouteId, number>> {
     const counts = Object.fromEntries(
       this.config.routes.map((route) => [route.routeId, 0]),
@@ -1218,12 +1311,12 @@ export class M2BattleSession<
       : coverExposure;
   }
 
-  private getKillsFor(allyId: string): number {
-    return this.killCounts.get(allyId) ?? 0;
-  }
-
-  private getDeathSec(allyId: string): number {
-    return this.deathTimesSec.get(allyId) ?? 0;
+  private getKillsFor(occupantId: string): number {
+    return (
+      this.createScoreboard().find(
+        (entry) => entry.occupantId === occupantId,
+      )?.kills ?? 0
+    );
   }
 
   private getAmmoState(): Pick<
