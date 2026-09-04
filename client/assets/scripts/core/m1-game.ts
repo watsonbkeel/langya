@@ -37,6 +37,7 @@ import { WeaponView } from '../weapon/weapon-view';
 
 interface M1DebugState {
   readonly connected: boolean;
+  readonly playerAlive: boolean;
   readonly lastDisconnectCode: number | null;
   readonly lastDisconnectReason: string | null;
   readonly snapshotTick: number;
@@ -560,6 +561,7 @@ export class M1Game {
   private onMatchEnd(message: MatchEndMessage): void {
     this.matchEnded = true;
     this.scoreboardEntries = message.payload.scoreboard.length;
+    this.weaponView.setVisible(false);
     this.hud.showMatchEnd(message.payload, this.clientId);
     this.publishDebugState();
   }
@@ -596,7 +598,7 @@ export class M1Game {
     if (this.playerAlive) {
       this.spectatingAllyId = null;
       this.controller.leaveSpectatorMode();
-      this.weaponView.setVisible(true);
+      this.weaponView.setVisible(!this.matchEnded);
       this.hud.hideSpectating();
       return;
     }
@@ -657,6 +659,7 @@ export class M1Game {
   private getDebugState(): M1DebugState {
     return {
       connected: this.connected,
+      playerAlive: this.playerAlive,
       lastDisconnectCode: this.lastDisconnectCode,
       lastDisconnectReason: this.lastDisconnectReason,
       snapshotTick: this.snapshotTick,

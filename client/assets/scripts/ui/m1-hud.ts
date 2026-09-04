@@ -372,6 +372,9 @@ export class M1Hud {
   }
 
   showMatchEnd(payload: MatchEndPayload, playerId: string | null): void {
+    for (const child of this.root.children) {
+      child.active = false;
+    }
     const report = new Node('MatchReport');
     this.setUiLayer(report);
     report.setParent(this.root);
@@ -412,6 +415,23 @@ export class M1Hud {
         isPlayer ? '#FFD56A' : '#FFFFFF',
       );
     });
+    const playerEntry = payload.scoreboard.find(
+      (entry) => entry.occupantId === playerId,
+    );
+    if (playerEntry) {
+      const waveSummary = playerEntry.killsByWave
+        .map((kills, index) => `第 ${index + 1} 波 ${kills}`)
+        .join('  ·  ');
+      this.createReportLabel(
+        report,
+        `你的分波战绩：${waveSummary}`,
+        this.presentation.reportLineFontSizePx,
+        this.presentation.reportFirstLineOffsetYPx -
+          payload.scoreboard.length * this.presentation.reportLineGapPx -
+          this.presentation.reportLineGapPx / 2,
+        '#FFD56A',
+      );
+    }
     this.createReportLabel(
       report,
       '向英雄致敬',
