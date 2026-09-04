@@ -50,6 +50,7 @@ export class M1Hud {
   private readonly healthLabel: Label;
   private readonly ammoLabel: Label;
   private readonly messageLabel: Label;
+  private readonly spectatorLabel: Label;
   private readonly hitLabel: Label;
   private readonly damageLabel: Label;
   private readonly vignetteOpacity: UIOpacity;
@@ -145,6 +146,13 @@ export class M1Hud {
       presentation.hudFontSizePx,
       new Vec3(0, presentation.messageOffsetYPx, 0),
       '#FFFFFF',
+    );
+    this.spectatorLabel = this.createLabel(
+      'Spectator',
+      '',
+      presentation.hudFontSizePx,
+      new Vec3(0, presentation.spectatorOffsetYPx, 0),
+      '#C8F4FF',
     );
     this.hitLabel = this.createLabel(
       'HitMarker',
@@ -345,6 +353,16 @@ export class M1Hud {
         ? '弹链装填中'
         : '可开火';
     this.machineGunLabel.string = `九二式  弹链 ${machineGun.beltAmmo}  热量 ${heat}%  ${state}`;
+  }
+
+  showSpectating(heroName: string | null): void {
+    this.spectatorLabel.string = heroName
+      ? `观战：${heroName}  ·  按 Q 切换视角`
+      : '全员阵亡，等待战报…';
+  }
+
+  hideSpectating(): void {
+    this.spectatorLabel.string = '';
   }
 
   showActionResult(payload: ActionResultPayload): void {

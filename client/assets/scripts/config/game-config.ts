@@ -104,6 +104,7 @@ export interface PresentationConfig {
   readonly ammoOffsetXPx: number;
   readonly ammoOffsetYPx: number;
   readonly messageOffsetYPx: number;
+  readonly spectatorOffsetYPx: number;
   readonly allyPanelOffsetXPx: number;
   readonly allyPanelOffsetYPx: number;
   readonly allyPanelLineGapPx: number;
@@ -193,6 +194,7 @@ const PRESENTATION_NUMBER_KEYS = [
   'ammoOffsetXPx',
   'ammoOffsetYPx',
   'messageOffsetYPx',
+  'spectatorOffsetYPx',
   'allyPanelOffsetXPx',
   'allyPanelOffsetYPx',
   'allyPanelLineGapPx',

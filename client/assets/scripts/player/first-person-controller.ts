@@ -49,6 +49,7 @@ export class FirstPersonController {
   private pointerLockAttempted = false;
   private ignoreMouseUntilMs = 0;
   private fireHeld = false;
+  private spectatorMode = false;
   private readonly preventContextMenu = (event: Event): void => {
     event.preventDefault();
   };
@@ -90,6 +91,9 @@ export class FirstPersonController {
   }
 
   setAuthoritativePosition(position: Vector3): void {
+    if (this.spectatorMode) {
+      return;
+    }
     this.targetPosition.set(position.x, position.y, position.z);
     if (!this.hasPosition) {
       this.renderedPosition.set(this.targetPosition);
@@ -133,7 +137,30 @@ export class FirstPersonController {
   }
 
   isFireHeld(): boolean {
-    return this.fireHeld;
+    return !this.spectatorMode && this.fireHeld;
+  }
+
+  setSpectatorTarget(
+    position: Vector3,
+    aimYaw: number,
+    aimPitch: number,
+  ): void {
+    this.spectatorMode = true;
+    this.fireHeld = false;
+    this.pressedKeys.clear();
+    this.targetPosition.set(position.x, position.y, position.z);
+    this.aimYaw = aimYaw;
+    this.aimPitch = aimPitch;
+    this.cameraNode.setRotationFromEuler(aimPitch, aimYaw, 0);
+    if (!this.hasPosition) {
+      this.renderedPosition.set(this.targetPosition);
+      this.cameraNode.setPosition(this.renderedPosition);
+      this.hasPosition = true;
+    }
+  }
+
+  leaveSpectatorMode(): void {
+    this.spectatorMode = false;
   }
 
   setMountedAimLimits(limits: MountedAimLimits | null): void {
@@ -187,6 +214,12 @@ export class FirstPersonController {
   }
 
   private onKeyDown(event: EventKeyboard): void {
+    if (this.spectatorMode) {
+      if (event.keyCode === KeyCode.KEY_Q) {
+        this.actions.onSwitchWeapon();
+      }
+      return;
+    }
     const firstPress = !this.pressedKeys.has(event.keyCode);
     this.pressedKeys.add(event.keyCode);
     if (firstPress && event.keyCode === KeyCode.KEY_R) {
@@ -203,10 +236,16 @@ export class FirstPersonController {
   }
 
   private onKeyUp(event: EventKeyboard): void {
+    if (this.spectatorMode) {
+      return;
+    }
     this.pressedKeys.delete(event.keyCode);
   }
 
   private onMouseMove(event: EventMouse): void {
+    if (this.spectatorMode) {
+      return;
+    }
     const canvas = game.canvas;
     if (
       canvas &&
@@ -246,6 +285,9 @@ export class FirstPersonController {
   }
 
   private onMouseDown(event: EventMouse): void {
+    if (this.spectatorMode) {
+      return;
+    }
     if (event.getButton() !== EventMouse.BUTTON_LEFT) {
       return;
     }

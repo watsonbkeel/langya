@@ -91,6 +91,10 @@ export class WeaponView {
       .start();
   }
 
+  setVisible(visible: boolean): void {
+    this.root.active = visible;
+  }
+
   destroy(): void {
     void this.audioContext?.close();
     this.audioContext = null;

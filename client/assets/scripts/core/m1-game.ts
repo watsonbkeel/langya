@@ -62,6 +62,7 @@ interface M1DebugState {
   readonly medkitsRemaining: number | null;
   readonly grenadesRemaining: number | null;
   readonly mountedMgId: string | null;
+  readonly spectatingAllyId: string | null;
   readonly waveEvents: number;
   readonly supplyEvents: number;
   readonly matchEnded: boolean;
@@ -116,6 +117,9 @@ export class M1Game {
   private medkitsRemaining: number | null = null;
   private grenadesRemaining: number | null = null;
   private mountedMgId: string | null = null;
+  private playerAlive = false;
+  private spectatingAllyId: string | null = null;
+  private latestAllies: readonly AllyState[] = [];
   private waveEvents = 0;
   private supplyEvents = 0;
   private matchEnded = false;
@@ -277,11 +281,18 @@ export class M1Game {
 
   private onWorldSnapshot(message: WorldSnapshotMessage): void {
     this.snapshotTick = message.payload.tick;
+    this.latestAllies = message.payload.allies;
+    const player = this.findPlayer(message.payload.allies);
+    this.updateSpectator(player, message.payload.allies);
     this.enemyRenderer.sync(
       message.payload.enemies,
       message.payload.serverTimeMs,
     );
-    this.allyRenderer.sync(message.payload.allies, this.clientId);
+    this.allyRenderer.sync(
+      message.payload.allies,
+      this.clientId,
+      this.spectatingAllyId,
+    );
     this.hud.updateAllies(message.payload.allies);
     this.hud.updateRouteThreat(
       message.payload.enemies,
@@ -314,7 +325,6 @@ export class M1Game {
       message.payload.serverTimeMs,
     );
 
-    const player = this.findPlayer(message.payload.allies);
     if (!player) {
       return;
     }
@@ -328,7 +338,9 @@ export class M1Game {
     this.medkitsRemaining = player.medkitsRemaining;
     this.grenadesRemaining = player.grenadesRemaining;
     this.mountedMgId = player.mountedMgId ?? null;
-    this.controller.setAuthoritativePosition(player.position);
+    if (this.playerAlive) {
+      this.controller.setAuthoritativePosition(player.position);
+    }
 
     const weaponName =
       this.config.weapons.player[player.weapon.weaponId]?.displayName ??
@@ -346,7 +358,13 @@ export class M1Game {
       player.mountedMgId,
     );
     this.hud.showMachineGun(this.mountedMachineGun);
-    if (this.mountedMachineGun) {
+    if (!this.playerAlive) {
+      this.interactionTarget = undefined;
+      this.mountedMachineGun = undefined;
+      this.hud.showInteraction('');
+      this.hud.showMachineGun(undefined);
+      this.controller.setMountedAimLimits(null);
+    } else if (this.mountedMachineGun) {
       const machineGunConfig =
         this.config.weapons.emplacement[this.mountedMachineGun.weaponId];
       this.controller.setMountedAimLimits(
@@ -367,7 +385,11 @@ export class M1Game {
       this.hud.showReady(message.payload.enemies.length);
     }
 
-    if (message.payload.match.phase !== 'ended' && !this.matchEnded) {
+    if (
+      this.playerAlive &&
+      message.payload.match.phase !== 'ended' &&
+      !this.matchEnded
+    ) {
       this.netClient.sendInput(this.controller.getInputState());
     }
     this.publishDebugState();
@@ -391,7 +413,12 @@ export class M1Game {
   }
 
   private fire(): void {
-    if (this.matchEnded || !this.playerPosition || !this.weaponState) {
+    if (
+      this.matchEnded ||
+      !this.playerAlive ||
+      !this.playerPosition ||
+      !this.weaponState
+    ) {
       return;
     }
 
@@ -418,7 +445,7 @@ export class M1Game {
   }
 
   private reload(): void {
-    if (this.matchEnded || this.mountedMachineGun) {
+    if (this.matchEnded || !this.playerAlive || this.mountedMachineGun) {
       return;
     }
     if (!this.weaponState || !this.netClient.reload(this.weaponState.weaponId)) {
@@ -429,6 +456,10 @@ export class M1Game {
   }
 
   private switchWeapon(): void {
+    if (!this.playerAlive) {
+      this.cycleSpectator();
+      return;
+    }
     if (
       this.matchEnded ||
       this.mountedMachineGun ||
@@ -447,14 +478,19 @@ export class M1Game {
   }
 
   private useMedkit(): void {
-    if (this.matchEnded) {
+    if (this.matchEnded || !this.playerAlive) {
       return;
     }
     this.netClient.useMedkit();
   }
 
   private throwGrenade(): void {
-    if (this.matchEnded || !this.playerPosition || this.mountedMachineGun) {
+    if (
+      this.matchEnded ||
+      !this.playerAlive ||
+      !this.playerPosition ||
+      this.mountedMachineGun
+    ) {
       return;
     }
     this.netClient.throwGrenade(
@@ -465,7 +501,7 @@ export class M1Game {
   }
 
   private interact(): void {
-    if (this.matchEnded) {
+    if (this.matchEnded || !this.playerAlive) {
       return;
     }
     const target = this.interactionTarget;
@@ -541,6 +577,72 @@ export class M1Game {
     this.publishDebugState();
   }
 
+  private updateSpectator(
+    player: AllyState | undefined,
+    allies: readonly AllyState[],
+  ): void {
+    this.playerAlive = player !== undefined && player.hp > 0;
+    if (this.playerAlive) {
+      this.spectatingAllyId = null;
+      this.controller.leaveSpectatorMode();
+      this.weaponView.setVisible(true);
+      this.hud.hideSpectating();
+      return;
+    }
+
+    const current = allies.find(
+      (ally) =>
+        ally.isBot &&
+        ally.hp > 0 &&
+        ally.id === this.spectatingAllyId,
+    );
+    const target = current ?? allies.find((ally) => ally.isBot && ally.hp > 0);
+    this.applySpectatorTarget(target);
+  }
+
+  private cycleSpectator(): void {
+    if (this.matchEnded) {
+      return;
+    }
+    const candidates = this.latestAllies
+      .filter((ally) => ally.isBot && ally.hp > 0)
+      .sort((first, second) => first.seatIndex - second.seatIndex);
+    if (candidates.length === 0) {
+      this.applySpectatorTarget(undefined);
+      return;
+    }
+    const currentIndex = candidates.findIndex(
+      (ally) => ally.id === this.spectatingAllyId,
+    );
+    const next = candidates[(currentIndex + 1) % candidates.length];
+    this.applySpectatorTarget(next);
+    this.allyRenderer.sync(
+      this.latestAllies,
+      this.clientId,
+      this.spectatingAllyId,
+    );
+    this.publishDebugState();
+  }
+
+  private applySpectatorTarget(target: AllyState | undefined): void {
+    this.spectatingAllyId = target?.id ?? null;
+    this.weaponView.setVisible(false);
+    this.hud.showSpectating(target?.heroName ?? null);
+    if (!target) {
+      return;
+    }
+    const eyeHeight = this.config.gameplay.combat.enemyHitboxHeightM / 2;
+    this.controller.setSpectatorTarget(
+      {
+        x: target.position.x,
+        y: target.position.y + eyeHeight,
+        z: target.position.z,
+      },
+      target.aimYaw,
+      target.aimPitch,
+    );
+  }
+
   private getDebugState(): M1DebugState {
     return {
       connected: this.connected,
@@ -569,6 +671,7 @@ export class M1Game {
       medkitsRemaining: this.medkitsRemaining,
       grenadesRemaining: this.grenadesRemaining,
       mountedMgId: this.mountedMgId,
+      spectatingAllyId: this.spectatingAllyId,
       waveEvents: this.waveEvents,
       supplyEvents: this.supplyEvents,
       matchEnded: this.matchEnded,

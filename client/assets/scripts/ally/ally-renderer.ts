@@ -54,10 +54,19 @@ export class AllyRenderer {
     );
   }
 
-  sync(allies: readonly AllyState[], playerId: string | null): void {
+  sync(
+    allies: readonly AllyState[],
+    playerId: string | null,
+    hiddenAllyId: string | null = null,
+  ): void {
     const visibleIds = new Set<string>();
     for (const ally of allies) {
-      if (!ally.isBot || ally.id === playerId || ally.hp <= 0) {
+      if (
+        !ally.isBot ||
+        ally.id === playerId ||
+        ally.id === hiddenAllyId ||
+        ally.hp <= 0
+      ) {
         continue;
       }
       visibleIds.add(ally.id);
