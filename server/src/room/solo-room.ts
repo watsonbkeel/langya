@@ -31,12 +31,20 @@ export interface SoloRoomOptions<TRouteId extends string> {
 export class SoloRoom<TRouteId extends string> {
   readonly id: string;
   readonly seats: readonly RoomSeat<TRouteId>[];
-  readonly status: RoomStatus = 'active';
+  private currentStatus: RoomStatus = 'active';
 
   constructor(options: SoloRoomOptions<TRouteId>) {
     this.validateConfig(options.config);
     this.id = options.roomId;
     this.seats = this.createSeats(options);
+  }
+
+  get status(): RoomStatus {
+    return this.currentStatus;
+  }
+
+  markEnded(): void {
+    this.currentStatus = 'ended';
   }
 
   private createSeats(

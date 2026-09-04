@@ -92,6 +92,7 @@ export interface M2ArenaConfig {
 export interface M2MatchConfig {
   readonly durationSec: number;
   readonly deployPhaseSec: number;
+  readonly allowOvertimeSpawn: boolean;
 }
 
 export interface M2WaveTimingConfig {
@@ -368,6 +369,24 @@ export class M2BattleSession<
 
   get playerHp(): number {
     return this.player.hp;
+  }
+
+  get playerAlive(): boolean {
+    return this.player.hp > 0;
+  }
+
+  get aliveDefenderCount(): number {
+    return (
+      (this.player.hp > 0 ? 1 : 0) +
+      this.allies.reduce(
+        (count, ally) => count + (ally.isAlive ? 1 : 0),
+        0,
+      )
+    );
+  }
+
+  endMatch(): void {
+    this.room.markEnded();
   }
 
   get playerPosition(): Vector3 {

@@ -11,6 +11,7 @@ import {
   type AllyDiedMessage,
   type EnemyDiedMessage,
   type FireMessage,
+  type MatchEndMessage,
   type MatchProgressState,
   type MatchStartMessage,
   type PongMessage,
@@ -21,6 +22,10 @@ import {
 import type { ProjectConfig } from '../config/project-config';
 import type { RuntimeConfig } from '../config/runtime-config';
 import { GameLoop } from '../game/game-loop';
+import {
+  determineMatchEnd,
+  type MatchEndState,
+} from '../game/match-lifecycle';
 import { findPlayerWeaponConfig } from '../game/m1-battle-factory';
 import {
   createM3BattleRuntime,
@@ -43,6 +48,7 @@ interface ClientSession {
   battle?: M2BattleSession<M2RouteId, M2EnemyType>;
   waveScheduler?: WaveScheduler<M2EnemyType, M2RouteId>;
   matchStartedAtMs?: number;
+  matchEnded: boolean;
   loop: GameLoop | undefined;
   playerName?: string;
   joined: boolean;
@@ -129,6 +135,7 @@ export class GameWebSocketServer {
       id,
       socket,
       tickTracker: new ClientTickTracker(),
+      matchEnded: false,
       loop: undefined,
       joined: false,
     };
@@ -183,6 +190,7 @@ export class GameWebSocketServer {
         case CLIENT_MESSAGE_TYPES.inputState:
           if (
             !session.joined ||
+            session.matchEnded ||
             !session.battle ||
             !this.acceptClientTick(session, message.payload.clientTick) ||
             !session.battle.applyInput(message)
@@ -191,7 +199,11 @@ export class GameWebSocketServer {
           }
           return;
         case CLIENT_MESSAGE_TYPES.fire:
-          if (!session.joined || !session.battle) {
+          if (
+            !session.joined ||
+            session.matchEnded ||
+            !session.battle
+          ) {
             this.sendFireResolution(
               session,
               this.rejectFireBeforeJoin(message),
@@ -208,7 +220,11 @@ export class GameWebSocketServer {
           );
           return;
         case CLIENT_MESSAGE_TYPES.reload:
-          if (session.joined && session.battle) {
+          if (
+            session.joined &&
+            !session.matchEnded &&
+            session.battle
+          ) {
             session.battle.reload(message, Date.now());
           }
           return;
@@ -237,6 +253,7 @@ export class GameWebSocketServer {
     session.battle = runtime.battle;
     session.waveScheduler = runtime.waveScheduler;
     session.matchStartedAtMs = runtime.startedAtMs;
+    session.matchEnded = false;
     session.loop = new GameLoop({
       tickRateHz: runtime.tickRateHz,
       onTick: ({ tick, deltaSec }) => {
@@ -280,12 +297,34 @@ export class GameWebSocketServer {
         }
         const events = battle.update(deltaSec, tick, tickNowMs);
         this.sendBattleEvents(session, events);
+        const progress = this.createMatchProgress(session, tickNowMs);
+        const outcome = determineMatchEnd({
+          elapsedSec: elapsedMs / 1000,
+          durationSec:
+            this.projectConfig.gameplay.match.durationSec,
+          allowOvertimeSpawn:
+            this.projectConfig.gameplay.match.allowOvertimeSpawn,
+          pendingEnemyCount: waveScheduler.getProgress(elapsedMs)
+            .pendingEnemies,
+          playerAlive: battle.playerAlive,
+          aliveDefenderCount: battle.aliveDefenderCount,
+        });
+        if (outcome) {
+          this.finishMatch(
+            session,
+            tick,
+            tickNowMs,
+            progress,
+            outcome,
+          );
+          return;
+        }
         this.send(
           session.socket,
           battle.createSnapshot(
             tick,
             tickNowMs,
-            this.createMatchProgress(session, tickNowMs),
+            progress,
           ),
         );
       },
@@ -313,6 +352,52 @@ export class GameWebSocketServer {
       },
     };
     this.send(session.socket, message);
+  }
+
+  private finishMatch(
+    session: ClientSession,
+    tick: number,
+    endedAtMs: number,
+    progress: MatchProgressState,
+    outcome: MatchEndState,
+  ): void {
+    const battle = session.battle;
+    const startedAtMs = session.matchStartedAtMs;
+    if (!battle || startedAtMs === undefined || session.matchEnded) {
+      return;
+    }
+
+    session.matchEnded = true;
+    battle.endMatch();
+    const endedAtSec = Math.max(0, (endedAtMs - startedAtMs) / 1000);
+    const scoreboard = battle.createScoreboard(endedAtSec);
+    const mvpPlayerId = battle.selectMvpPlayerId(endedAtSec);
+    const finalProgress: MatchProgressState = {
+      ...progress,
+      phase: 'ended',
+    };
+    const message: MatchEndMessage = {
+      type: SERVER_MESSAGE_TYPES.matchEnd,
+      payload: {
+        matchId: battle.room.id,
+        result: outcome.result,
+        reason: outcome.reason,
+        endedAtMs,
+        scoreboard,
+        ...(mvpPlayerId === undefined ? {} : { mvpPlayerId }),
+        spawnedEnemies: finalProgress.spawnedEnemies,
+        defeatedEnemies: finalProgress.defeatedEnemies,
+        totalEnemies: finalProgress.totalEnemies,
+      },
+    };
+
+    this.send(session.socket, battle.createRoomState());
+    this.send(
+      session.socket,
+      battle.createSnapshot(tick, endedAtMs, finalProgress),
+    );
+    this.send(session.socket, message);
+    session.loop?.stop();
   }
 
   private createMatchProgress(
