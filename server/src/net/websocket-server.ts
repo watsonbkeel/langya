@@ -112,21 +112,28 @@ export class GameWebSocketServer {
         return;
       }
 
-      if (message.type === CLIENT_MESSAGE_TYPES.join) {
-        session.playerName = message.payload.playerName.trim();
-        session.joined = true;
-        this.broadcastSnapshots();
-        return;
+      switch (message.type) {
+        case CLIENT_MESSAGE_TYPES.join:
+          session.playerName = message.payload.playerName.trim();
+          session.joined = true;
+          this.broadcastSnapshots();
+          return;
+        case CLIENT_MESSAGE_TYPES.ping: {
+          const response: PongMessage = {
+            type: SERVER_MESSAGE_TYPES.pong,
+            payload: {
+              clientTimeMs: message.payload.clientTimeMs,
+              serverTimeMs: Date.now(),
+            },
+          };
+          this.send(socket, response);
+          return;
+        }
+        case CLIENT_MESSAGE_TYPES.inputState:
+        case CLIENT_MESSAGE_TYPES.fire:
+        case CLIENT_MESSAGE_TYPES.reload:
+          return;
       }
-
-      const response: PongMessage = {
-        type: SERVER_MESSAGE_TYPES.pong,
-        payload: {
-          clientTimeMs: message.payload.clientTimeMs,
-          serverTimeMs: Date.now(),
-        },
-      };
-      this.send(socket, response);
     });
 
     socket.on('close', () => {
