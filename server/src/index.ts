@@ -6,7 +6,7 @@ async function main(): Promise<void> {
   const repositoryRoot = findRepositoryRoot();
   const projectConfig = loadProjectConfig(repositoryRoot);
   const runtimeConfig = loadRuntimeConfig(repositoryRoot);
-  const server = new GameWebSocketServer(runtimeConfig);
+  const server = new GameWebSocketServer(runtimeConfig, projectConfig);
 
   await server.start();
   console.info(

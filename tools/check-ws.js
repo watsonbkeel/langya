@@ -38,6 +38,7 @@ const started = Date.now();
 const ws = new WebSocket(url);
 let receivedSnapshot = false;
 let receivedPong = false;
+let reportedWorldSnapshot = false;
 let finished = false;
 
 const timer = setTimeout(() => {
@@ -86,6 +87,13 @@ ws.on('message', (data) => {
     receivedPong = true;
     const latencyMs = Date.now() - message.payload.clientTimeMs;
     console.log(`✅ 收到 pong（往返延迟 ${latencyMs}ms）`);
+  } else if (message.type === 'world_snapshot') {
+    if (!reportedWorldSnapshot) {
+      reportedWorldSnapshot = true;
+      console.log(`✅ 收到 world_snapshot（tick ${message.payload.tick}）`);
+    }
+  } else if (message.type === 'fire_result' || message.type === 'enemy_died') {
+    // M0 连通性检查不触发战斗，只需容忍同一连接上的 M1 服务端消息。
   } else {
     console.error(`❌ 收到未知消息类型：${String(message.type)}`);
     process.exit(1);

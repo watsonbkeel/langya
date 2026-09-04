@@ -368,7 +368,7 @@ export class BattleSession {
     };
   }
 
-  private rejectFire(
+  rejectFire(
     message: FireMessage,
     rejectReason: FireRejectReason,
   ): FireResolution {

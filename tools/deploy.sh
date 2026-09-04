@@ -33,6 +33,7 @@ node tools/verify-config.js
 echo "-> 安装并检查服务端依赖"
 npm --prefix server ci --no-audit --no-fund
 npm --prefix server run typecheck
+npm --prefix server test
 npm --prefix server run build
 
 if [[ -f "${CLIENT_BUILD_DIR}/index.html" ]]; then

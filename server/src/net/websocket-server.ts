@@ -6,16 +6,25 @@ import { WebSocket, WebSocketServer } from 'ws';
 import {
   CLIENT_MESSAGE_TYPES,
   SERVER_MESSAGE_TYPES,
+  type FireMessage,
   type PongMessage,
   type ServerMessage,
   type SnapshotMessage,
 } from '../../../shared/protocol';
+import type { ProjectConfig } from '../config/project-config';
 import type { RuntimeConfig } from '../config/runtime-config';
+import { BattleSession } from '../game/battle-session';
+import { GameLoop } from '../game/game-loop';
+import { createM1BattleRuntime } from '../game/m1-battle-factory';
+import { ClientTickTracker } from './client-tick-tracker';
 import { parseClientMessage } from './message-parser';
 
 interface ClientSession {
   readonly id: string;
   readonly socket: WebSocket;
+  readonly battle: BattleSession;
+  readonly tickTracker: ClientTickTracker;
+  loop: GameLoop | undefined;
   playerName?: string;
   joined: boolean;
 }
@@ -26,7 +35,10 @@ export class GameWebSocketServer {
   private readonly clients = new Map<WebSocket, ClientSession>();
   private snapshotSequence = 0;
 
-  constructor(private readonly runtimeConfig: RuntimeConfig) {
+  constructor(
+    private readonly runtimeConfig: RuntimeConfig,
+    private readonly projectConfig: ProjectConfig,
+  ) {
     this.httpServer = createServer((request, response) => {
       if (request.url === '/healthz') {
         response.writeHead(200, { 'content-type': 'application/json' });
@@ -76,6 +88,7 @@ export class GameWebSocketServer {
 
   stop(): Promise<void> {
     for (const client of this.clients.values()) {
+      client.loop?.stop();
       client.socket.close();
     }
 
@@ -92,17 +105,37 @@ export class GameWebSocketServer {
   }
 
   private handleConnection(socket: WebSocket): void {
+    const id = randomUUID();
+    const runtime = createM1BattleRuntime(this.projectConfig, id);
     const session: ClientSession = {
-      id: randomUUID(),
+      id,
       socket,
+      battle: runtime.battle,
+      tickTracker: new ClientTickTracker(),
+      loop: undefined,
       joined: false,
     };
+    session.loop = new GameLoop({
+      tickRateHz: runtime.tickRateHz,
+      onTick: ({ tick, deltaSec }) => {
+        if (!session.joined) {
+          return;
+        }
+
+        const nowMs = Date.now();
+        session.battle.update(deltaSec, nowMs);
+        this.send(
+          session.socket,
+          session.battle.createSnapshot(tick, nowMs),
+        );
+      },
+    });
     this.clients.set(socket, session);
     this.sendSnapshot(session);
 
     socket.on('message', (data, isBinary) => {
       if (isBinary) {
-        socket.close(1003, 'M0 仅接受 JSON 文本消息');
+        socket.close(1003, '仅接受 JSON 文本消息');
         return;
       }
 
@@ -116,7 +149,15 @@ export class GameWebSocketServer {
         case CLIENT_MESSAGE_TYPES.join:
           session.playerName = message.payload.playerName.trim();
           session.joined = true;
+          session.loop?.start();
           this.broadcastSnapshots();
+          this.send(
+            session.socket,
+            session.battle.createSnapshot(
+              session.loop?.currentTick ?? 0,
+              Date.now(),
+            ),
+          );
           return;
         case CLIENT_MESSAGE_TYPES.ping: {
           const response: PongMessage = {
@@ -130,13 +171,41 @@ export class GameWebSocketServer {
           return;
         }
         case CLIENT_MESSAGE_TYPES.inputState:
+          if (
+            !session.joined ||
+            !this.acceptClientTick(session, message.payload.clientTick) ||
+            !session.battle.applyInput(message)
+          ) {
+            socket.close(1008, '输入状态无效');
+          }
+          return;
         case CLIENT_MESSAGE_TYPES.fire:
+          if (!session.joined) {
+            this.sendFireResolution(
+              session,
+              session.battle.rejectFire(message, 'not_joined'),
+            );
+            return;
+          }
+          if (!this.acceptClientTick(session, message.payload.clientTick)) {
+            socket.close(1008, 'clientTick 必须严格递增');
+            return;
+          }
+          this.sendFireResolution(
+            session,
+            session.battle.fire(message, Date.now()),
+          );
+          return;
         case CLIENT_MESSAGE_TYPES.reload:
+          if (session.joined) {
+            session.battle.reload(message, Date.now());
+          }
           return;
       }
     });
 
     socket.on('close', () => {
+      session.loop?.stop();
       this.clients.delete(socket);
       this.broadcastSnapshots();
     });
@@ -144,6 +213,23 @@ export class GameWebSocketServer {
     socket.on('error', (error) => {
       console.error(`[ws] 客户端 ${session.id} 连接异常`, error);
     });
+  }
+
+  private acceptClientTick(
+    session: ClientSession,
+    clientTick: number,
+  ): boolean {
+    return session.tickTracker.accept(clientTick);
+  }
+
+  private sendFireResolution(
+    session: ClientSession,
+    resolution: ReturnType<BattleSession['fire']>,
+  ): void {
+    this.send(session.socket, resolution.result);
+    if (resolution.death) {
+      this.send(session.socket, resolution.death);
+    }
   }
 
   private broadcastSnapshots(): void {

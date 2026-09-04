@@ -14,16 +14,17 @@ const config: BattleSessionConfig = {
     maxHp: gameplayConfig.player.maxHp,
     moveSpeed: gameplayConfig.player.moveSpeed,
     crouchSpeed: gameplayConfig.player.crouchSpeed,
-    aimPitchMinDeg: -60,
-    aimPitchMaxDeg: 60,
+    aimPitchMinDeg: gameplayConfig.player.aimPitchMinDeg,
+    aimPitchMaxDeg: gameplayConfig.player.aimPitchMaxDeg,
   },
   arena: {
     widthM: gameplayConfig.arena.widthM,
     depthM: gameplayConfig.arena.depthM,
   },
   validation: {
-    fireOriginToleranceM: 1,
-    directionMagnitudeTolerance: 0.05,
+    fireOriginToleranceM: gameplayConfig.combat.fireOriginToleranceM,
+    directionMagnitudeTolerance:
+      gameplayConfig.combat.directionMagnitudeTolerance,
   },
   weapon: {
     weaponId: 'liaoshi13',
@@ -31,10 +32,10 @@ const config: BattleSessionConfig = {
   },
   hitPartMultiplier: weaponsConfig.hitPartMultiplier,
   enemyHitbox: {
-    radiusM: 0.45,
-    heightM: 1.8,
-    headStartM: 1.4,
-    torsoStartM: 0.5,
+    radiusM: gameplayConfig.combat.enemyHitboxRadiusM,
+    heightM: gameplayConfig.combat.enemyHitboxHeightM,
+    headStartM: gameplayConfig.combat.headHitboxStartM,
+    torsoStartM: gameplayConfig.combat.torsoHitboxStartM,
   },
 };
 
