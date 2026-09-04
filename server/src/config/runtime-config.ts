@@ -64,7 +64,7 @@ export function loadRuntimeConfig(repositoryRoot: string): RuntimeConfig {
     ),
     wsBackpressureWarnBytes: parsePositiveInteger(
       'WS_BACKPRESSURE_WARN_BYTES',
-      1_048_576,
+      262_144,
     ),
     wsBackpressureLogIntervalMs: parsePositiveInteger(
       'WS_BACKPRESSURE_LOG_INTERVAL_MS',

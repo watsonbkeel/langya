@@ -70,6 +70,8 @@ export function describeWebSocketError(error: unknown): {
 export class WebSocketSendMonitor {
   private readonly lastBackpressureLogAtMs =
     new WeakMap<MonitoredWebSocket, number>();
+  private readonly lastSendErrorLogAtMs =
+    new WeakMap<MonitoredWebSocket, number>();
 
   constructor(
     private readonly backpressureWarnBytes: number,
@@ -96,6 +98,7 @@ export class WebSocketSendMonitor {
     data: string,
     messageType: string,
     getContext: () => WebSocketLogContext,
+    dropWhenBackpressured = false,
   ): boolean {
     if (socket.readyState !== WebSocket.OPEN) {
       return false;
@@ -114,9 +117,14 @@ export class WebSocketSendMonitor {
           createWebSocketLogLine('send_backpressure', getContext(), {
             messageType,
             bufferedAmount,
+            action: dropWhenBackpressured ? 'drop' : 'send',
           }),
         );
       }
+    }
+
+    if (dropWhenBackpressured && bufferedAmount >= this.backpressureWarnBytes) {
+      return false;
     }
 
     try {
@@ -124,22 +132,35 @@ export class WebSocketSendMonitor {
         if (!error) {
           return;
         }
-        this.logger.error(
-          createWebSocketLogLine('send_error', getContext(), {
-            messageType,
-            ...describeWebSocketError(error),
-          }),
-        );
+        this.logSendError(socket, messageType, getContext, error);
       });
       return true;
     } catch (error: unknown) {
-      this.logger.error(
-        createWebSocketLogLine('send_error', getContext(), {
-          messageType,
-          ...describeWebSocketError(error),
-        }),
-      );
+      this.logSendError(socket, messageType, getContext, error);
       return false;
     }
+  }
+
+  private logSendError(
+    socket: MonitoredWebSocket,
+    messageType: string,
+    getContext: () => WebSocketLogContext,
+    error: unknown,
+  ): void {
+    const nowMs = this.now();
+    const lastLogAtMs = this.lastSendErrorLogAtMs.get(socket);
+    if (
+      lastLogAtMs !== undefined &&
+      nowMs - lastLogAtMs < this.backpressureLogIntervalMs
+    ) {
+      return;
+    }
+    this.lastSendErrorLogAtMs.set(socket, nowMs);
+    this.logger.error(
+      createWebSocketLogLine('send_error', getContext(), {
+        messageType,
+        ...describeWebSocketError(error),
+      }),
+    );
   }
 }

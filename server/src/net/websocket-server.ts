@@ -176,6 +176,7 @@ export class GameWebSocketServer {
     });
 
     socket.on('message', (data, isBinary) => {
+      session.heartbeatAlive = true;
       if (isBinary) {
         socket.close(1003, '仅接受 JSON 文本消息');
         return;
@@ -901,6 +902,7 @@ export class GameWebSocketServer {
       JSON.stringify(message),
       message.type,
       () => this.createLogContext(session),
+      message.type === SERVER_MESSAGE_TYPES.worldSnapshot,
     );
   }
 }

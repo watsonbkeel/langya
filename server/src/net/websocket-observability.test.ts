@@ -72,7 +72,7 @@ test('正常发送不产生告警', () => {
   assert.deepEqual(logger.errorLines, []);
 });
 
-test('积压告警按连接节流，但不丢弃消息', () => {
+test('积压时丢弃可替代快照但继续发送关键消息', () => {
   const logger = new RecordingLogger();
   const socket = new FakeSocket();
   socket.bufferedAmount = 2_048;
@@ -84,19 +84,42 @@ test('积压告警按连接节流，但不丢弃消息', () => {
     () => nowMs,
   );
 
-  assert.equal(monitor.send(socket, 'first', 'world_snapshot', () => context), true);
+  assert.equal(
+    monitor.send(
+      socket,
+      'first',
+      'world_snapshot',
+      () => context,
+      true,
+    ),
+    false,
+  );
   nowMs += 1_000;
-  assert.equal(monitor.send(socket, 'second', 'world_snapshot', () => context), true);
+  assert.equal(
+    monitor.send(
+      socket,
+      'second',
+      'world_snapshot',
+      () => context,
+      true,
+    ),
+    false,
+  );
   nowMs += 5_000;
-  assert.equal(monitor.send(socket, 'third', 'world_snapshot', () => context), true);
+  assert.equal(
+    monitor.send(socket, 'critical', 'match_end', () => context),
+    true,
+  );
 
-  assert.deepEqual(socket.sent, ['first', 'second', 'third']);
+  assert.deepEqual(socket.sent, ['critical']);
   assert.equal(logger.warnLines.length, 2);
   assert.match(logger.warnLines[0] ?? '', /"event":"send_backpressure"/);
   assert.match(logger.warnLines[0] ?? '', /"bufferedAmount":2048/);
+  assert.match(logger.warnLines[0] ?? '', /"action":"drop"/);
+  assert.match(logger.warnLines[1] ?? '', /"action":"send"/);
 });
 
-test('异步和同步发送错误都会记录上下文', () => {
+test('异步和同步发送错误都会记录上下文并按连接节流', () => {
   const logger = new RecordingLogger();
   const asyncSocket = new FakeSocket();
   asyncSocket.callbackError = new Error('write failed');
@@ -104,6 +127,10 @@ test('异步和同步发送错误都会记录上下文', () => {
 
   assert.equal(
     monitor.send(asyncSocket, 'payload', 'world_snapshot', () => context),
+    true,
+  );
+  assert.equal(
+    monitor.send(asyncSocket, 'payload-2', 'world_snapshot', () => context),
     true,
   );
 
