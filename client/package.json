@@ -1,0 +1,10 @@
+{
+  "name": "langyashan-defense-client",
+  "uuid": "7a816715-afe4-4a60-a8fa-c626db5017b9",
+  "creator": {
+    "version": "3.8.7"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

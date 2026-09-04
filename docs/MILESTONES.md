@@ -59,12 +59,12 @@
 - [x] 把实际端口写进 `docs/DEPLOY.md`（Mac 需要知道）
 
 **💻 Mac**
-- [ ] `client/` Cocos Creator 3.8 工程初始化
-- [ ] 无头构建跑通：`CocosCreator --project ./client --build "platform=web-mobile"`
-- [ ] 空场景（只有 Canvas + Camera + GameRoot）
-- [ ] WS 客户端连接，地址**从当前域名推导，不硬编码 IP**
-- [ ] 屏幕显示一行「已连接，延迟 xx ms」
-- [ ] 确认 `client/build|library|temp|local|profiles` 都没被 git 跟踪
+- [x] `client/` Cocos Creator 3.8 工程初始化
+- [x] 无头构建跑通：`CocosCreator --project ./client --build "platform=web-mobile"`
+- [x] 空场景（只有 Canvas + Camera + GameRoot）
+- [x] WS 客户端连接，地址**从当前域名推导，不硬编码 IP**
+- [x] 屏幕显示一行「已连接，延迟 xx ms」
+- [x] 确认 `client/build|library|temp|local|profiles` 都没被 git 跟踪
 
 ### 完成判据
 
@@ -89,7 +89,20 @@ Apache 80 端口服务未修改。PRD 原定 Tailscale 地址 `100.126.150.80`
 当前不属于本机，实际地址已写入 `docs/DEPLOY.md`。
 
 #### 💻 Mac
-> 填写：日期、Cocos 版本、构建耗时、遇到的问题
+
+2026-09-04：Mac M0 客户端已完成。使用 Cocos Creator 3.8.7 打开
+`client/` 并生成完整 `.meta`；`Boot.scene` 仅含 Canvas、Main Camera 和
+GameRoot，连接状态 Label 由入口脚本运行时创建。WS 配置默认从
+当前页面的协议和 host 推导同源 `/ws`，并通过 `import type` 直接使用
+`shared/protocol.ts` 的消息类型。
+
+首次无头构建内部任务耗时 38 秒，引擎缓存后 3 秒，`web-mobile`
+产物 6.2 MB。Mac 上 Creator 命令行启动器在内部记录「Build Task
+Finished」并产出可运行文件后仍返回状态码 36；已用最新构建做了独立运行
+验证，场景加载无报错。浏览器经本地同源 `/ws` 代理连到 Debian
+`100.74.3.56:8081/ws`，屏幕实测显示「已连接，延迟 5 ms」。
+`npx tsc --noEmit` 和配置校验通过；`build/library/temp/local/profiles`
+均未被 Git 跟踪。
 
 ---
 
