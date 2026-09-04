@@ -1,5 +1,7 @@
 import { JsonAsset, resources } from 'cc';
 
+import type { RouteId } from '../../../../shared/protocol';
+
 export interface GameplayConfig {
   readonly player: {
     readonly maxHp: number;
@@ -34,6 +36,14 @@ export interface WeaponsConfig {
 
 export interface WavesConfig {
   readonly maxAliveEnemies: number;
+  readonly routes: Readonly<
+    Record<
+      RouteId,
+      {
+        readonly name: string;
+      }
+    >
+  >;
 }
 
 export interface PresentationConfig {
@@ -47,9 +57,16 @@ export interface PresentationConfig {
   readonly pointerLockSettleSec: number;
   readonly groundThicknessM: number;
   readonly groundColor: string;
+  readonly allyColor: string;
+  readonly allyEngageColor: string;
   readonly enemyColor: string;
+  readonly enemyEngageColor: string;
   readonly enemyHitColor: string;
+  readonly fireWarningColor: string;
   readonly skyColor: string;
+  readonly entityPositionSmoothing: number;
+  readonly engageHeightScale: number;
+  readonly fireWarningSizeM: number;
   readonly crosshairSizePx: number;
   readonly crosshairGapPx: number;
   readonly crosshairLineWidthPx: number;
@@ -63,6 +80,17 @@ export interface PresentationConfig {
   readonly ammoOffsetXPx: number;
   readonly ammoOffsetYPx: number;
   readonly messageOffsetYPx: number;
+  readonly allyPanelOffsetXPx: number;
+  readonly allyPanelOffsetYPx: number;
+  readonly allyPanelLineGapPx: number;
+  readonly routeIndicatorOffsetYPx: number;
+  readonly routeThreatMaxDots: number;
+  readonly routeFlashSec: number;
+  readonly calloutOffsetYPx: number;
+  readonly calloutFontSizePx: number;
+  readonly calloutDurationSec: number;
+  readonly calloutSoundFrequencyHz: number;
+  readonly calloutSoundDurationSec: number;
   readonly weaponOffsetXPx: number;
   readonly weaponOffsetYPx: number;
   readonly weaponLengthPx: number;
@@ -98,6 +126,9 @@ const PRESENTATION_NUMBER_KEYS = [
   'mouseSensitivityDeg',
   'pointerLockSettleSec',
   'groundThicknessM',
+  'entityPositionSmoothing',
+  'engageHeightScale',
+  'fireWarningSizeM',
   'crosshairSizePx',
   'crosshairGapPx',
   'crosshairLineWidthPx',
@@ -111,6 +142,17 @@ const PRESENTATION_NUMBER_KEYS = [
   'ammoOffsetXPx',
   'ammoOffsetYPx',
   'messageOffsetYPx',
+  'allyPanelOffsetXPx',
+  'allyPanelOffsetYPx',
+  'allyPanelLineGapPx',
+  'routeIndicatorOffsetYPx',
+  'routeThreatMaxDots',
+  'routeFlashSec',
+  'calloutOffsetYPx',
+  'calloutFontSizePx',
+  'calloutDurationSec',
+  'calloutSoundFrequencyHz',
+  'calloutSoundDurationSec',
   'weaponOffsetXPx',
   'weaponOffsetYPx',
   'weaponLengthPx',
@@ -185,7 +227,19 @@ function isWeaponsConfig(value: unknown): value is WeaponsConfig {
 }
 
 function isWavesConfig(value: unknown): value is WavesConfig {
-  return isRecord(value) && isFiniteNumber(value.maxAliveEnemies);
+  if (
+    !isRecord(value) ||
+    !isFiniteNumber(value.maxAliveEnemies) ||
+    !isRecord(value.routes)
+  ) {
+    return false;
+  }
+  const routes = value.routes;
+  const routeIds: readonly RouteId[] = ['A', 'B', 'C'];
+  return routeIds.every((routeId) => {
+    const route = routes[routeId];
+    return isRecord(route) && typeof route.name === 'string';
+  });
 }
 
 function isPresentationConfig(value: unknown): value is PresentationConfig {
@@ -199,8 +253,12 @@ function isPresentationConfig(value: unknown): value is PresentationConfig {
   return (
     hasNumbers &&
     typeof value.groundColor === 'string' &&
+    typeof value.allyColor === 'string' &&
+    typeof value.allyEngageColor === 'string' &&
     typeof value.enemyColor === 'string' &&
+    typeof value.enemyEngageColor === 'string' &&
     typeof value.enemyHitColor === 'string' &&
+    typeof value.fireWarningColor === 'string' &&
     typeof value.skyColor === 'string'
   );
 }

@@ -31,5 +31,5 @@ for (const filename of filenames) {
 console.info(
   checkOnly
     ? '✅ Cocos 配置副本与 shared/config 一致'
-    : '✅ 已将 M1 所需配置同步到 Cocos resources',
+    : '✅ 已将客户端所需配置同步到 Cocos resources',
 );

@@ -11,12 +11,18 @@ import {
 } from 'cc';
 
 import type {
+  AllyAiState,
   AllyState,
+  EnemyState,
   FireRejectReason,
   FireResultPayload,
+  RouteId,
   WeaponState,
 } from '../../../../shared/protocol';
-import type { PresentationConfig } from '../config/game-config';
+import type {
+  PresentationConfig,
+  WavesConfig,
+} from '../config/game-config';
 import type { ConnectionStatus } from '../net/net-client';
 
 const REJECT_TEXT: Readonly<Record<FireRejectReason, string>> = {
@@ -40,17 +46,34 @@ export class M1Hud {
   private readonly hitLabel: Label;
   private readonly damageLabel: Label;
   private readonly vignetteOpacity: UIOpacity;
+  private readonly routeLabel: Label;
+  private readonly calloutLabel: Label;
+  private readonly allyLabels = new Map<number, Label>();
+  private readonly allyIds = new Map<string, Label>();
+  private readonly flashingAllies = new Set<string>();
+  private readonly routeNames: Readonly<Record<RouteId, string>>;
   private weaponName = '步枪';
+  private routeHighlightSequence = 0;
+  private calloutAudioContext: AudioContext | null = null;
 
-  constructor(canvas: Node, presentation: PresentationConfig) {
+  constructor(
+    canvas: Node,
+    presentation: PresentationConfig,
+    waves: WavesConfig,
+  ) {
     this.presentation = presentation;
+    this.routeNames = {
+      A: waves.routes.A.name,
+      B: waves.routes.B.name,
+      C: waves.routes.C.name,
+    };
     this.root = new Node('M1HUD');
     this.setUiLayer(this.root);
     this.root.setParent(canvas);
 
     this.createLabel(
       'Title',
-      'M1 战斗核心 · 服务器权威裁决',
+      'M2 五人防线 · 服务器权威 AI',
       presentation.titleFontSizePx,
       new Vec3(0, presentation.statusOffsetYPx, 0),
       '#F4E8C1',
@@ -112,6 +135,31 @@ export class M1Hud {
       new Vec3(0, presentation.messageOffsetYPx / 2, 0),
       '#FFE8A3',
     );
+    this.createLabel(
+      'AllyPanelTitle',
+      '队友状态',
+      presentation.hudFontSizePx,
+      new Vec3(
+        presentation.allyPanelOffsetXPx,
+        presentation.allyPanelOffsetYPx + presentation.allyPanelLineGapPx,
+        0,
+      ),
+      '#DCE8B5',
+    );
+    this.routeLabel = this.createLabel(
+      'RouteThreat',
+      '',
+      presentation.hudFontSizePx,
+      new Vec3(0, presentation.routeIndicatorOffsetYPx, 0),
+      '#FFFFFF',
+    );
+    this.calloutLabel = this.createLabel(
+      'AllyCallout',
+      '',
+      presentation.calloutFontSizePx,
+      new Vec3(0, presentation.calloutOffsetYPx, 0),
+      '#FFD56A',
+    );
 
     this.createCrosshair();
     this.vignetteOpacity = this.createDamageVignette();
@@ -150,6 +198,125 @@ export class M1Hud {
 
   showReady(enemyCount: number): void {
     this.messageLabel.string = `敌人 ${enemyCount}  · 所有伤害等待服务器裁决`;
+  }
+
+  updateAllies(allies: readonly AllyState[]): void {
+    this.allyIds.clear();
+    const bots = allies
+      .filter((ally) => ally.isBot)
+      .slice()
+      .sort((first, second) => first.seatIndex - second.seatIndex);
+    for (let index = 0; index < bots.length; index += 1) {
+      const ally = bots[index];
+      if (!ally) {
+        continue;
+      }
+      let label = this.allyLabels.get(index);
+      if (!label) {
+        label = this.createLabel(
+          `AllyStatus${index}`,
+          '',
+          this.presentation.hudFontSizePx,
+          new Vec3(
+            this.presentation.allyPanelOffsetXPx,
+            this.presentation.allyPanelOffsetYPx -
+              index * this.presentation.allyPanelLineGapPx,
+            0,
+          ),
+          '#DCE8B5',
+        );
+        this.allyLabels.set(index, label);
+      }
+      const state = ally.hp <= 0
+        ? '阵亡'
+        : this.describeAllyState(ally.aiState);
+      label.string = `${ally.heroName}  ${ally.hp}/${ally.maxHp}  ${ally.routeId}路  ${state}`;
+      if (ally.hp <= 0 || !this.flashingAllies.has(ally.id)) {
+        label.color = Color.fromHEX(
+          new Color(),
+          ally.hp <= 0 ? '#899094' : '#DCE8B5',
+        );
+      }
+      this.allyIds.set(ally.id, label);
+    }
+  }
+
+  updateRouteThreat(
+    enemies: readonly EnemyState[],
+    serverTimeMs: number,
+  ): void {
+    const counts: Record<RouteId, number> = { A: 0, B: 0, C: 0 };
+    const warnings: Record<RouteId, number> = { A: 0, B: 0, C: 0 };
+    for (const enemy of enemies) {
+      if (enemy.alive) {
+        counts[enemy.routeId] += 1;
+        if (
+          enemy.fireWarningEndsAtMs !== undefined &&
+          enemy.fireWarningEndsAtMs > serverTimeMs
+        ) {
+          warnings[enemy.routeId] += 1;
+        }
+      }
+    }
+    this.routeLabel.string = (['A', 'B', 'C'] as const)
+      .map((routeId) => {
+        const dots = '●'.repeat(
+          Math.min(counts[routeId], this.presentation.routeThreatMaxDots),
+        );
+        const warning = warnings[routeId] > 0 ? '⚠ ' : '';
+        return `${warning}${routeId} ${this.routeNames[routeId]} ${dots || '·'} ${counts[routeId]}`;
+      })
+      .join('    ');
+  }
+
+  showCallout(text: string, routeId: RouteId): void {
+    this.calloutLabel.string = `「${text}」`;
+    this.fadeLabel(
+      this.calloutLabel,
+      this.presentation.calloutDurationSec,
+    );
+    const sequence = this.routeHighlightSequence + 1;
+    this.routeHighlightSequence = sequence;
+    this.routeLabel.color = Color.fromHEX(
+      new Color(),
+      this.presentation.fireWarningColor,
+    );
+    setTimeout(() => {
+      if (
+        this.routeHighlightSequence === sequence &&
+        this.routeLabel.isValid
+      ) {
+        this.routeLabel.color = Color.WHITE;
+      }
+    }, this.presentation.routeFlashSec * 1000);
+    this.messageLabel.string = `${routeId}路告急！`;
+    this.playCalloutSound();
+  }
+
+  flashAllyDamage(allyId: string): void {
+    const label = this.allyIds.get(allyId);
+    if (!label) {
+      return;
+    }
+    this.flashingAllies.add(allyId);
+    label.color = Color.fromHEX(
+      new Color(),
+      this.presentation.fireWarningColor,
+    );
+    setTimeout(() => {
+      this.flashingAllies.delete(allyId);
+      if (label.isValid) {
+        label.color = Color.fromHEX(new Color(), '#DCE8B5');
+      }
+    }, this.presentation.hitFeedbackSec * 1000);
+  }
+
+  showAllyDied(allyId: string): void {
+    this.flashingAllies.delete(allyId);
+    const label = this.allyIds.get(allyId);
+    if (label) {
+      label.color = Color.fromHEX(new Color(), '#899094');
+    }
   }
 
   showShotPending(): void {
@@ -197,7 +364,55 @@ export class M1Hud {
   }
 
   destroy(): void {
+    void this.calloutAudioContext?.close();
+    this.calloutAudioContext = null;
     this.root.destroy();
+  }
+
+  private describeAllyState(state: AllyAiState | undefined): string {
+    switch (state) {
+      case 'deploy':
+        return '就位中';
+      case 'guard':
+        return '守备';
+      case 'engage':
+        return '交战';
+      case 'reassign':
+        return '补位中';
+      case 'dead':
+        return '阵亡';
+      default:
+        return '同步中';
+    }
+  }
+
+  private playCalloutSound(): void {
+    if (typeof AudioContext === 'undefined') {
+      return;
+    }
+    this.calloutAudioContext ??= new AudioContext();
+    const context = this.calloutAudioContext;
+    void context.resume().catch(() => {
+      // 浏览器未收到手势时可能禁止自动音频，字幕和路线闪烁仍正常。
+    });
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(
+      this.presentation.calloutSoundFrequencyHz,
+      context.currentTime,
+    );
+    gain.gain.setValueAtTime(1, context.currentTime);
+    gain.gain.linearRampToValueAtTime(
+      0,
+      context.currentTime + this.presentation.calloutSoundDurationSec,
+    );
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start();
+    oscillator.stop(
+      context.currentTime + this.presentation.calloutSoundDurationSec,
+    );
   }
 
   private createCrosshair(): void {

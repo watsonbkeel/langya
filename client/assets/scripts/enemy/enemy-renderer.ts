@@ -11,7 +11,10 @@ import {
   Vec3,
 } from 'cc';
 
-import type { EnemyState } from '../../../../shared/protocol';
+import type {
+  EnemyAiState,
+  EnemyState,
+} from '../../../../shared/protocol';
 import type {
   GameplayConfig,
   PresentationConfig,
@@ -21,11 +24,14 @@ export class EnemyRenderer {
   private readonly worldRoot: Node;
   private readonly boxMesh: Mesh;
   private readonly enemyMaterial: Material;
+  private readonly engageMaterial: Material;
   private readonly hitMaterial: Material;
+  private readonly warningMaterial: Material;
   private readonly gameplay: GameplayConfig;
   private readonly presentation: PresentationConfig;
   private readonly pool: Node[] = [];
   private readonly activeEnemies = new Map<string, Node>();
+  private readonly enemyStates = new Map<string, EnemyAiState>();
 
   constructor(
     sceneRoot: Node,
@@ -41,7 +47,13 @@ export class EnemyRenderer {
       primitives.box({ width: 1, height: 1, length: 1 }),
     );
     this.enemyMaterial = this.createMaterial(presentation.enemyColor);
+    this.engageMaterial = this.createMaterial(
+      presentation.enemyEngageColor,
+    );
     this.hitMaterial = this.createMaterial(presentation.enemyHitColor);
+    this.warningMaterial = this.createMaterial(
+      presentation.fireWarningColor,
+    );
     this.createGround();
 
     for (let index = 0; index < poolSize; index += 1) {
@@ -51,7 +63,7 @@ export class EnemyRenderer {
     }
   }
 
-  sync(enemies: readonly EnemyState[]): void {
+  sync(enemies: readonly EnemyState[], serverTimeMs: number): void {
     const visibleIds = new Set<string>();
     for (const enemy of enemies) {
       if (!enemy.alive) {
@@ -59,16 +71,18 @@ export class EnemyRenderer {
       }
       visibleIds.add(enemy.id);
       let node = this.activeEnemies.get(enemy.id);
+      const isNew = !node;
       if (!node) {
         node = this.acquire(enemy.id);
         this.activeEnemies.set(enemy.id, node);
       }
-      this.applyState(node, enemy);
+      this.applyState(node, enemy, serverTimeMs, isNew);
     }
 
     for (const [enemyId, node] of this.activeEnemies) {
       if (!visibleIds.has(enemyId)) {
         this.activeEnemies.delete(enemyId);
+        this.enemyStates.delete(enemyId);
         this.release(node);
       }
     }
@@ -82,14 +96,16 @@ export class EnemyRenderer {
     }
 
     renderer.setSharedMaterial(this.hitMaterial, 0);
-    tween(node)
-      .delay(this.presentation.hitFeedbackSec)
-      .call(() => {
-        if (node.active) {
-          renderer.setSharedMaterial(this.enemyMaterial, 0);
-        }
-      })
-      .start();
+    setTimeout(() => {
+      if (node.isValid && node.active) {
+        renderer.setSharedMaterial(
+          this.enemyStates.get(enemyId) === 'engage'
+            ? this.engageMaterial
+            : this.enemyMaterial,
+          0,
+        );
+      }
+    }, this.presentation.hitFeedbackSec * 1000);
   }
 
   remove(enemyId: string): void {
@@ -98,6 +114,11 @@ export class EnemyRenderer {
       return;
     }
     this.activeEnemies.delete(enemyId);
+    this.enemyStates.delete(enemyId);
+    const warning = node.getChildByName('FireWarning');
+    if (warning) {
+      warning.active = false;
+    }
 
     const currentScale = node.scale.clone();
     tween(node)
@@ -112,12 +133,25 @@ export class EnemyRenderer {
     return this.activeEnemies.size;
   }
 
+  getWarningCount(): number {
+    let count = 0;
+    for (const node of this.activeEnemies.values()) {
+      if (node.getChildByName('FireWarning')?.active) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
   destroy(): void {
     this.activeEnemies.clear();
+    this.enemyStates.clear();
     this.pool.length = 0;
     this.worldRoot.destroy();
     this.enemyMaterial.destroy();
+    this.engageMaterial.destroy();
     this.hitMaterial.destroy();
+    this.warningMaterial.destroy();
   }
 
   private createGround(): void {
@@ -143,6 +177,13 @@ export class EnemyRenderer {
     const renderer = node.addComponent(MeshRenderer);
     renderer.mesh = this.boxMesh;
     renderer.setSharedMaterial(this.enemyMaterial, 0);
+
+    const warning = new Node('FireWarning');
+    warning.setParent(node);
+    const warningRenderer = warning.addComponent(MeshRenderer);
+    warningRenderer.mesh = this.boxMesh;
+    warningRenderer.setSharedMaterial(this.warningMaterial, 0);
+    warning.active = false;
     return node;
   }
 
@@ -171,21 +212,73 @@ export class EnemyRenderer {
     Tween.stopAllByTarget(node);
     node.active = false;
     node.name = 'EnemyPlaceholder';
+    const warning = node.getChildByName('FireWarning');
+    if (warning) {
+      warning.active = false;
+    }
     this.pool.push(node);
   }
 
-  private applyState(node: Node, enemy: EnemyState): void {
+  private applyState(
+    node: Node,
+    enemy: EnemyState,
+    serverTimeMs: number,
+    immediate: boolean,
+  ): void {
     const { enemyHitboxRadiusM, enemyHitboxHeightM } =
       this.gameplay.combat;
-    node.setPosition(
+    const heightScale =
+      enemy.aiState === 'engage'
+        ? this.presentation.engageHeightScale
+        : 1;
+    const height = enemyHitboxHeightM * heightScale;
+    const targetPosition = new Vec3(
       enemy.position.x,
-      enemy.position.y + enemyHitboxHeightM / 2,
+      enemy.position.y + height / 2,
       enemy.position.z,
     );
-    node.setScale(
+    const targetScale = new Vec3(
       enemyHitboxRadiusM * 2,
-      enemyHitboxHeightM,
+      height,
       enemyHitboxRadiusM * 2,
     );
+    if (immediate) {
+      node.setPosition(targetPosition);
+      node.setScale(targetScale);
+    } else {
+      Tween.stopAllByTarget(node);
+      tween(node)
+        .to(1 / this.gameplay.server.tickRateHz, {
+          position: targetPosition,
+          scale: targetScale,
+        })
+        .start();
+    }
+
+    if (this.enemyStates.get(enemy.id) !== enemy.aiState) {
+      node
+        .getComponent(MeshRenderer)
+        ?.setSharedMaterial(
+          enemy.aiState === 'engage'
+            ? this.engageMaterial
+            : this.enemyMaterial,
+          0,
+        );
+      this.enemyStates.set(enemy.id, enemy.aiState);
+    }
+
+    const warning = node.getChildByName('FireWarning');
+    if (warning) {
+      const diameter = enemyHitboxRadiusM * 2;
+      warning.setPosition(0, 0, -0.6);
+      warning.setScale(
+        this.presentation.fireWarningSizeM / diameter,
+        this.presentation.fireWarningSizeM / height,
+        this.presentation.fireWarningSizeM / diameter,
+      );
+      warning.active =
+        enemy.fireWarningEndsAtMs !== undefined &&
+        enemy.fireWarningEndsAtMs > serverTimeMs;
+    }
   }
 }

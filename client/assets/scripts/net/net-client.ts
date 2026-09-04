@@ -1,4 +1,8 @@
 import type {
+  AllyAiState,
+  AllyCalloutMessage,
+  AllyDamagedMessage,
+  AllyDiedMessage,
   AllyState,
   ClientMessage,
   EnemyState,
@@ -9,6 +13,9 @@ import type {
   JoinMessage,
   PongMessage,
   ReloadMessage,
+  RoomSeatState,
+  RoomStateMessage,
+  RouteId,
   ServerMessage,
   SnapshotMessage,
   Vector2,
@@ -31,9 +38,13 @@ type StatusListener = (status: ConnectionStatus) => void;
 export interface NetClientListener {
   readonly onStatus: StatusListener;
   readonly onSnapshot: (message: SnapshotMessage) => void;
+  readonly onRoomState: (message: RoomStateMessage) => void;
   readonly onWorldSnapshot: (message: WorldSnapshotMessage) => void;
   readonly onFireResult: (message: FireResultMessage) => void;
   readonly onEnemyDied: (message: EnemyDiedMessage) => void;
+  readonly onAllyCallout: (message: AllyCalloutMessage) => void;
+  readonly onAllyDamaged: (message: AllyDamagedMessage) => void;
+  readonly onAllyDied: (message: AllyDiedMessage) => void;
 }
 
 export interface InputState {
@@ -47,6 +58,24 @@ const PROTOCOL_VERSION: JoinMessage['payload']['protocolVersion'] = 1;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isRouteId(value: unknown): value is RouteId {
+  return value === 'A' || value === 'B' || value === 'C';
+}
+
+function isAllyAiState(value: unknown): value is AllyAiState {
+  return (
+    value === 'deploy' ||
+    value === 'guard' ||
+    value === 'engage' ||
+    value === 'reassign' ||
+    value === 'dead'
+  );
 }
 
 function isPongMessage(value: unknown): value is PongMessage {
@@ -93,6 +122,10 @@ function isAllyState(value: unknown): value is AllyState {
     isRecord(value) &&
     typeof value.id === 'string' &&
     typeof value.isBot === 'boolean' &&
+    Number.isSafeInteger(value.seatIndex) &&
+    typeof value.heroName === 'string' &&
+    isRouteId(value.routeId) &&
+    (value.aiState === undefined || isAllyAiState(value.aiState)) &&
     typeof value.hp === 'number' &&
     typeof value.maxHp === 'number' &&
     isVector3(value.position) &&
@@ -108,10 +141,43 @@ function isEnemyState(value: unknown): value is EnemyState {
     isRecord(value) &&
     typeof value.id === 'string' &&
     typeof value.enemyType === 'string' &&
+    isRouteId(value.routeId) &&
+    (value.aiState === 'advance' ||
+      value.aiState === 'engage' ||
+      value.aiState === 'dead') &&
+    (value.fireWarningEndsAtMs === undefined ||
+      isFiniteNumber(value.fireWarningEndsAtMs)) &&
     typeof value.hp === 'number' &&
     typeof value.maxHp === 'number' &&
     isVector3(value.position) &&
     typeof value.alive === 'boolean'
+  );
+}
+
+function isRoomSeatState(value: unknown): value is RoomSeatState {
+  return (
+    isRecord(value) &&
+    Number.isSafeInteger(value.seatIndex) &&
+    typeof value.heroName === 'string' &&
+    typeof value.occupantId === 'string' &&
+    typeof value.displayName === 'string' &&
+    typeof value.isBot === 'boolean' &&
+    typeof value.alive === 'boolean' &&
+    isRouteId(value.routeId)
+  );
+}
+
+function isRoomStateMessage(value: unknown): value is RoomStateMessage {
+  return (
+    isRecord(value) &&
+    value.type === 'room_state' &&
+    isRecord(value.payload) &&
+    typeof value.payload.roomId === 'string' &&
+    (value.payload.status === 'forming' ||
+      value.payload.status === 'active' ||
+      value.payload.status === 'ended') &&
+    Array.isArray(value.payload.seats) &&
+    value.payload.seats.every(isRoomSeatState)
   );
 }
 
@@ -194,6 +260,39 @@ function isEnemyDiedMessage(value: unknown): value is EnemyDiedMessage {
   );
 }
 
+function isAllyCalloutMessage(value: unknown): value is AllyCalloutMessage {
+  return (
+    isRecord(value) &&
+    value.type === 'ally_callout' &&
+    isRecord(value.payload) &&
+    typeof value.payload.allyId === 'string' &&
+    isRouteId(value.payload.routeId) &&
+    typeof value.payload.text === 'string'
+  );
+}
+
+function isAllyDamagedMessage(value: unknown): value is AllyDamagedMessage {
+  return (
+    isRecord(value) &&
+    value.type === 'ally_damaged' &&
+    isRecord(value.payload) &&
+    typeof value.payload.allyId === 'string' &&
+    isFiniteNumber(value.payload.hp) &&
+    isVector3(value.payload.fromDir)
+  );
+}
+
+function isAllyDiedMessage(value: unknown): value is AllyDiedMessage {
+  return (
+    isRecord(value) &&
+    value.type === 'ally_died' &&
+    isRecord(value.payload) &&
+    typeof value.payload.allyId === 'string' &&
+    typeof value.payload.isBot === 'boolean' &&
+    typeof value.payload.killerType === 'string'
+  );
+}
+
 function parseServerMessage(raw: string): ServerMessage | undefined {
   let parsed: unknown;
   try {
@@ -205,9 +304,13 @@ function parseServerMessage(raw: string): ServerMessage | undefined {
   if (
     isPongMessage(parsed) ||
     isSnapshotMessage(parsed) ||
+    isRoomStateMessage(parsed) ||
     isWorldSnapshotMessage(parsed) ||
     isFireResultMessage(parsed) ||
-    isEnemyDiedMessage(parsed)
+    isEnemyDiedMessage(parsed) ||
+    isAllyCalloutMessage(parsed) ||
+    isAllyDamagedMessage(parsed) ||
+    isAllyDiedMessage(parsed)
   ) {
     return parsed;
   }
@@ -251,7 +354,7 @@ export class NetClient {
       const joinMessage: JoinMessage = {
         type: 'join',
         payload: {
-          playerName: 'Mac M1 客户端',
+          playerName: 'Mac M2 客户端',
           protocolVersion: PROTOCOL_VERSION,
         },
       };
@@ -287,6 +390,9 @@ export class NetClient {
         case 'snapshot':
           this.listener.onSnapshot(message);
           break;
+        case 'room_state':
+          this.listener.onRoomState(message);
+          break;
         case 'world_snapshot':
           this.listener.onWorldSnapshot(message);
           break;
@@ -295,6 +401,15 @@ export class NetClient {
           break;
         case 'enemy_died':
           this.listener.onEnemyDied(message);
+          break;
+        case 'ally_callout':
+          this.listener.onAllyCallout(message);
+          break;
+        case 'ally_damaged':
+          this.listener.onAllyDamaged(message);
+          break;
+        case 'ally_died':
+          this.listener.onAllyDied(message);
           break;
       }
     });
