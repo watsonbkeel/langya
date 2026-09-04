@@ -354,6 +354,24 @@ SHA-256 为
 `2026-09-04T22:21:57+08:00`。M0–M3 四地址联调及 91 项服务端测试再次通过，
 等待 Mac 开始第二局真实 5 分钟验收。
 
+2026-09-05：针对两次第三波、玩家存活且 `matchEnded=false` 时出现的
+WebSocket 1006 异常断开，Debian 提交 `eecbe4a` 增加服务端最小可观测性：
+结构化记录连接 open / close / error 的 code、reason、房间、比赛阶段、
+当前波次、玩家存活、`matchEnded` 与 `bufferedAmount`；发送路径增加
+异步错误及 1 MiB 积压节流告警，并增加 30 秒标准 ping / pong 存活检测。
+以上均为传输诊断，不改变战斗规则或共享协议。
+
+已同步并发布 Mac 诊断提交 `7ff9b9b` 的 Taildrop web-mobile 包，归档
+SHA-256 为
+`5ac82317a5f93ee5a47cdb3735fb2bf6ce2cbfadd57a0ade8786909869a51813`，
+线上主 JS 已包含 `lastDisconnectCode`。配置校验、TypeScript 检查、
+96 项服务端测试、生产构建与 Nginx 配置校验通过；M0–M3 在本机直连、
+本机 Nginx、Tailscale 直连和 Tailscale Nginx 四类地址再次通过。
+35 秒心跳烟测期间连接保持 OPEN、收到 700 个世界快照，最终以 code 1000
+正常关闭；服务端日志完整记录上述诊断字段且 `bufferedAmount=0`。PM2
+`langyashan-server` 于 `2026-09-05T00:06:36+08:00` 以 PID `3706358`
+启动。本记录不代表 M3 整体完成，等待 Mac 按原路径复现并回传双端断线字段。
+
 #### 💻 Mac
 > 填写：完整一局的帧率表现、重机枪手感、战报页截图说明
 
