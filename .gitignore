@@ -1,0 +1,80 @@
+# ⚠️ 本仓库是 PUBLIC 公开仓库，推送前务必确认没有敏感信息入库。
+
+# ===== 环境与密钥（公开仓库，绝对不能进）=====
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.p12
+*.keystore
+id_rsa*
+*.token
+.netrc
+.npmrc
+secrets.json
+credentials.json
+**/*secret*
+**/*password*
+!.env.example
+
+# ===== 依赖 =====
+node_modules/
+.pnpm-store/
+.yarn/
+
+# ===== 构建产物 =====
+dist/
+build/
+server/dist/
+
+# ===== Cocos Creator 本地产物（必须忽略，会造成跨机冲突）=====
+client/build/
+client/temp/
+client/library/
+client/local/
+client/profiles/
+client/native/
+# 注意：client/assets/ 和 client/settings/ 必须入库，不要加进来
+
+# ===== 运行时数据 =====
+data/
+logs/
+*.log
+*.sqlite
+*.sqlite3
+*.db
+npm-debug.log*
+pm2.log
+ecosystem.local.js
+
+# ===== 素材加工中间产物 =====
+tools/asset-pipeline/temp/
+tools/asset-pipeline/output/
+__pycache__/
+*.pyc
+*.psd
+*.xcf
+
+# ===== 系统与编辑器 =====
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ===== 测试与统计输出 =====
+coverage/
+stats.json
+simulate-*.json
+
+# ===== 工具本地状态 =====
+.workbuddy/
+.codex/
+
+# ===== 保留（防止被上面规则误伤）=====
+!shared/config/
+!shared/config/*.json

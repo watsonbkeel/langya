@@ -1,0 +1,127 @@
+{
+  "_comment": "玩法通用数值：玩家属性、血包补给、场景元素、胜负与计分。对应 PRD 4.3 / 5.1 / 5.5 / 7.6",
+
+  "player": {
+    "maxHp": 100,
+    "initialHp": 100,
+    "naturalRegen": 0,
+    "moveSpeed": 4.0,
+    "crouchSpeed": 1.8,
+    "crouchHitboxMultiplier": 0.6,
+    "medkitCount": 2,
+    "canRespawn": false,
+    "spectateOnDeath": true,
+    "defaultLoadout": {
+      "primary": "liaoshi13",
+      "throwable": "grenade",
+      "throwableCount": 4
+    },
+    "comment": "阵亡不复活，转观战模式（可切换视角）。蹲下受击面积减少 40%"
+  },
+
+  "medkit": {
+    "carriedHeal": 40,
+    "carriedUseSec": 2.5,
+    "carriedBlocksFire": true,
+    "airdropHeal": 50,
+    "airdropPickupInstant": true,
+    "airdropOnlyForHumanPlayer": true,
+    "comment": "空投仅真人可拾取，AI 队友不抢（PRD 5.5）"
+  },
+
+  "airdrop": {
+    "enabled": true,
+    "triggerOnIntermission": true,
+    "intervalSec": 45,
+    "pointCount": 5,
+    "dropsPerTrigger": [1, 2],
+    "lifetimeSec": 25,
+    "announceText": "补给空投！",
+    "showMapMarker": true,
+    "comment": "落点从 5 个预设补给点中随机选 1-2 个，25 秒后消失"
+  },
+
+  "arena": {
+    "widthM": 60,
+    "depthM": 20,
+    "softWallText": "坚守阵地！",
+    "playerCanLeaveHill": false,
+    "elements": {
+      "spawnPoints": 5,
+      "spawnSpacingM": 8,
+      "mgNests": 2,
+      "covers": 6,
+      "ammoBoxes": 3,
+      "supplyPoints": 5,
+      "enemySpawnPoints": 3
+    },
+    "ammoBoxCooldownSec": 10,
+    "comment": "玩家不能下山。活动区约 60m x 20m，越界软墙挡回"
+  },
+
+  "match": {
+    "durationSec": 300,
+    "deployPhaseSec": 10,
+    "winCondition": "playerAliveAtEnd",
+    "allowOvertimeSpawn": true,
+    "comment": "allowOvertimeSpawn：若因同屏上限导致投放延后，以打满 200 人为准，允许第四波压到 5:00 仍有残余（PRD 5.7）"
+  },
+
+  "score": {
+    "mvpHumanOnly": true,
+    "mvpRequiresAlive": true,
+    "tiebreakOrder": ["kills", "mgKills", "survivalSec", "accuracy"],
+    "trackFields": [
+      "kills",
+      "mgKills",
+      "headshots",
+      "shotsFired",
+      "shotsHit",
+      "accuracy",
+      "survivalSec",
+      "damageTaken",
+      "medkitUsed",
+      "killsByWave"
+    ],
+    "showAllyKillsInReport": true,
+    "comment": "MVP 只在存活的真人中产生。AI 队友歼敌数单独展示但不参评"
+  },
+
+  "hud": {
+    "showRouteThreatIndicator": true,
+    "showRemainingEnemies": true,
+    "showWaveCountdown": true,
+    "damageNumbers": true,
+    "hitMarker": true,
+    "lowHpVignetteThreshold": 0.3
+  },
+
+  "keybindings": {
+    "moveForward": "W",
+    "moveBack": "S",
+    "moveLeft": "A",
+    "moveRight": "D",
+    "crouch": "Ctrl",
+    "fire": "Mouse0",
+    "aim": "Mouse1",
+    "reload": "R",
+    "switchWeapon": "Q",
+    "throwGrenade": "G",
+    "useMedkit": "H",
+    "interact": "F",
+    "scoreboard": "Tab",
+    "comment": "F 用于上下重机枪、拾取。对应 PRD 8.x"
+  },
+
+  "compliance": {
+    "noBlood": true,
+    "noGore": true,
+    "noHateSymbols": true,
+    "enemyLabel": "日军",
+    "campSelectable": false,
+    "forcedCamp": "cn",
+    "noPurchase": true,
+    "noExternalLinks": true,
+    "comment": "面向 9-15 岁的不可逾越红线。玩家只能加入中国军队，无阵营选择入口"
+  }
+}

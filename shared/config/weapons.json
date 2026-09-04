@@ -1,0 +1,144 @@
+{
+  "_comment": "武器数值。对应 PRD 5.2 / 5.4。素材路径指向加工后的 resources 目录",
+  "hitPartMultiplier": {
+    "head": 2.5,
+    "torso": 1.0,
+    "limb": 0.7
+  },
+  "player": {
+    "liaoshi13": {
+      "displayName": "中正式步枪",
+      "camp": "cn",
+      "damage": 55,
+      "fireRate": 0.9,
+      "magazine": 5,
+      "reserveAmmo": 60,
+      "reloadSec": 3.2,
+      "effectiveRangeM": 200,
+      "falloffStartM": 120,
+      "falloffMultiplier": 0.6,
+      "spreadDeg": 0.3,
+      "isDefault": true,
+      "assets": {
+        "firstPerson": "weapons/fp/liaoshi13",
+        "icon": "weapons/icons/liaoshi13"
+      }
+    },
+    "lee-enfield": {
+      "displayName": "李恩菲尔德 No.4",
+      "camp": "cn",
+      "damage": 50,
+      "fireRate": 1.4,
+      "magazine": 10,
+      "reserveAmmo": 60,
+      "reloadSec": 3.8,
+      "effectiveRangeM": 180,
+      "falloffStartM": 120,
+      "falloffMultiplier": 0.6,
+      "spreadDeg": 0.4,
+      "assets": {
+        "firstPerson": "weapons/fp/lee-enfield",
+        "icon": "weapons/icons/lee-enfield"
+      }
+    },
+    "zb26": {
+      "displayName": "ZB26 轻机枪",
+      "camp": "cn",
+      "damage": 32,
+      "fireRate": 8.0,
+      "magazine": 20,
+      "reserveAmmo": 120,
+      "reloadSec": 4.0,
+      "effectiveRangeM": 150,
+      "falloffStartM": 100,
+      "falloffMultiplier": 0.6,
+      "spreadDeg": 1.8,
+      "assets": {
+        "firstPerson": "weapons/fp/zb26",
+        "icon": "weapons/icons/zb26"
+      }
+    },
+    "bren": {
+      "displayName": "布伦轻机枪",
+      "camp": "cn",
+      "damage": 34,
+      "fireRate": 8.3,
+      "magazine": 30,
+      "reserveAmmo": 120,
+      "reloadSec": 4.2,
+      "effectiveRangeM": 160,
+      "falloffStartM": 100,
+      "falloffMultiplier": 0.6,
+      "spreadDeg": 1.7,
+      "assets": {
+        "firstPerson": "weapons/fp/bren",
+        "icon": "weapons/icons/bren"
+      }
+    },
+    "grenade": {
+      "displayName": "手榴弹",
+      "camp": "cn",
+      "damage": 90,
+      "isThrowable": true,
+      "count": 4,
+      "throwRangeM": 30,
+      "blastRadiusM": 6,
+      "falloffCurve": "linear",
+      "fuseSec": 3.0,
+      "assets": {
+        "firstPerson": "weapons/fp/grenade",
+        "icon": "weapons/icons/grenade"
+      }
+    }
+  },
+  "enemy": {
+    "type38": {
+      "displayName": "三八式步枪",
+      "camp": "jp",
+      "damage": 18,
+      "fireRate": 0.8,
+      "effectiveRangeM": 180,
+      "falloffStartM": 120,
+      "falloffMultiplier": 0.6,
+      "assets": {
+        "icon": "weapons/icons/type38"
+      }
+    },
+    "jp-lmg": {
+      "displayName": "日军轻机枪",
+      "camp": "jp",
+      "damage": 12,
+      "fireRate": 7.0,
+      "burstCount": 5,
+      "effectiveRangeM": 150,
+      "falloffStartM": 100,
+      "falloffMultiplier": 0.6,
+      "assets": {
+        "icon": "weapons/icons/jp-lmg"
+      }
+    }
+  },
+  "emplacement": {
+    "type92-hmg": {
+      "displayName": "九二式重机枪",
+      "damage": 45,
+      "fireRate": 7.5,
+      "beltCapacity": 250,
+      "overheatSec": 6.0,
+      "cooldownSec": 4.0,
+      "reloadSec": 8.0,
+      "yawLimitDeg": 70,
+      "pitchMinDeg": -50,
+      "pitchMaxDeg": 15,
+      "hitboxMultiplier": 1.3,
+      "lockMovement": true,
+      "allyBotCanUse": false,
+      "nestCount": 2,
+      "assets": {
+        "firstPerson": "weapons/fp/type92-hmg",
+        "icon": "weapons/icons/type92-hmg"
+      },
+      "comment": "AI 队友不可使用，保留给真人玩家"
+    }
+  }
+}
