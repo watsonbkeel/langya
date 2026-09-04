@@ -22,6 +22,9 @@ const context: WebSocketLogContext = {
   matchEnded: false,
   elapsedSec: 170.5,
   bufferedAmount: 0,
+  lastInboundAtMs: 1_788_540_000_000,
+  lastInboundAgeMs: 25,
+  lastInboundMessageType: 'input_state',
 };
 
 class RecordingLogger implements WebSocketDiagnosticLogger {
@@ -75,7 +78,7 @@ test('正常发送不产生告警', () => {
 test('积压时丢弃可替代快照但继续发送关键消息', () => {
   const logger = new RecordingLogger();
   const socket = new FakeSocket();
-  socket.bufferedAmount = 2_048;
+  socket.bufferedAmount = 1;
   let nowMs = 10_000;
   const monitor = new WebSocketSendMonitor(
     1_024,
@@ -106,15 +109,27 @@ test('积压时丢弃可替代快照但继续发送关键消息', () => {
     false,
   );
   nowMs += 5_000;
+  socket.bufferedAmount = 0;
+  assert.equal(
+    monitor.send(
+      socket,
+      'latest',
+      'world_snapshot',
+      () => context,
+      true,
+    ),
+    true,
+  );
+  socket.bufferedAmount = 2_048;
   assert.equal(
     monitor.send(socket, 'critical', 'match_end', () => context),
     true,
   );
 
-  assert.deepEqual(socket.sent, ['critical']);
+  assert.deepEqual(socket.sent, ['latest', 'critical']);
   assert.equal(logger.warnLines.length, 2);
   assert.match(logger.warnLines[0] ?? '', /"event":"send_backpressure"/);
-  assert.match(logger.warnLines[0] ?? '', /"bufferedAmount":2048/);
+  assert.match(logger.warnLines[0] ?? '', /"bufferedAmount":1/);
   assert.match(logger.warnLines[0] ?? '', /"action":"drop"/);
   assert.match(logger.warnLines[1] ?? '', /"action":"send"/);
 });
@@ -171,4 +186,5 @@ test('关闭原因按字符安全截断，结构化日志保留诊断字段', ()
   assert.match(line, /"currentWaveIndex":3/);
   assert.match(line, /"playerAlive":true/);
   assert.match(line, /"code":1006/);
+  assert.match(line, /"lastInboundMessageType":"input_state"/);
 });

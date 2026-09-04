@@ -66,6 +66,8 @@ interface ClientSession {
   playerName?: string;
   joined: boolean;
   heartbeatAlive: boolean;
+  lastInboundAtMs?: number;
+  lastInboundMessageType?: string;
 }
 
 export class GameWebSocketServer {
@@ -176,6 +178,7 @@ export class GameWebSocketServer {
     });
 
     socket.on('message', (data, isBinary) => {
+      const receivedAtMs = Date.now();
       session.heartbeatAlive = true;
       if (isBinary) {
         socket.close(1003, '仅接受 JSON 文本消息');
@@ -187,6 +190,8 @@ export class GameWebSocketServer {
         socket.close(1007, '消息格式或协议版本无效');
         return;
       }
+      session.lastInboundAtMs = receivedAtMs;
+      session.lastInboundMessageType = message.type;
 
       switch (message.type) {
         case CLIENT_MESSAGE_TYPES.join:
@@ -850,6 +855,7 @@ export class GameWebSocketServer {
   }
 
   private createLogContext(session: ClientSession): WebSocketLogContext {
+    const nowMs = Date.now();
     const startedAtMs = session.matchStartedAtMs;
     const waveScheduler = session.waveScheduler;
     let matchPhase = session.joined ? 'starting' : 'not_joined';
@@ -857,7 +863,7 @@ export class GameWebSocketServer {
     let elapsedSec: number | null = null;
 
     if (startedAtMs !== undefined && waveScheduler) {
-      const elapsedMs = Math.max(0, Date.now() - startedAtMs);
+      const elapsedMs = Math.max(0, nowMs - startedAtMs);
       const progress = waveScheduler.getProgress(elapsedMs);
       matchPhase = session.matchEnded ? 'ended' : progress.phase;
       currentWaveIndex = progress.currentWaveIndex;
@@ -874,6 +880,13 @@ export class GameWebSocketServer {
       matchEnded: session.matchEnded,
       elapsedSec,
       bufferedAmount: session.socket.bufferedAmount,
+      lastInboundAtMs: session.lastInboundAtMs ?? null,
+      lastInboundAgeMs:
+        session.lastInboundAtMs === undefined
+          ? null
+          : Math.max(0, nowMs - session.lastInboundAtMs),
+      lastInboundMessageType:
+        session.lastInboundMessageType ?? null,
     };
   }
 

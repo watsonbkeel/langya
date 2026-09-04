@@ -12,6 +12,9 @@ export interface WebSocketLogContext {
   readonly matchEnded: boolean;
   readonly elapsedSec: number | null;
   readonly bufferedAmount: number;
+  readonly lastInboundAtMs: number | null;
+  readonly lastInboundAgeMs: number | null;
+  readonly lastInboundMessageType: string | null;
 }
 
 export type WebSocketLogDetails = Readonly<
@@ -105,7 +108,12 @@ export class WebSocketSendMonitor {
     }
 
     const bufferedAmount = socket.bufferedAmount;
-    if (bufferedAmount >= this.backpressureWarnBytes) {
+    const shouldDrop =
+      dropWhenBackpressured && bufferedAmount > 0;
+    if (
+      shouldDrop ||
+      bufferedAmount >= this.backpressureWarnBytes
+    ) {
       const nowMs = this.now();
       const lastLogAtMs = this.lastBackpressureLogAtMs.get(socket);
       if (
@@ -123,7 +131,7 @@ export class WebSocketSendMonitor {
       }
     }
 
-    if (dropWhenBackpressured && bufferedAmount >= this.backpressureWarnBytes) {
+    if (shouldDrop) {
       return false;
     }
 
