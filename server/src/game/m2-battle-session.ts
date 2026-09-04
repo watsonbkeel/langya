@@ -71,6 +71,11 @@ import {
   PlayerWeaponInventory,
   type InventoryWeaponConfig,
 } from '../combat/player-weapon-inventory';
+import {
+  MachineGunController,
+  type MachineGunConfig,
+  type MachineGunPlacement,
+} from '../combat/machine-gun-controller';
 import { SoloRoom, type SoloRoomConfig } from '../room/solo-room';
 import {
   ScoreTracker,
@@ -101,6 +106,7 @@ export interface M2ArenaConfig {
   readonly widthM: number;
   readonly depthM: number;
   readonly itemPickupRangeM: number;
+  readonly machineGunMountRangeM: number;
 }
 
 export interface M2MatchConfig {
@@ -179,6 +185,7 @@ export interface M2BattleConfig<
   readonly score: ScoreTrackerConfig;
   readonly airdrop: SupplyDropConfig;
   readonly grenade: M2GrenadeConfig;
+  readonly machineGun: MachineGunConfig;
 }
 
 export interface M2BattleSessionOptions<
@@ -271,6 +278,7 @@ export class M2BattleSession<
   private readonly calloutController: CalloutController<TRouteId>;
   private readonly scoreTracker: ScoreTracker;
   private readonly supplyDropManager: SupplyDropManager;
+  private readonly machineGunController: MachineGunController;
   private readonly weaponRacks: readonly WeaponRackItemState[];
   private readonly pendingGrenades: PendingGrenade[] = [];
   private enemySequence = 0;
@@ -385,6 +393,15 @@ export class M2BattleSession<
       arenaWidthM: options.config.arena.widthM,
       random: options.supplyRandom,
     });
+    this.machineGunController = new MachineGunController(
+      options.config.machineGun,
+      createMachineGunPlacements(
+        this.room.id,
+        options.config.machineGun.nestCount,
+        options.config.routes,
+        playerHeightM,
+      ),
+    );
     this.weaponRacks = createWeaponRacks(
       this.room.id,
       options.config.playerWeapons,
@@ -466,11 +483,18 @@ export class M2BattleSession<
 
     const moveLength = Math.hypot(payload.moveDir.x, payload.moveDir.y);
     const moveScale = moveLength > 1 ? 1 / moveLength : 1;
-    this.player.moveDirX = payload.moveDir.x * moveScale;
-    this.player.moveDirY = payload.moveDir.y * moveScale;
+    const movementLocked =
+      this.machineGunController.locksMovement &&
+      this.machineGunController.getMounted(this.player.id) !== undefined;
+    this.player.moveDirX = movementLocked
+      ? 0
+      : payload.moveDir.x * moveScale;
+    this.player.moveDirY = movementLocked
+      ? 0
+      : payload.moveDir.y * moveScale;
     this.player.aimYaw = payload.aimYaw;
     this.player.aimPitch = payload.aimPitch;
-    this.player.isCrouch = payload.isCrouch;
+    this.player.isCrouch = movementLocked ? false : payload.isCrouch;
     return true;
   }
 
@@ -486,6 +510,7 @@ export class M2BattleSession<
       this.elapsedSec,
       (nowMs - this.startedAtMs) / 1000,
     );
+    this.machineGunController.update(nowMs);
     this.updatePlayer(deltaSec, nowMs);
     const events: M2BattleEvent<TRouteId>[] = [
       ...this.supplyDropManager.update(
@@ -604,6 +629,9 @@ export class M2BattleSession<
   }
 
   reload(message: ReloadMessage, nowMs: number): void {
+    if (this.machineGunController.getMounted(this.player.id)) {
+      return;
+    }
     this.player.weapons.reload(message.payload.weaponId, nowMs);
   }
 
@@ -631,6 +659,9 @@ export class M2BattleSession<
     if (this.player.medkitEndsAtMs !== undefined) {
       return 'invalid_state';
     }
+    if (this.machineGunController.getMounted(this.player.id)) {
+      return 'invalid_state';
+    }
     return this.player.weapons.switchTo(weaponId);
   }
 
@@ -648,6 +679,9 @@ export class M2BattleSession<
       return 'no_resource';
     }
     if (this.player.medkitEndsAtMs !== undefined) {
+      return 'invalid_state';
+    }
+    if (this.machineGunController.getMounted(this.player.id)) {
       return 'invalid_state';
     }
     if (
@@ -669,6 +703,9 @@ export class M2BattleSession<
   ): ActionRejectReason | undefined {
     if (this.player.hp === 0) {
       return 'dead';
+    }
+    if (this.machineGunController.getMounted(this.player.id)) {
+      return 'invalid_state';
     }
 
     const rack = this.weaponRacks.find(
@@ -722,6 +759,9 @@ export class M2BattleSession<
     if (this.player.medkitEndsAtMs !== undefined) {
       return 'invalid_state';
     }
+    if (this.machineGunController.getMounted(this.player.id)) {
+      return 'invalid_state';
+    }
     if (this.player.grenadesRemaining === 0) {
       return 'no_resource';
     }
@@ -758,6 +798,45 @@ export class M2BattleSession<
     return undefined;
   }
 
+  mountMachineGun(
+    mgId: string,
+  ): ActionRejectReason | undefined {
+    if (this.player.hp === 0) {
+      return 'dead';
+    }
+    if (this.player.medkitEndsAtMs !== undefined) {
+      return 'invalid_state';
+    }
+    const rejectReason = this.machineGunController.mount(
+      mgId,
+      this.player.id,
+      false,
+      this.player.position,
+      this.config.arena.machineGunMountRangeM,
+    );
+    if (rejectReason !== undefined) {
+      return rejectReason;
+    }
+
+    const mounted = this.machineGunController.getMounted(this.player.id);
+    if (!mounted) {
+      throw new Error(`重机枪 ${mgId} 挂载成功后缺少状态`);
+    }
+    this.player.position = mounted.position;
+    this.player.aimYaw = mounted.baseYaw;
+    this.player.moveDirX = 0;
+    this.player.moveDirY = 0;
+    this.player.isCrouch = false;
+    return undefined;
+  }
+
+  unmountMachineGun(): ActionRejectReason | undefined {
+    if (this.player.hp === 0) {
+      return 'dead';
+    }
+    return this.machineGunController.unmount(this.player.id);
+  }
+
   createScoreboard(
     endedAtSec: number = this.elapsedSec,
   ): readonly ScoreboardEntry[] {
@@ -782,11 +861,6 @@ export class M2BattleSession<
       return this.rejectFire(message, 'cooldown');
     }
     if (
-      payload.weaponId !== this.player.weapons.currentWeaponId
-    ) {
-      return this.rejectFire(message, 'invalid_weapon');
-    }
-    if (
       distanceBetween(payload.originPos, this.player.position) >
       this.config.validation.fireOriginToleranceM
     ) {
@@ -801,14 +875,64 @@ export class M2BattleSession<
       return this.rejectFire(message, 'invalid_direction');
     }
 
-    const fireState = this.player.weapons.fire(
-      payload.weaponId,
-      nowMs,
-    );
-    if (!fireState.accepted) {
-      return this.rejectFire(message, fireState.reason);
+    const mounted = this.machineGunController.getMounted(this.player.id);
+    let isMachineGun = false;
+    let damageForHit: (
+      hitPart: 'head' | 'torso' | 'limb',
+      distanceM: number,
+    ) => number;
+    let ammoState: Pick<
+      WeaponState,
+      'magazineAmmo' | 'reserveAmmo'
+    >;
+
+    if (mounted) {
+      const aim = directionToAim(payload.dirVec);
+      const fireState = this.machineGunController.fire(
+        this.player.id,
+        payload.weaponId,
+        aim.yaw,
+        aim.pitch,
+        nowMs,
+      );
+      ammoState = {
+        magazineAmmo: fireState.beltAmmo,
+        reserveAmmo: 0,
+      };
+      if (!fireState.accepted) {
+        return this.rejectFire(message, fireState.reason, ammoState);
+      }
+      isMachineGun = true;
+      damageForHit = (hitPart) =>
+        Math.round(
+          this.config.machineGun.damage *
+            this.config.hitPartMultiplier[hitPart],
+        );
+    } else {
+      if (
+        payload.weaponId !== this.player.weapons.currentWeaponId
+      ) {
+        return this.rejectFire(message, 'invalid_weapon');
+      }
+      const fireState = this.player.weapons.fire(
+        payload.weaponId,
+        nowMs,
+      );
+      if (!fireState.accepted) {
+        return this.rejectFire(message, fireState.reason);
+      }
+      const weaponConfig = this.player.weapons.currentConfig;
+      ammoState = this.getAmmoState();
+      damageForHit = (hitPart, distanceM) =>
+        calculateDamage(
+          {
+            ...weaponConfig,
+            hitPartMultiplier: this.config.hitPartMultiplier,
+          },
+          distanceM,
+          hitPart,
+        ).damage;
     }
-    const weaponConfig = this.player.weapons.currentConfig;
 
     const raycastEnemies: RaycastEnemy[] = this.enemies.map((enemy) => ({
       id: enemy.agent.id,
@@ -826,10 +950,12 @@ export class M2BattleSession<
         hit: false,
         damage: 0,
         isKill: false,
-        isMachineGun: false,
+        isMachineGun,
         waveIndex: this.getCurrentWaveIndex(),
       });
-      return { result: this.createMissResult(message) };
+      return {
+        result: this.createMissResult(message, ammoState),
+      };
     }
 
     const enemy = this.enemies.find(
@@ -840,21 +966,16 @@ export class M2BattleSession<
         hit: false,
         damage: 0,
         isKill: false,
-        isMachineGun: false,
+        isMachineGun,
         waveIndex: this.getCurrentWaveIndex(),
       });
-      return { result: this.createMissResult(message) };
+      return {
+        result: this.createMissResult(message, ammoState),
+      };
     }
 
     const hpBeforeDamage = enemy.hp;
-    const damage = calculateDamage(
-      {
-        ...weaponConfig,
-        hitPartMultiplier: this.config.hitPartMultiplier,
-      },
-      hit.distanceM,
-      hit.hitPart,
-    ).damage;
+    const damage = damageForHit(hit.hitPart, hit.distanceM);
     enemy.hp = Math.max(0, enemy.hp - damage);
     const isKill = enemy.hp === 0;
     if (isKill) {
@@ -864,7 +985,7 @@ export class M2BattleSession<
       hit: true,
       damage: hpBeforeDamage - enemy.hp,
       isKill,
-      isMachineGun: false,
+      isMachineGun,
       hitPart: hit.hitPart,
       waveIndex: this.getCurrentWaveIndex(),
     });
@@ -881,7 +1002,7 @@ export class M2BattleSession<
           damage,
           isKill,
           hitPart: hit.hitPart,
-          ...this.getAmmoState(),
+          ...ammoState,
         },
       },
       ...(isKill
@@ -905,6 +1026,8 @@ export class M2BattleSession<
     matchProgress?: MatchProgressState,
   ): WorldSnapshotMessage {
     const playerSeat = this.getSeatByOccupantId(this.player.id);
+    const mountedMachineGun =
+      this.machineGunController.getMounted(this.player.id);
     const allies: AllyState[] = [
       {
         id: this.player.id,
@@ -927,6 +1050,9 @@ export class M2BattleSession<
         ...(this.player.medkitEndsAtMs === undefined
           ? {}
           : { medkitEndsAtMs: this.player.medkitEndsAtMs }),
+        ...(mountedMachineGun === undefined
+          ? {}
+          : { mountedMgId: mountedMachineGun.id }),
         weapon: this.getPlayerWeaponState(),
       },
       ...this.allies.map((ally) => {
@@ -986,7 +1112,7 @@ export class M2BattleSession<
         ],
         match:
           matchProgress ?? this.createMatchProgress(serverTimeMs),
-        machineGuns: [],
+        machineGuns: this.machineGunController.getStates(),
       },
     };
   }
@@ -1067,7 +1193,9 @@ export class M2BattleSession<
     return {
       type: 'fire',
       payload: {
-        weaponId: this.player.weapons.currentWeaponId,
+        weaponId:
+          this.machineGunController.getMounted(this.player.id)
+            ?.weaponId ?? this.player.weapons.currentWeaponId,
         originPos: this.player.position,
         dirVec: direction,
         clientTick,
@@ -1201,6 +1329,7 @@ export class M2BattleSession<
       );
       if (this.player.hp === 0) {
         this.scoreTracker.markDead(this.player.id, this.elapsedSec);
+        this.machineGunController.unmount(this.player.id);
       }
       return [
         {
@@ -1335,6 +1464,15 @@ export class M2BattleSession<
     if (this.player.hp === 0) {
       return;
     }
+    if (
+      this.machineGunController.locksMovement &&
+      this.machineGunController.getMounted(this.player.id)
+    ) {
+      this.player.moveDirX = 0;
+      this.player.moveDirY = 0;
+      this.player.isCrouch = false;
+      return;
+    }
 
     const yawRad = (this.player.aimYaw * Math.PI) / 180;
     const speed = this.player.isCrouch
@@ -1373,6 +1511,10 @@ export class M2BattleSession<
   private rejectFire(
     message: FireMessage,
     rejectReason: FireRejectReason,
+    ammoState: Pick<
+      WeaponState,
+      'magazineAmmo' | 'reserveAmmo'
+    > = this.getFireAmmoState(message.payload.weaponId),
   ): M2FireResolution {
     return {
       result: {
@@ -1385,13 +1527,19 @@ export class M2BattleSession<
           hit: false,
           damage: 0,
           isKill: false,
-          ...this.getAmmoState(),
+          ...ammoState,
         },
       },
     };
   }
 
-  private createMissResult(message: FireMessage): FireResultMessage {
+  private createMissResult(
+    message: FireMessage,
+    ammoState: Pick<
+      WeaponState,
+      'magazineAmmo' | 'reserveAmmo'
+    > = this.getFireAmmoState(message.payload.weaponId),
+  ): FireResultMessage {
     return {
       type: SERVER_MESSAGE_TYPES.fireResult,
       payload: {
@@ -1401,7 +1549,7 @@ export class M2BattleSession<
         hit: false,
         damage: 0,
         isKill: false,
-        ...this.getAmmoState(),
+        ...ammoState,
       },
     };
   }
@@ -1532,12 +1680,18 @@ export class M2BattleSession<
     const coverExposure =
       this.config.defenderCoverExposureMultiplier;
     if (allyId === this.player.id) {
-      return this.player.hp > 0
-        ? this.player.isCrouch
-          ? coverExposure *
+      if (this.player.hp === 0) {
+        return undefined;
+      }
+      if (this.machineGunController.getMounted(this.player.id)) {
+        return (
+          coverExposure * this.machineGunController.hitboxMultiplier
+        );
+      }
+      return this.player.isCrouch
+        ? coverExposure *
             this.config.player.crouchHitboxMultiplier
-          : coverExposure
-        : undefined;
+        : coverExposure;
     }
     const ally = this.allies.find((candidate) => candidate.id === allyId);
     if (!ally?.isAlive) {
@@ -1566,6 +1720,19 @@ export class M2BattleSession<
       magazineAmmo: state.magazineAmmo,
       reserveAmmo: state.reserveAmmo,
     };
+  }
+
+  private getFireAmmoState(
+    weaponId: string,
+  ): Pick<WeaponState, 'magazineAmmo' | 'reserveAmmo'> {
+    const mounted = this.machineGunController.getMounted(this.player.id);
+    if (mounted && weaponId === mounted.weaponId) {
+      return {
+        magazineAmmo: mounted.beltAmmo,
+        reserveAmmo: 0,
+      };
+    }
+    return this.getAmmoState();
   }
 
   private getPlayerWeaponState(): WeaponState {
@@ -1667,6 +1834,17 @@ function normalizeVector(vector: Vector3): Vector3 {
   };
 }
 
+function directionToAim(direction: Vector3): {
+  readonly yaw: number;
+  readonly pitch: number;
+} {
+  return {
+    yaw:
+      (Math.atan2(-direction.x, -direction.z) * 180) / Math.PI,
+    pitch: (Math.asin(clamp(direction.y, -1, 1)) * 180) / Math.PI,
+  };
+}
+
 function vectorMagnitude(vector: Vector3): number {
   return Math.hypot(vector.x, vector.y, vector.z);
 }
@@ -1707,4 +1885,47 @@ function createWeaponRacks<TRouteId extends string>(
         available: true,
       };
     });
+}
+
+function createMachineGunPlacements<TRouteId extends string>(
+  roomId: string,
+  nestCount: number,
+  routes: readonly RouteLayout<TRouteId>[],
+  playerHeightM: number,
+): readonly MachineGunPlacement[] {
+  if (routes.length === 0 || nestCount <= 0) {
+    throw new Error('生成重机枪位需要防守路线和正数枪位数量');
+  }
+
+  return Array.from({ length: nestCount }, (_, index) => {
+    const routeIndex =
+      nestCount === 1
+        ? Math.floor(routes.length / 2)
+        : Math.round(
+            (index * (routes.length - 1)) / (nestCount - 1),
+          );
+    const route = routes[routeIndex];
+    if (!route) {
+      throw new Error(`重机枪位 ${index} 缺少可用防守路线`);
+    }
+    return {
+      id: `${roomId}:mg:${index + 1}`,
+      position: {
+        ...route.guardPosition,
+        y: playerHeightM,
+      },
+      baseYaw: yawToward(route.guardPosition, route.spawnPosition),
+    };
+  });
+}
+
+function yawToward(origin: Vector3, target: Vector3): number {
+  return (
+    (Math.atan2(
+      -(target.x - origin.x),
+      -(target.z - origin.z),
+    ) *
+      180) /
+    Math.PI
+  );
 }

@@ -395,6 +395,115 @@ describe('M2BattleSession', () => {
       .payload.allies.find((ally) => !ally.isBot);
     assert.equal(player?.grenadesRemaining, 0);
   });
+
+  it('重机枪挂载后锁定移动、限制射界并记录专属击杀', () => {
+    const { battle } = createM2BattleRuntime(
+      config,
+      'player-mg',
+      '测试玩家',
+      10,
+    );
+    const initialSnapshot = battle.createSnapshot(0, 0);
+    assert.equal(
+      initialSnapshot.payload.machineGuns.length,
+      config.weapons.emplacement['type92-hmg'].nestCount,
+    );
+    const machineGun = initialSnapshot.payload.machineGuns[0];
+    assert.ok(machineGun);
+    assert.equal(
+      battle.mountMachineGun(machineGun.id),
+      'out_of_range',
+    );
+
+    const deltaX = machineGun.position.x - battle.playerPosition.x;
+    battle.applyInput({
+      type: 'input_state',
+      payload: {
+        clientTick: 1,
+        moveDir: { x: Math.sign(deltaX), y: 0 },
+        aimYaw: 0,
+        aimPitch: 0,
+        isCrouch: false,
+      },
+    });
+    battle.update(
+      Math.abs(deltaX) / config.gameplay.player.moveSpeed,
+      0,
+      1000,
+    );
+    assert.equal(battle.mountMachineGun(machineGun.id), undefined);
+
+    const mountedPosition = battle.playerPosition;
+    battle.applyInput({
+      type: 'input_state',
+      payload: {
+        clientTick: 2,
+        moveDir: { x: 1, y: 1 },
+        aimYaw: 0,
+        aimPitch: 0,
+        isCrouch: true,
+      },
+    });
+    battle.update(1, 1, 2000);
+    assert.deepEqual(battle.playerPosition, mountedPosition);
+    const mountedPlayer = battle
+      .createSnapshot(1, 2000)
+      .payload.allies.find((ally) => !ally.isBot);
+    assert.equal(mountedPlayer?.mountedMgId, machineGun.id);
+
+    const invalidDirection = battle.fire(
+      {
+        type: 'fire',
+        payload: {
+          weaponId: machineGun.weaponId,
+          originPos: battle.playerPosition,
+          dirVec: { x: 1, y: 0, z: 0 },
+          clientTick: 3,
+        },
+      },
+      2000,
+    );
+    assert.equal(invalidDirection.result.payload.accepted, false);
+    if (!invalidDirection.result.payload.accepted) {
+      assert.equal(
+        invalidDirection.result.payload.rejectReason,
+        'invalid_direction',
+      );
+    }
+
+    const enemyId = battle.spawnEnemy(
+      'rifleman',
+      'A',
+      config.waves.waves[0]!.accuracy,
+      2000,
+    );
+    assert.ok(enemyId);
+    const fire = battle.createFireMessageForEnemy(
+      enemyId,
+      4,
+      'head',
+    );
+    assert.ok(fire);
+    const resolution = battle.fire(fire, 2000);
+    assert.equal(resolution.result.payload.accepted, true);
+    assert.equal(resolution.result.payload.hit, true);
+    assert.equal(resolution.death?.payload.enemyId, enemyId);
+    assert.equal(resolution.result.payload.reserveAmmo, 0);
+    assert.equal(
+      resolution.result.payload.magazineAmmo,
+      config.weapons.emplacement['type92-hmg'].beltCapacity - 1,
+    );
+    const playerScore = battle
+      .createScoreboard()
+      .find((entry) => entry.occupantId === 'player-mg');
+    assert.equal(playerScore?.mgKills, 1);
+
+    assert.equal(battle.unmountMachineGun(), undefined);
+    const unmountedPlayer = battle
+      .createSnapshot(2, 2000)
+      .payload.allies.find((ally) => !ally.isBot);
+    assert.equal(unmountedPlayer?.mountedMgId, undefined);
+  });
 });
 
 function normalize(vector: { x: number; y: number; z: number }) {

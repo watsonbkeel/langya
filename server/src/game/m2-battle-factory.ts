@@ -3,6 +3,7 @@ import type { RouteId } from '../../../shared/protocol';
 import { createRouteLayouts } from '../ai/route-layout';
 import { SeededRandom } from '../ai/seeded-random';
 import type { ScoreTiebreakField } from '../score/score-tracker';
+import type { MachineGunConfig } from '../combat/machine-gun-controller';
 import { WaveScheduler } from '../wave/wave-scheduler';
 import { findPlayerWeaponConfig } from './m1-battle-factory';
 import {
@@ -94,6 +95,7 @@ export function createM2BattleRuntime(
       route.name,
     ]),
   ) as Record<M2RouteId, string>;
+  const machineGun = createMachineGunConfig(config);
 
   const battleConfig: M2BattleConfig<M2RouteId, M2EnemyType> = {
     player: config.gameplay.player,
@@ -150,6 +152,7 @@ export function createM2BattleRuntime(
       falloffCurve:
         config.weapons.player.grenade.falloffCurve as 'linear',
     },
+    machineGun,
   };
 
   return {
@@ -290,4 +293,39 @@ function createPlayerWeapons(
     weapons[weaponId] = findPlayerWeaponConfig(config, weaponId);
   }
   return weapons;
+}
+
+function createMachineGunConfig(
+  config: ProjectConfig,
+): MachineGunConfig {
+  const entries = Object.entries(config.weapons.emplacement);
+  const entry = entries[0];
+  if (!entry) {
+    throw new Error('至少需要配置一种阵地重机枪');
+  }
+  if (entries.length !== 1) {
+    throw new Error('M3 当前只支持一种阵地重机枪配置');
+  }
+  const [weaponId, weapon] = entry;
+  if (
+    weapon.nestCount !== config.gameplay.arena.elements.mgNests
+  ) {
+    throw new Error('重机枪武器配置与场景枪位数量不一致');
+  }
+  return {
+    weaponId,
+    damage: weapon.damage,
+    fireRate: weapon.fireRate,
+    beltCapacity: weapon.beltCapacity,
+    overheatSec: weapon.overheatSec,
+    cooldownSec: weapon.cooldownSec,
+    reloadSec: weapon.reloadSec,
+    yawLimitDeg: weapon.yawLimitDeg,
+    pitchMinDeg: weapon.pitchMinDeg,
+    pitchMaxDeg: weapon.pitchMaxDeg,
+    hitboxMultiplier: weapon.hitboxMultiplier,
+    lockMovement: weapon.lockMovement,
+    allyBotCanUse: weapon.allyBotCanUse,
+    nestCount: weapon.nestCount,
+  };
 }

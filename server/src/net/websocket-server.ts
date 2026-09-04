@@ -343,6 +343,56 @@ export class GameWebSocketServer {
             session.battle.throwGrenade(message, Date.now()),
           );
           return;
+        case CLIENT_MESSAGE_TYPES.mountMg:
+          if (
+            !session.joined ||
+            session.matchEnded ||
+            !session.battle
+          ) {
+            this.sendActionResult(
+              session,
+              message.payload.clientTick,
+              'mount_mg',
+              'invalid_state',
+            );
+            return;
+          }
+          if (!this.acceptClientTick(session, message.payload.clientTick)) {
+            socket.close(1008, 'clientTick 必须严格递增');
+            return;
+          }
+          this.sendActionResult(
+            session,
+            message.payload.clientTick,
+            'mount_mg',
+            session.battle.mountMachineGun(message.payload.mgId),
+          );
+          return;
+        case CLIENT_MESSAGE_TYPES.unmountMg:
+          if (
+            !session.joined ||
+            session.matchEnded ||
+            !session.battle
+          ) {
+            this.sendActionResult(
+              session,
+              message.payload.clientTick,
+              'unmount_mg',
+              'invalid_state',
+            );
+            return;
+          }
+          if (!this.acceptClientTick(session, message.payload.clientTick)) {
+            socket.close(1008, 'clientTick 必须严格递增');
+            return;
+          }
+          this.sendActionResult(
+            session,
+            message.payload.clientTick,
+            'unmount_mg',
+            session.battle.unmountMachineGun(),
+          );
+          return;
       }
     });
 
