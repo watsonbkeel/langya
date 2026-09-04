@@ -7,21 +7,31 @@ import {
 } from 'cc';
 
 import type {
+  ActionResultMessage,
   AllyDamagedMessage,
   AllyState,
   FireResultMessage,
+  MachineGunState,
+  MatchEndMessage,
+  MatchStartMessage,
   RoomStateMessage,
   RouteId,
   SnapshotMessage,
+  SupplyDropMessage,
   Vector3,
   WeaponState,
   WorldSnapshotMessage,
+  WaveStartMessage,
 } from '../../../../shared/protocol';
 import type { M1GameConfig } from '../config/game-config';
 import { AllyRenderer } from '../ally/ally-renderer';
 import { EnemyRenderer } from '../enemy/enemy-renderer';
 import { NetClient } from '../net/net-client';
 import { FirstPersonController } from '../player/first-person-controller';
+import {
+  M3WorldInteractions,
+  type InteractionTarget,
+} from '../level/m3-world-interactions';
 import { M1Hud } from '../ui/m1-hud';
 import { WeaponView } from '../weapon/weapon-view';
 
@@ -43,6 +53,19 @@ interface M1DebugState {
   readonly calloutCount: number;
   readonly allyDamageEvents: number;
   readonly allyDeathEvents: number;
+  readonly matchPhase: string;
+  readonly currentWaveIndex: number;
+  readonly spawnedEnemies: number;
+  readonly remainingEnemies: number;
+  readonly worldItemCount: number;
+  readonly machineGunCount: number;
+  readonly medkitsRemaining: number | null;
+  readonly grenadesRemaining: number | null;
+  readonly mountedMgId: string | null;
+  readonly waveEvents: number;
+  readonly supplyEvents: number;
+  readonly matchEnded: boolean;
+  readonly scoreboardEntries: number;
 }
 
 declare global {
@@ -61,10 +84,12 @@ export class M1Game {
   private readonly enemyRenderer: EnemyRenderer;
   private readonly controller: FirstPersonController;
   private readonly netClient: NetClient;
+  private readonly worldInteractions: M3WorldInteractions;
   private readonly pendingShots = new Map<number, number>();
   private clientId: string | null = null;
   private playerPosition: Vector3 | null = null;
   private weaponState: WeaponState | null = null;
+  private availableWeaponIds: readonly string[] = [];
   private previousHp: number | null = null;
   private connected = false;
   private snapshotTick = 0;
@@ -80,6 +105,22 @@ export class M1Game {
   private calloutCount = 0;
   private allyDamageEvents = 0;
   private allyDeathEvents = 0;
+  private interactionTarget: InteractionTarget | undefined;
+  private mountedMachineGun: MachineGunState | undefined;
+  private matchPhase = 'deploy';
+  private currentWaveIndex = 0;
+  private spawnedEnemies = 0;
+  private remainingEnemies = 0;
+  private worldItemCount = 0;
+  private machineGunCount = 0;
+  private medkitsRemaining: number | null = null;
+  private grenadesRemaining: number | null = null;
+  private mountedMgId: string | null = null;
+  private waveEvents = 0;
+  private supplyEvents = 0;
+  private matchEnded = false;
+  private scoreboardEntries = 0;
+  private nextMachineGunFireAtMs = 0;
 
   constructor(canvas: Node, config: M1GameConfig) {
     this.config = config;
@@ -95,7 +136,13 @@ export class M1Game {
       throw new Error('找不到 Cocos 场景根节点');
     }
 
-    this.hud = new M1Hud(canvas, config.presentation, config.waves);
+    this.hud = new M1Hud(
+      canvas,
+      config.presentation,
+      config.waves,
+      config.gameplay,
+      config.weapons,
+    );
     this.weaponView = new WeaponView(canvas, config.presentation);
     this.enemyRenderer = new EnemyRenderer(
       sceneRoot,
@@ -108,6 +155,12 @@ export class M1Game {
       config.gameplay,
       config.presentation,
     );
+    this.worldInteractions = new M3WorldInteractions(
+      sceneRoot,
+      config.gameplay,
+      config.presentation,
+      config.weapons,
+    );
     this.controller = new FirstPersonController(
       sceneRoot,
       config.gameplay,
@@ -115,6 +168,10 @@ export class M1Game {
       {
         onFire: () => this.fire(),
         onReload: () => this.reload(),
+        onSwitchWeapon: () => this.switchWeapon(),
+        onUseMedkit: () => this.useMedkit(),
+        onThrowGrenade: () => this.throwGrenade(),
+        onInteract: () => this.interact(),
       },
     );
     this.netClient = new NetClient({
@@ -148,6 +205,11 @@ export class M1Game {
         this.hud.showAllyDied(message.payload.allyId);
         this.publishDebugState();
       },
+      onActionResult: (message) => this.onActionResult(message),
+      onMatchStart: (message) => this.onMatchStart(message),
+      onWaveStart: (message) => this.onWaveStart(message),
+      onSupplyDrop: (message) => this.onSupplyDrop(message),
+      onMatchEnd: (message) => this.onMatchEnd(message),
     });
 
     if (typeof window !== 'undefined') {
@@ -164,6 +226,14 @@ export class M1Game {
 
   update(deltaTime: number): void {
     this.controller.update(deltaTime);
+    if (this.mountedMachineGun && this.controller.isFireHeld()) {
+      const config =
+        this.config.weapons.emplacement[this.mountedMachineGun.weaponId];
+      const nowMs = performance.now();
+      if (config && nowMs >= this.nextMachineGunFireAtMs) {
+        this.fire();
+      }
+    }
   }
 
   destroy(): void {
@@ -171,6 +241,7 @@ export class M1Game {
     this.controller.destroy();
     this.allyRenderer.destroy();
     this.enemyRenderer.destroy();
+    this.worldInteractions.destroy();
     this.weaponView.destroy();
     this.hud.destroy();
     if (typeof window !== 'undefined') {
@@ -179,6 +250,7 @@ export class M1Game {
     if (typeof document !== 'undefined') {
       document.documentElement.removeAttribute('data-langyashan-m1');
       document.documentElement.removeAttribute('data-langyashan-m2');
+      document.documentElement.removeAttribute('data-langyashan-m3');
     }
   }
 
@@ -223,6 +295,22 @@ export class M1Game {
       }
     }
     this.warningCount = this.enemyRenderer.getWarningCount();
+    this.worldInteractions.sync(
+      message.payload.items,
+      message.payload.machineGuns,
+    );
+    this.matchPhase = message.payload.match.phase;
+    this.currentWaveIndex = message.payload.match.currentWaveIndex;
+    this.spawnedEnemies = message.payload.match.spawnedEnemies;
+    this.remainingEnemies = message.payload.match.remainingEnemies;
+    this.worldItemCount = message.payload.items.filter(
+      (item) => item.available,
+    ).length;
+    this.machineGunCount = message.payload.machineGuns.length;
+    this.hud.updateMatch(
+      message.payload.match,
+      message.payload.serverTimeMs,
+    );
 
     const player = this.findPlayer(message.payload.allies);
     if (!player) {
@@ -234,18 +322,52 @@ export class M1Game {
     this.previousHp = player.hp;
     this.playerPosition = { ...player.position };
     this.weaponState = { ...player.weapon };
+    this.availableWeaponIds = player.availableWeaponIds.slice();
+    this.medkitsRemaining = player.medkitsRemaining;
+    this.grenadesRemaining = player.grenadesRemaining;
+    this.mountedMgId = player.mountedMgId ?? null;
     this.controller.setAuthoritativePosition(player.position);
 
     const weaponName =
       this.config.weapons.player[player.weapon.weaponId]?.displayName ??
       player.weapon.weaponId;
     this.hud.updatePlayer(player, weaponName);
+    this.hud.updateInventory(player);
+    this.hud.updateMedkit(player, message.payload.serverTimeMs);
+    this.interactionTarget = this.worldInteractions.findInteraction(
+      player.position,
+      player.mountedMgId,
+      player.availableWeaponIds,
+    );
+    this.hud.showInteraction(this.interactionTarget?.label ?? '');
+    this.mountedMachineGun = this.worldInteractions.getMachineGun(
+      player.mountedMgId,
+    );
+    this.hud.showMachineGun(this.mountedMachineGun);
+    if (this.mountedMachineGun) {
+      const machineGunConfig =
+        this.config.weapons.emplacement[this.mountedMachineGun.weaponId];
+      this.controller.setMountedAimLimits(
+        machineGunConfig
+          ? {
+              baseYaw: this.mountedMachineGun.baseYaw,
+              yawLimitDeg: machineGunConfig.yawLimitDeg,
+              pitchMinDeg: machineGunConfig.pitchMinDeg,
+              pitchMaxDeg: machineGunConfig.pitchMaxDeg,
+            }
+          : null,
+      );
+    } else {
+      this.controller.setMountedAimLimits(null);
+    }
     if (!this.receivedFirstWorld) {
       this.receivedFirstWorld = true;
       this.hud.showReady(message.payload.enemies.length);
     }
 
-    this.netClient.sendInput(this.controller.getInputState());
+    if (message.payload.match.phase !== 'ended' && !this.matchEnded) {
+      this.netClient.sendInput(this.controller.getInputState());
+    }
     this.publishDebugState();
   }
 
@@ -267,12 +389,12 @@ export class M1Game {
   }
 
   private fire(): void {
-    if (!this.playerPosition || !this.weaponState) {
+    if (this.matchEnded || !this.playerPosition || !this.weaponState) {
       return;
     }
 
     const clientTick = this.netClient.fire(
-      this.weaponState.weaponId,
+      this.mountedMachineGun?.weaponId ?? this.weaponState.weaponId,
       this.playerPosition,
       this.controller.getAimDirection(),
     );
@@ -281,16 +403,116 @@ export class M1Game {
     }
 
     this.pendingShots.set(clientTick, performance.now());
+    if (this.mountedMachineGun) {
+      const config =
+        this.config.weapons.emplacement[this.mountedMachineGun.weaponId];
+      if (config) {
+        this.nextMachineGunFireAtMs =
+          performance.now() + 1000 / config.fireRate;
+      }
+    }
     this.weaponView.playFire();
     this.hud.showShotPending();
   }
 
   private reload(): void {
+    if (this.matchEnded || this.mountedMachineGun) {
+      return;
+    }
     if (!this.weaponState || !this.netClient.reload(this.weaponState.weaponId)) {
       return;
     }
     this.weaponView.playReload();
     this.hud.showReloadRequested();
+  }
+
+  private switchWeapon(): void {
+    if (
+      this.matchEnded ||
+      this.mountedMachineGun ||
+      this.availableWeaponIds.length < 2
+    ) {
+      return;
+    }
+    const currentIndex = this.availableWeaponIds.indexOf(
+      this.weaponState?.weaponId ?? '',
+    );
+    const nextIndex = (currentIndex + 1) % this.availableWeaponIds.length;
+    const weaponId = this.availableWeaponIds[nextIndex];
+    if (weaponId) {
+      this.netClient.switchWeapon(weaponId);
+    }
+  }
+
+  private useMedkit(): void {
+    if (this.matchEnded) {
+      return;
+    }
+    this.netClient.useMedkit();
+  }
+
+  private throwGrenade(): void {
+    if (this.matchEnded || !this.playerPosition || this.mountedMachineGun) {
+      return;
+    }
+    this.netClient.throwGrenade(
+      this.playerPosition,
+      this.controller.getAimDirection(),
+      this.config.presentation.grenadeThrowForce,
+    );
+  }
+
+  private interact(): void {
+    if (this.matchEnded) {
+      return;
+    }
+    const target = this.interactionTarget;
+    if (!target) {
+      return;
+    }
+    switch (target.kind) {
+      case 'pickup':
+        this.netClient.pickup(target.id);
+        break;
+      case 'mount_mg':
+        this.netClient.mountMachineGun(target.id);
+        break;
+      case 'unmount_mg':
+        this.netClient.unmountMachineGun();
+        break;
+    }
+  }
+
+  private onActionResult(message: ActionResultMessage): void {
+    this.hud.showActionResult(message.payload);
+    this.publishDebugState();
+  }
+
+  private onMatchStart(_message: MatchStartMessage): void {
+    this.matchPhase = 'deploy';
+    this.publishDebugState();
+  }
+
+  private onWaveStart(message: WaveStartMessage): void {
+    this.waveEvents += 1;
+    this.hud.showWaveStart(
+      message.payload.waveIndex,
+      message.payload.totalWaves,
+    );
+    this.publishDebugState();
+  }
+
+  private onSupplyDrop(message: SupplyDropMessage): void {
+    this.supplyEvents += 1;
+    this.hud.showSupplyDrop(message.payload.text);
+    this.publishDebugState();
+  }
+
+  private onMatchEnd(message: MatchEndMessage): void {
+    this.matchEnded = true;
+    this.scoreboardEntries = message.payload.scoreboard.length;
+    this.hud.showMatchEnd(message.payload, this.clientId);
+    this.publishDebugState();
   }
 
   private onFireResult(message: FireResultMessage): void {
@@ -336,6 +558,19 @@ export class M1Game {
       calloutCount: this.calloutCount,
       allyDamageEvents: this.allyDamageEvents,
       allyDeathEvents: this.allyDeathEvents,
+      matchPhase: this.matchPhase,
+      currentWaveIndex: this.currentWaveIndex,
+      spawnedEnemies: this.spawnedEnemies,
+      remainingEnemies: this.remainingEnemies,
+      worldItemCount: this.worldItemCount,
+      machineGunCount: this.machineGunCount,
+      medkitsRemaining: this.medkitsRemaining,
+      grenadesRemaining: this.grenadesRemaining,
+      mountedMgId: this.mountedMgId,
+      waveEvents: this.waveEvents,
+      supplyEvents: this.supplyEvents,
+      matchEnded: this.matchEnded,
+      scoreboardEntries: this.scoreboardEntries,
     };
   }
 
@@ -349,6 +584,10 @@ export class M1Game {
     );
     document.documentElement.setAttribute(
       'data-langyashan-m2',
+      JSON.stringify(this.getDebugState()),
+    );
+    document.documentElement.setAttribute(
+      'data-langyashan-m3',
       JSON.stringify(this.getDebugState()),
     );
   }

@@ -4,13 +4,21 @@ import type {
   AllyDamagedMessage,
   AllyDiedMessage,
   AllyState,
+  ActionResultMessage,
   ClientMessage,
   EnemyState,
   EnemyDiedMessage,
   FireMessage,
   FireResultMessage,
   InputStateMessage,
+  ItemState,
   JoinMessage,
+  MachineGunState,
+  MatchEndMessage,
+  MatchProgressState,
+  MatchStartMessage,
+  MountMgMessage,
+  PickupMessage,
   PongMessage,
   ReloadMessage,
   RoomSeatState,
@@ -18,10 +26,16 @@ import type {
   RouteId,
   ServerMessage,
   SnapshotMessage,
+  SupplyDropMessage,
+  SwitchWeaponMessage,
+  ThrowGrenadeMessage,
+  UnmountMgMessage,
+  UseMedkitMessage,
   Vector2,
   Vector3,
   WeaponState,
   WorldSnapshotMessage,
+  WaveStartMessage,
 } from '../../../../shared/protocol';
 
 import { getWebSocketUrl } from './server-config';
@@ -45,6 +59,11 @@ export interface NetClientListener {
   readonly onAllyCallout: (message: AllyCalloutMessage) => void;
   readonly onAllyDamaged: (message: AllyDamagedMessage) => void;
   readonly onAllyDied: (message: AllyDiedMessage) => void;
+  readonly onActionResult: (message: ActionResultMessage) => void;
+  readonly onMatchStart: (message: MatchStartMessage) => void;
+  readonly onWaveStart: (message: WaveStartMessage) => void;
+  readonly onSupplyDrop: (message: SupplyDropMessage) => void;
+  readonly onMatchEnd: (message: MatchEndMessage) => void;
 }
 
 export interface InputState {
@@ -132,6 +151,16 @@ function isAllyState(value: unknown): value is AllyState {
     typeof value.aimYaw === 'number' &&
     typeof value.aimPitch === 'number' &&
     typeof value.isCrouch === 'boolean' &&
+    Array.isArray(value.availableWeaponIds) &&
+    value.availableWeaponIds.every((weaponId) =>
+      typeof weaponId === 'string'
+    ) &&
+    isFiniteNumber(value.grenadesRemaining) &&
+    isFiniteNumber(value.medkitsRemaining) &&
+    (value.medkitEndsAtMs === undefined ||
+      isFiniteNumber(value.medkitEndsAtMs)) &&
+    (value.mountedMgId === undefined ||
+      typeof value.mountedMgId === 'string') &&
     isWeaponState(value.weapon)
   );
 }
@@ -208,7 +237,62 @@ function isWorldSnapshotMessage(
     value.payload.allies.every(isAllyState) &&
     Array.isArray(value.payload.enemies) &&
     value.payload.enemies.every(isEnemyState) &&
-    Array.isArray(value.payload.items)
+    Array.isArray(value.payload.items) &&
+    value.payload.items.every(isItemState) &&
+    isMatchProgressState(value.payload.match) &&
+    Array.isArray(value.payload.machineGuns) &&
+    value.payload.machineGuns.every(isMachineGunState)
+  );
+}
+
+function isItemState(value: unknown): value is ItemState {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== 'string' ||
+    !isVector3(value.position) ||
+    typeof value.available !== 'boolean'
+  ) {
+    return false;
+  }
+  if (value.kind === 'airdrop_medkit') {
+    return isFiniteNumber(value.expiresAtMs);
+  }
+  return value.kind === 'weapon_rack' && typeof value.weaponId === 'string';
+}
+
+function isMatchProgressState(value: unknown): value is MatchProgressState {
+  return (
+    isRecord(value) &&
+    isFiniteNumber(value.startedAtMs) &&
+    isFiniteNumber(value.endsAtMs) &&
+    (value.phase === 'deploy' ||
+      value.phase === 'wave' ||
+      value.phase === 'intermission' ||
+      value.phase === 'ended') &&
+    isFiniteNumber(value.currentWaveIndex) &&
+    isFiniteNumber(value.totalWaves) &&
+    isFiniteNumber(value.spawnedEnemies) &&
+    isFiniteNumber(value.defeatedEnemies) &&
+    isFiniteNumber(value.remainingEnemies) &&
+    isFiniteNumber(value.totalEnemies)
+  );
+}
+
+function isMachineGunState(value: unknown): value is MachineGunState {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.weaponId === 'string' &&
+    isVector3(value.position) &&
+    isFiniteNumber(value.baseYaw) &&
+    (value.occupantId === undefined || typeof value.occupantId === 'string') &&
+    isFiniteNumber(value.beltAmmo) &&
+    isFiniteNumber(value.heatRatio) &&
+    typeof value.isOverheated === 'boolean' &&
+    (value.cooldownEndsAtMs === undefined ||
+      isFiniteNumber(value.cooldownEndsAtMs)) &&
+    (value.reloadEndsAtMs === undefined ||
+      isFiniteNumber(value.reloadEndsAtMs))
   );
 }
 
@@ -293,6 +377,102 @@ function isAllyDiedMessage(value: unknown): value is AllyDiedMessage {
   );
 }
 
+function isActionResultMessage(value: unknown): value is ActionResultMessage {
+  return (
+    isRecord(value) &&
+    value.type === 'action_result' &&
+    isRecord(value.payload) &&
+    Number.isSafeInteger(value.payload.clientTick) &&
+    typeof value.payload.action === 'string' &&
+    typeof value.payload.accepted === 'boolean' &&
+    (value.payload.accepted || typeof value.payload.rejectReason === 'string')
+  );
+}
+
+function isMatchStartMessage(value: unknown): value is MatchStartMessage {
+  return (
+    isRecord(value) &&
+    value.type === 'match_start' &&
+    isRecord(value.payload) &&
+    typeof value.payload.matchId === 'string' &&
+    isFiniteNumber(value.payload.startedAtMs) &&
+    isFiniteNumber(value.payload.deployEndsAtMs) &&
+    isFiniteNumber(value.payload.endsAtMs) &&
+    isFiniteNumber(value.payload.totalWaves) &&
+    isFiniteNumber(value.payload.totalEnemies)
+  );
+}
+
+function isWaveStartMessage(value: unknown): value is WaveStartMessage {
+  return (
+    isRecord(value) &&
+    value.type === 'wave_start' &&
+    isRecord(value.payload) &&
+    isFiniteNumber(value.payload.waveIndex) &&
+    isFiniteNumber(value.payload.enemyCount) &&
+    isFiniteNumber(value.payload.totalWaves) &&
+    isFiniteNumber(value.payload.startedAtMs)
+  );
+}
+
+function isSupplyDropMessage(value: unknown): value is SupplyDropMessage {
+  return (
+    isRecord(value) &&
+    value.type === 'supply_drop' &&
+    isRecord(value.payload) &&
+    typeof value.payload.dropId === 'string' &&
+    isVector3(value.payload.position) &&
+    isFiniteNumber(value.payload.expiresAtMs) &&
+    typeof value.payload.text === 'string'
+  );
+}
+
+function isMatchEndMessage(value: unknown): value is MatchEndMessage {
+  return (
+    isRecord(value) &&
+    value.type === 'match_end' &&
+    isRecord(value.payload) &&
+    typeof value.payload.matchId === 'string' &&
+    (value.payload.result === 'victory' ||
+      value.payload.result === 'defeat') &&
+    (value.payload.reason === 'time_survived' ||
+      value.payload.reason === 'player_died' ||
+      value.payload.reason === 'squad_eliminated') &&
+    isFiniteNumber(value.payload.endedAtMs) &&
+    Array.isArray(value.payload.scoreboard) &&
+    value.payload.scoreboard.every(isScoreboardEntry) &&
+    (value.payload.mvpPlayerId === undefined ||
+      typeof value.payload.mvpPlayerId === 'string') &&
+    isFiniteNumber(value.payload.spawnedEnemies) &&
+    isFiniteNumber(value.payload.defeatedEnemies) &&
+    isFiniteNumber(value.payload.totalEnemies)
+  );
+}
+
+function isScoreboardEntry(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.occupantId === 'string' &&
+    Number.isSafeInteger(value.seatIndex) &&
+    typeof value.heroName === 'string' &&
+    typeof value.displayName === 'string' &&
+    typeof value.isBot === 'boolean' &&
+    typeof value.alive === 'boolean' &&
+    isFiniteNumber(value.kills) &&
+    isFiniteNumber(value.mgKills) &&
+    isFiniteNumber(value.headshots) &&
+    isFiniteNumber(value.shotsFired) &&
+    isFiniteNumber(value.shotsHit) &&
+    isFiniteNumber(value.accuracy) &&
+    isFiniteNumber(value.survivalSec) &&
+    isFiniteNumber(value.damageDealt) &&
+    isFiniteNumber(value.damageTaken) &&
+    isFiniteNumber(value.medkitUsed) &&
+    Array.isArray(value.killsByWave) &&
+    value.killsByWave.every(isFiniteNumber)
+  );
+}
+
 function parseServerMessage(raw: string): ServerMessage | undefined {
   let parsed: unknown;
   try {
@@ -310,7 +490,12 @@ function parseServerMessage(raw: string): ServerMessage | undefined {
     isEnemyDiedMessage(parsed) ||
     isAllyCalloutMessage(parsed) ||
     isAllyDamagedMessage(parsed) ||
-    isAllyDiedMessage(parsed)
+    isAllyDiedMessage(parsed) ||
+    isActionResultMessage(parsed) ||
+    isMatchStartMessage(parsed) ||
+    isWaveStartMessage(parsed) ||
+    isSupplyDropMessage(parsed) ||
+    isMatchEndMessage(parsed)
   ) {
     return parsed;
   }
@@ -411,6 +596,21 @@ export class NetClient {
         case 'ally_died':
           this.listener.onAllyDied(message);
           break;
+        case 'action_result':
+          this.listener.onActionResult(message);
+          break;
+        case 'match_start':
+          this.listener.onMatchStart(message);
+          break;
+        case 'wave_start':
+          this.listener.onWaveStart(message);
+          break;
+        case 'supply_drop':
+          this.listener.onSupplyDrop(message);
+          break;
+        case 'match_end':
+          this.listener.onMatchEnd(message);
+          break;
       }
     });
 
@@ -459,6 +659,64 @@ export class NetClient {
       payload: { weaponId },
     };
     return this.send(message);
+  }
+
+  switchWeapon(weaponId: string): number | undefined {
+    const clientTick = this.allocateClientTick();
+    const message: SwitchWeaponMessage = {
+      type: 'switch_weapon',
+      payload: { weaponId, clientTick },
+    };
+    return this.send(message) ? clientTick : undefined;
+  }
+
+  useMedkit(): number | undefined {
+    const clientTick = this.allocateClientTick();
+    const message: UseMedkitMessage = {
+      type: 'use_medkit',
+      payload: { clientTick },
+    };
+    return this.send(message) ? clientTick : undefined;
+  }
+
+  pickup(itemId: string): number | undefined {
+    const clientTick = this.allocateClientTick();
+    const message: PickupMessage = {
+      type: 'pickup',
+      payload: { itemId, clientTick },
+    };
+    return this.send(message) ? clientTick : undefined;
+  }
+
+  mountMachineGun(mgId: string): number | undefined {
+    const clientTick = this.allocateClientTick();
+    const message: MountMgMessage = {
+      type: 'mount_mg',
+      payload: { mgId, clientTick },
+    };
+    return this.send(message) ? clientTick : undefined;
+  }
+
+  unmountMachineGun(): number | undefined {
+    const clientTick = this.allocateClientTick();
+    const message: UnmountMgMessage = {
+      type: 'unmount_mg',
+      payload: { clientTick },
+    };
+    return this.send(message) ? clientTick : undefined;
+  }
+
+  throwGrenade(
+    originPos: Vector3,
+    dirVec: Vector3,
+    force: number,
+  ): number | undefined {
+    const clientTick = this.allocateClientTick();
+    const message: ThrowGrenadeMessage = {
+      type: 'throw_grenade',
+      payload: { originPos, dirVec, force, clientTick },
+    };
+    return this.send(message) ? clientTick : undefined;
   }
 
   disconnect(): void {

@@ -11,16 +11,22 @@ import {
 } from 'cc';
 
 import type {
+  ActionResultPayload,
   AllyAiState,
   AllyState,
   EnemyState,
   FireRejectReason,
   FireResultPayload,
+  MachineGunState,
+  MatchEndPayload,
+  MatchProgressState,
   RouteId,
   WeaponState,
 } from '../../../../shared/protocol';
 import type {
+  GameplayConfig,
   PresentationConfig,
+  WeaponsConfig,
   WavesConfig,
 } from '../config/game-config';
 import type { ConnectionStatus } from '../net/net-client';
@@ -48,6 +54,16 @@ export class M1Hud {
   private readonly vignetteOpacity: UIOpacity;
   private readonly routeLabel: Label;
   private readonly calloutLabel: Label;
+  private readonly matchLabel: Label;
+  private readonly waveBannerLabel: Label;
+  private readonly interactionLabel: Label;
+  private readonly inventoryLabel: Label;
+  private readonly machineGunLabel: Label;
+  private readonly medkitLabel: Label;
+  private readonly medkitBar: Graphics;
+  private readonly medkitGlowOpacity: UIOpacity;
+  private readonly gameplay: GameplayConfig;
+  private readonly weapons: WeaponsConfig;
   private readonly allyLabels = new Map<number, Label>();
   private readonly allyIds = new Map<string, Label>();
   private readonly flashingAllies = new Set<string>();
@@ -60,8 +76,12 @@ export class M1Hud {
     canvas: Node,
     presentation: PresentationConfig,
     waves: WavesConfig,
+    gameplay: GameplayConfig,
+    weapons: WeaponsConfig,
   ) {
     this.presentation = presentation;
+    this.gameplay = gameplay;
+    this.weapons = weapons;
     this.routeNames = {
       A: waves.routes.A.name,
       B: waves.routes.B.name,
@@ -73,7 +93,7 @@ export class M1Hud {
 
     this.createLabel(
       'Title',
-      'M2 五人防线 · 服务器权威 AI',
+      'M3 完整单局 · 五人坚守',
       presentation.titleFontSizePx,
       new Vec3(0, presentation.statusOffsetYPx, 0),
       '#F4E8C1',
@@ -87,7 +107,7 @@ export class M1Hud {
     );
     this.createLabel(
       'Help',
-      '点击画面锁定鼠标  |  WASD 移动  |  左键射击  |  R 换弹  |  Ctrl 蹲下',
+      'WASD 移动  左键射击  R 换弹  Q 换枪  G 手榴弹  H 血包  F 交互  Ctrl 蹲下',
       presentation.hudFontSizePx,
       new Vec3(0, presentation.helpOffsetYPx, 0),
       '#DDE7EA',
@@ -160,6 +180,50 @@ export class M1Hud {
       new Vec3(0, presentation.calloutOffsetYPx, 0),
       '#FFD56A',
     );
+    this.matchLabel = this.createLabel(
+      'MatchProgress',
+      '部署中  00:00  敌军 200',
+      presentation.hudFontSizePx,
+      new Vec3(0, presentation.matchHudOffsetYPx, 0),
+      '#FFFFFF',
+    );
+    this.waveBannerLabel = this.createLabel(
+      'WaveBanner',
+      '',
+      presentation.titleFontSizePx,
+      new Vec3(0, presentation.waveBannerOffsetYPx, 0),
+      '#FFD56A',
+    );
+    this.interactionLabel = this.createLabel(
+      'Interaction',
+      '',
+      presentation.hudFontSizePx,
+      new Vec3(0, presentation.interactionOffsetYPx, 0),
+      '#C8F4FF',
+    );
+    this.inventoryLabel = this.createLabel(
+      'Inventory',
+      '',
+      presentation.hudFontSizePx,
+      new Vec3(0, presentation.inventoryOffsetYPx, 0),
+      '#F4E8C1',
+    );
+    this.machineGunLabel = this.createLabel(
+      'MachineGun',
+      '',
+      presentation.hudFontSizePx,
+      new Vec3(0, presentation.machineGunOffsetYPx, 0),
+      '#FFD56A',
+    );
+    this.medkitLabel = this.createLabel(
+      'Medkit',
+      '',
+      presentation.hudFontSizePx,
+      new Vec3(0, presentation.medkitProgressOffsetYPx, 0),
+      presentation.medkitGlowColor,
+    );
+    this.medkitBar = this.createMedkitBar();
+    this.medkitGlowOpacity = this.createMedkitGlow();
 
     this.createCrosshair();
     this.vignetteOpacity = this.createDamageVignette();
@@ -198,6 +262,136 @@ export class M1Hud {
 
   showReady(enemyCount: number): void {
     this.messageLabel.string = `敌人 ${enemyCount}  · 所有伤害等待服务器裁决`;
+  }
+
+  updateMatch(match: MatchProgressState, serverTimeMs: number): void {
+    const remainingSec = Math.max(
+      0,
+      Math.ceil((match.endsAtMs - serverTimeMs) / 1000),
+    );
+    const phase = match.phase === 'deploy'
+      ? '部署期'
+      : match.phase === 'intermission'
+        ? '波次间歇'
+        : match.phase === 'ended'
+          ? '已结束'
+          : `第 ${match.currentWaveIndex}/${match.totalWaves} 波`;
+    this.matchLabel.string = `${phase}  ${formatTime(remainingSec)}  剩余敌军 ${match.remainingEnemies}  已投放 ${match.spawnedEnemies}/${match.totalEnemies}`;
+  }
+
+  updateInventory(player: AllyState): void {
+    const weapons = player.availableWeaponIds.map((weaponId) => {
+      const name = this.weapons.player[weaponId]?.displayName ?? weaponId;
+      return weaponId === player.weapon.weaponId ? `【${name}】` : name;
+    });
+    this.inventoryLabel.string = `${weapons.join(' / ')}  手榴弹×${player.grenadesRemaining}  血包×${player.medkitsRemaining}`;
+  }
+
+  updateMedkit(player: AllyState, serverTimeMs: number): void {
+    const endsAtMs = player.medkitEndsAtMs;
+    if (endsAtMs === undefined || endsAtMs <= serverTimeMs) {
+      this.medkitLabel.string = '';
+      this.medkitGlowOpacity.opacity = 0;
+      this.drawMedkitProgress(0);
+      return;
+    }
+    const durationMs = this.gameplay.medkit.carriedUseSec * 1000;
+    const ratio = Math.min(
+      1,
+      Math.max(0, 1 - (endsAtMs - serverTimeMs) / durationMs),
+    );
+    this.medkitLabel.string = `正在使用血包 ${Math.round(ratio * 100)}%`;
+    this.medkitGlowOpacity.opacity = this.presentation.medkitGlowOpacity;
+    this.drawMedkitProgress(ratio);
+  }
+
+  showWaveStart(waveIndex: number, totalWaves: number): void {
+    this.waveBannerLabel.color = Color.fromHEX(new Color(), '#FFD56A');
+    this.waveBannerLabel.string = `第 ${waveIndex} 波进攻开始  /  共 ${totalWaves} 波`;
+    this.fadeLabel(this.waveBannerLabel, this.presentation.waveBannerSec);
+  }
+
+  showSupplyDrop(text: string): void {
+    this.waveBannerLabel.string = text;
+    this.waveBannerLabel.color = Color.fromHEX(
+      new Color(),
+      this.presentation.supplyColor,
+    );
+    this.fadeLabel(this.waveBannerLabel, this.presentation.supplyBannerSec);
+  }
+
+  showInteraction(text: string): void {
+    this.interactionLabel.string = text;
+  }
+
+  showMachineGun(machineGun: MachineGunState | undefined): void {
+    if (!machineGun) {
+      this.machineGunLabel.string = '';
+      return;
+    }
+    const heat = Math.round(machineGun.heatRatio * 100);
+    const state = machineGun.isOverheated
+      ? '过热冷却中'
+      : machineGun.reloadEndsAtMs !== undefined
+        ? '弹链装填中'
+        : '可开火';
+    this.machineGunLabel.string = `九二式  弹链 ${machineGun.beltAmmo}  热量 ${heat}%  ${state}`;
+  }
+
+  showActionResult(payload: ActionResultPayload): void {
+    this.messageLabel.string = payload.accepted
+      ? `操作成功：${describeAction(payload.action)}`
+      : `操作失败：${describeAction(payload.action)} · ${payload.rejectReason}`;
+  }
+
+  showMatchEnd(payload: MatchEndPayload, playerId: string | null): void {
+    const report = new Node('MatchReport');
+    this.setUiLayer(report);
+    report.setParent(this.root);
+    const background = report.addComponent(Graphics);
+    background.fillColor = Color.fromHEX(new Color(), '#183040');
+    background.rect(
+      -this.presentation.designWidth / 2,
+      -this.presentation.designHeight / 2,
+      this.presentation.designWidth,
+      this.presentation.designHeight,
+    );
+    background.fill();
+    this.createReportLabel(
+      report,
+      payload.result === 'victory' ? '坚守成功' : '坚守失败',
+      this.presentation.reportTitleFontSizePx,
+      this.presentation.matchHudOffsetYPx,
+      '#F4E8C1',
+    );
+    this.createReportLabel(
+      report,
+      `全队歼敌 ${payload.defeatedEnemies}/${payload.totalEnemies}  ·  已投放 ${payload.spawnedEnemies}`,
+      this.presentation.reportLineFontSizePx,
+      this.presentation.waveBannerOffsetYPx,
+      '#C8F4FF',
+    );
+    payload.scoreboard.forEach((entry, index) => {
+      const isPlayer = entry.occupantId === playerId;
+      const mvp = entry.occupantId === payload.mvpPlayerId ? '  ★ MVP' : '';
+      const identity = isPlayer ? '（你）' : entry.isBot ? '（AI）' : '';
+      const line = `${entry.heroName}${identity}  歼敌 ${entry.kills}  命中率 ${Math.round(entry.accuracy * 100)}%  存活 ${Math.round(entry.survivalSec)}s${mvp}`;
+      this.createReportLabel(
+        report,
+        line,
+        this.presentation.reportLineFontSizePx,
+        this.presentation.reportFirstLineOffsetYPx -
+          index * this.presentation.reportLineGapPx,
+        isPlayer ? '#FFD56A' : '#FFFFFF',
+      );
+    });
+    this.createReportLabel(
+      report,
+      '向英雄致敬',
+      this.presentation.titleFontSizePx,
+      this.presentation.helpOffsetYPx,
+      '#F4E8C1',
+    );
   }
 
   updateAllies(allies: readonly AllyState[]): void {
@@ -435,6 +629,81 @@ export class M1Hud {
     graphics.stroke();
   }
 
+  private createMedkitBar(): Graphics {
+    const node = new Node('MedkitProgressBar');
+    this.setUiLayer(node);
+    node.setParent(this.root);
+    node.setPosition(
+      0,
+      this.presentation.medkitProgressOffsetYPx -
+        this.presentation.medkitProgressHeightPx,
+      0,
+    );
+    const graphics = node.addComponent(Graphics);
+    this.drawMedkitProgress(0, graphics);
+    return graphics;
+  }
+
+  private createMedkitGlow(): UIOpacity {
+    const node = new Node('MedkitGlow');
+    this.setUiLayer(node);
+    node.setParent(this.root);
+    const graphics = node.addComponent(Graphics);
+    graphics.fillColor = Color.fromHEX(
+      new Color(),
+      this.presentation.medkitGlowColor,
+    );
+    graphics.rect(
+      -this.presentation.designWidth / 2,
+      -this.presentation.designHeight / 2,
+      this.presentation.designWidth,
+      this.presentation.designHeight,
+    );
+    graphics.fill();
+    const opacity = node.addComponent(UIOpacity);
+    opacity.opacity = 0;
+    return opacity;
+  }
+
+  private drawMedkitProgress(ratio: number, graphics = this.medkitBar): void {
+    graphics.clear();
+    const width = this.presentation.medkitProgressWidthPx;
+    const height = this.presentation.medkitProgressHeightPx;
+    graphics.fillColor = Color.fromHEX(new Color(), '#25312A');
+    graphics.rect(-width / 2, -height / 2, width, height);
+    graphics.fill();
+    if (ratio <= 0) {
+      return;
+    }
+    graphics.fillColor = Color.fromHEX(
+      new Color(),
+      this.presentation.medkitGlowColor,
+    );
+    graphics.rect(-width / 2, -height / 2, width * ratio, height);
+    graphics.fill();
+  }
+
+  private createReportLabel(
+    parent: Node,
+    text: string,
+    fontSize: number,
+    y: number,
+    colorHex: string,
+  ): void {
+    const node = new Node('ReportLine');
+    this.setUiLayer(node);
+    node.setParent(parent);
+    node.setPosition(0, y, 0);
+    const label = node.addComponent(Label);
+    label.string = text;
+    label.fontSize = fontSize;
+    label.lineHeight = fontSize;
+    label.horizontalAlign = Label.HorizontalAlign.CENTER;
+    label.verticalAlign = Label.VerticalAlign.CENTER;
+    label.overflow = Label.Overflow.NONE;
+    label.color = Color.fromHEX(new Color(), colorHex);
+  }
+
   private createDamageVignette(): UIOpacity {
     const node = new Node('DamageVignette');
     this.setUiLayer(node);
@@ -489,5 +758,30 @@ export class M1Hud {
 
   private setUiLayer(node: Node): void {
     node.layer = Layers.Enum.UI_2D;
+  }
+}
+
+function formatTime(totalSec: number): string {
+  const minutes = Math.floor(totalSec / 60);
+  const seconds = totalSec % 60;
+  const minuteText = minutes < 10 ? `0${minutes}` : `${minutes}`;
+  const secondText = seconds < 10 ? `0${seconds}` : `${seconds}`;
+  return `${minuteText}:${secondText}`;
+}
+
+function describeAction(action: ActionResultPayload['action']): string {
+  switch (action) {
+    case 'switch_weapon':
+      return '切换武器';
+    case 'use_medkit':
+      return '使用血包';
+    case 'pickup':
+      return '拾取';
+    case 'mount_mg':
+      return '上重机枪';
+    case 'unmount_mg':
+      return '下重机枪';
+    case 'throw_grenade':
+      return '投掷手榴弹';
   }
 }

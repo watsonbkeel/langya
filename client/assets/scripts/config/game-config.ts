@@ -11,6 +11,7 @@ export interface GameplayConfig {
     readonly aimPitchMaxDeg: number;
     readonly defaultLoadout: {
       readonly primary: string;
+      readonly throwable: string;
     };
   };
   readonly server: {
@@ -23,6 +24,15 @@ export interface GameplayConfig {
   readonly arena: {
     readonly widthM: number;
     readonly depthM: number;
+    readonly itemPickupRangeM: number;
+    readonly machineGunMountRangeM: number;
+  };
+  readonly medkit: {
+    readonly carriedUseSec: number;
+  };
+  readonly match: {
+    readonly durationSec: number;
+    readonly deployPhaseSec: number;
   };
 }
 
@@ -32,6 +42,18 @@ export interface WeaponPresentationConfig {
 
 export interface WeaponsConfig {
   readonly player: Readonly<Record<string, WeaponPresentationConfig>>;
+  readonly emplacement: Readonly<
+    Record<
+      string,
+      {
+        readonly displayName: string;
+        readonly fireRate: number;
+        readonly yawLimitDeg: number;
+        readonly pitchMinDeg: number;
+        readonly pitchMaxDeg: number;
+      }
+    >
+  >;
 }
 
 export interface WavesConfig {
@@ -91,6 +113,31 @@ export interface PresentationConfig {
   readonly calloutDurationSec: number;
   readonly calloutSoundFrequencyHz: number;
   readonly calloutSoundDurationSec: number;
+  readonly matchHudOffsetYPx: number;
+  readonly waveBannerOffsetYPx: number;
+  readonly interactionOffsetYPx: number;
+  readonly inventoryOffsetYPx: number;
+  readonly machineGunOffsetYPx: number;
+  readonly medkitProgressOffsetYPx: number;
+  readonly medkitProgressWidthPx: number;
+  readonly medkitProgressHeightPx: number;
+  readonly medkitGlowColor: string;
+  readonly medkitGlowOpacity: number;
+  readonly supplyColor: string;
+  readonly weaponRackColor: string;
+  readonly machineGunColor: string;
+  readonly machineGunHotColor: string;
+  readonly worldItemSizeM: number;
+  readonly machineGunWidthM: number;
+  readonly machineGunHeightM: number;
+  readonly machineGunLengthM: number;
+  readonly grenadeThrowForce: number;
+  readonly waveBannerSec: number;
+  readonly supplyBannerSec: number;
+  readonly reportTitleFontSizePx: number;
+  readonly reportLineFontSizePx: number;
+  readonly reportLineGapPx: number;
+  readonly reportFirstLineOffsetYPx: number;
   readonly weaponOffsetXPx: number;
   readonly weaponOffsetYPx: number;
   readonly weaponLengthPx: number;
@@ -153,6 +200,26 @@ const PRESENTATION_NUMBER_KEYS = [
   'calloutDurationSec',
   'calloutSoundFrequencyHz',
   'calloutSoundDurationSec',
+  'matchHudOffsetYPx',
+  'waveBannerOffsetYPx',
+  'interactionOffsetYPx',
+  'inventoryOffsetYPx',
+  'machineGunOffsetYPx',
+  'medkitProgressOffsetYPx',
+  'medkitProgressWidthPx',
+  'medkitProgressHeightPx',
+  'medkitGlowOpacity',
+  'worldItemSizeM',
+  'machineGunWidthM',
+  'machineGunHeightM',
+  'machineGunLengthM',
+  'grenadeThrowForce',
+  'waveBannerSec',
+  'supplyBannerSec',
+  'reportTitleFontSizePx',
+  'reportLineFontSizePx',
+  'reportLineGapPx',
+  'reportFirstLineOffsetYPx',
   'weaponOffsetXPx',
   'weaponOffsetYPx',
   'weaponLengthPx',
@@ -183,13 +250,15 @@ function isGameplayConfig(value: unknown): value is GameplayConfig {
   if (!isRecord(value)) {
     return false;
   }
-  const { player, server, combat, arena } = value;
+  const { player, server, combat, arena, medkit, match } = value;
   if (
     !isRecord(player) ||
     !isRecord(player.defaultLoadout) ||
     !isRecord(server) ||
     !isRecord(combat) ||
-    !isRecord(arena)
+    !isRecord(arena) ||
+    !isRecord(medkit) ||
+    !isRecord(match)
   ) {
     return false;
   }
@@ -201,16 +270,26 @@ function isGameplayConfig(value: unknown): value is GameplayConfig {
     isFiniteNumber(player.aimPitchMinDeg) &&
     isFiniteNumber(player.aimPitchMaxDeg) &&
     typeof player.defaultLoadout.primary === 'string' &&
+    typeof player.defaultLoadout.throwable === 'string' &&
     isFiniteNumber(server.tickRateHz) &&
     isFiniteNumber(combat.enemyHitboxRadiusM) &&
     isFiniteNumber(combat.enemyHitboxHeightM) &&
     isFiniteNumber(arena.widthM) &&
-    isFiniteNumber(arena.depthM)
+    isFiniteNumber(arena.depthM) &&
+    isFiniteNumber(arena.itemPickupRangeM) &&
+    isFiniteNumber(arena.machineGunMountRangeM) &&
+    isFiniteNumber(medkit.carriedUseSec) &&
+    isFiniteNumber(match.durationSec) &&
+    isFiniteNumber(match.deployPhaseSec)
   );
 }
 
 function isWeaponsConfig(value: unknown): value is WeaponsConfig {
-  if (!isRecord(value) || !isRecord(value.player)) {
+  if (
+    !isRecord(value) ||
+    !isRecord(value.player) ||
+    !isRecord(value.emplacement)
+  ) {
     return false;
   }
 
@@ -219,6 +298,19 @@ function isWeaponsConfig(value: unknown): value is WeaponsConfig {
     if (
       !isRecord(weapon) ||
       typeof weapon.displayName !== 'string'
+    ) {
+      return false;
+    }
+  }
+  for (const weaponId in value.emplacement) {
+    const weapon = value.emplacement[weaponId];
+    if (
+      !isRecord(weapon) ||
+      typeof weapon.displayName !== 'string' ||
+      !isFiniteNumber(weapon.fireRate) ||
+      !isFiniteNumber(weapon.yawLimitDeg) ||
+      !isFiniteNumber(weapon.pitchMinDeg) ||
+      !isFiniteNumber(weapon.pitchMaxDeg)
     ) {
       return false;
     }
@@ -259,6 +351,11 @@ function isPresentationConfig(value: unknown): value is PresentationConfig {
     typeof value.enemyEngageColor === 'string' &&
     typeof value.enemyHitColor === 'string' &&
     typeof value.fireWarningColor === 'string' &&
+    typeof value.medkitGlowColor === 'string' &&
+    typeof value.supplyColor === 'string' &&
+    typeof value.weaponRackColor === 'string' &&
+    typeof value.machineGunColor === 'string' &&
+    typeof value.machineGunHotColor === 'string' &&
     typeof value.skyColor === 'string'
   );
 }

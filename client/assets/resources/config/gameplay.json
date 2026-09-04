@@ -75,6 +75,8 @@
       "enemySpawnPoints": 3
     },
     "ammoBoxCooldownSec": 10,
+    "itemPickupRangeM": 2.0,
+    "machineGunMountRangeM": 2.0,
     "comment": "玩家不能下山。活动区约 60m x 20m，越界软墙挡回"
   },
 

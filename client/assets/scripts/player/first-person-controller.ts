@@ -21,6 +21,17 @@ import type {
 export interface FirstPersonActions {
   readonly onFire: () => void;
   readonly onReload: () => void;
+  readonly onSwitchWeapon: () => void;
+  readonly onUseMedkit: () => void;
+  readonly onThrowGrenade: () => void;
+  readonly onInteract: () => void;
+}
+
+interface MountedAimLimits {
+  readonly baseYaw: number;
+  readonly yawLimitDeg: number;
+  readonly pitchMinDeg: number;
+  readonly pitchMaxDeg: number;
 }
 
 export class FirstPersonController {
@@ -34,8 +45,10 @@ export class FirstPersonController {
   private aimYaw = 0;
   private aimPitch = 0;
   private hasPosition = false;
+  private mountedAimLimits: MountedAimLimits | null = null;
   private pointerLockAttempted = false;
   private ignoreMouseUntilMs = 0;
+  private fireHeld = false;
   private readonly preventContextMenu = (event: Event): void => {
     event.preventDefault();
   };
@@ -66,6 +79,7 @@ export class FirstPersonController {
     input.on(Input.EventType.KEY_UP, this.onKeyUp, this);
     input.on(Input.EventType.MOUSE_MOVE, this.onMouseMove, this);
     input.on(Input.EventType.MOUSE_DOWN, this.onMouseDown, this);
+    input.on(Input.EventType.MOUSE_UP, this.onMouseUp, this);
     if (typeof document !== 'undefined') {
       document.addEventListener('contextmenu', this.preventContextMenu);
       document.addEventListener(
@@ -118,6 +132,26 @@ export class FirstPersonController {
     };
   }
 
+  isFireHeld(): boolean {
+    return this.fireHeld;
+  }
+
+  setMountedAimLimits(limits: MountedAimLimits | null): void {
+    this.mountedAimLimits = limits;
+    if (limits) {
+      this.aimYaw = limits.baseYaw;
+      this.aimPitch = Math.min(
+        limits.pitchMaxDeg,
+        Math.max(limits.pitchMinDeg, this.aimPitch),
+      );
+      this.cameraNode.setRotationFromEuler(
+        this.aimPitch,
+        this.aimYaw,
+        0,
+      );
+    }
+  }
+
   update(deltaTime: number): void {
     if (!this.hasPosition) {
       return;
@@ -141,6 +175,7 @@ export class FirstPersonController {
     input.off(Input.EventType.KEY_UP, this.onKeyUp, this);
     input.off(Input.EventType.MOUSE_MOVE, this.onMouseMove, this);
     input.off(Input.EventType.MOUSE_DOWN, this.onMouseDown, this);
+    input.off(Input.EventType.MOUSE_UP, this.onMouseUp, this);
     if (typeof document !== 'undefined') {
       document.removeEventListener('contextmenu', this.preventContextMenu);
       document.removeEventListener(
@@ -156,6 +191,14 @@ export class FirstPersonController {
     this.pressedKeys.add(event.keyCode);
     if (firstPress && event.keyCode === KeyCode.KEY_R) {
       this.actions.onReload();
+    } else if (firstPress && event.keyCode === KeyCode.KEY_Q) {
+      this.actions.onSwitchWeapon();
+    } else if (firstPress && event.keyCode === KeyCode.KEY_H) {
+      this.actions.onUseMedkit();
+    } else if (firstPress && event.keyCode === KeyCode.KEY_G) {
+      this.actions.onThrowGrenade();
+    } else if (firstPress && event.keyCode === KeyCode.KEY_F) {
+      this.actions.onInteract();
     }
   }
 
@@ -178,10 +221,27 @@ export class FirstPersonController {
     this.aimYaw -= event.getDeltaX() * this.presentation.mouseSensitivityDeg;
     this.aimPitch -=
       event.getDeltaY() * this.presentation.mouseSensitivityDeg;
+    const pitchMin =
+      this.mountedAimLimits?.pitchMinDeg ??
+      this.gameplay.player.aimPitchMinDeg;
+    const pitchMax =
+      this.mountedAimLimits?.pitchMaxDeg ??
+      this.gameplay.player.aimPitchMaxDeg;
     this.aimPitch = Math.min(
-      this.gameplay.player.aimPitchMaxDeg,
-      Math.max(this.gameplay.player.aimPitchMinDeg, this.aimPitch),
+      pitchMax,
+      Math.max(pitchMin, this.aimPitch),
     );
+    if (this.mountedAimLimits) {
+      this.aimYaw = Math.min(
+        this.mountedAimLimits.baseYaw +
+          this.mountedAimLimits.yawLimitDeg,
+        Math.max(
+          this.mountedAimLimits.baseYaw -
+            this.mountedAimLimits.yawLimitDeg,
+          this.aimYaw,
+        ),
+      );
+    }
     this.cameraNode.setRotationFromEuler(this.aimPitch, this.aimYaw, 0);
   }
 
@@ -204,7 +264,14 @@ export class FirstPersonController {
         return;
       }
     }
+    this.fireHeld = true;
     this.actions.onFire();
+  }
+
+  private onMouseUp(event: EventMouse): void {
+    if (event.getButton() === EventMouse.BUTTON_LEFT) {
+      this.fireHeld = false;
+    }
   }
 
   private readonly onPointerLockChange = (): void => {
