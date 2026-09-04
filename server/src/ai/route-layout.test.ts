@@ -24,6 +24,10 @@ describe('route layout', () => {
         layout.guardPosition.z,
         -gameplayConfig.arena.depthM / 2,
       );
+      assert.deepEqual(layout.waypoints, [
+        layout.spawnPosition,
+        layout.guardPosition,
+      ]);
     }
   });
 

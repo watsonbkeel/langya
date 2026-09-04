@@ -20,16 +20,28 @@ const routes = {
     routeId: 'A',
     spawnPosition: { x: 0, y: 0, z: 0 },
     guardPosition: { x: 0, y: 0, z: -10 },
+    waypoints: [
+      { x: 0, y: 0, z: 0 },
+      { x: 0, y: 0, z: -10 },
+    ],
   },
   B: {
     routeId: 'B',
     spawnPosition: { x: 10, y: 0, z: 0 },
     guardPosition: { x: 10, y: 0, z: -10 },
+    waypoints: [
+      { x: 10, y: 0, z: 0 },
+      { x: 10, y: 0, z: -10 },
+    ],
   },
   C: {
     routeId: 'C',
     spawnPosition: { x: 20, y: 0, z: 0 },
     guardPosition: { x: 20, y: 0, z: -10 },
+    waypoints: [
+      { x: 20, y: 0, z: 0 },
+      { x: 20, y: 0, z: -10 },
+    ],
   },
 } as const;
 

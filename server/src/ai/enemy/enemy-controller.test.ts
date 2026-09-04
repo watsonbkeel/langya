@@ -14,6 +14,10 @@ const route = {
   routeId: 'A',
   spawnPosition: { x: 0, y: 0, z: -20 },
   guardPosition: { x: 0, y: 0, z: 0 },
+  waypoints: [
+    { x: 0, y: 0, z: -20 },
+    { x: 0, y: 0, z: 0 },
+  ],
 } as const;
 const target: EnemyTarget = {
   id: 'ally-1',

@@ -13,6 +13,7 @@ export interface RouteLayout<TRouteId extends string> {
   readonly routeId: TRouteId;
   readonly spawnPosition: Vector3;
   readonly guardPosition: Vector3;
+  readonly waypoints: readonly Vector3[];
 }
 
 export function createRouteLayouts<TRouteId extends string>(
@@ -37,19 +38,24 @@ export function createRouteLayouts<TRouteId extends string>(
   );
   const guardZ = -(arena.depthM / 2);
 
-  return routeEntries.map(([routeId, route], index) => ({
-    routeId,
-    spawnPosition: {
+  return routeEntries.map(([routeId, route], index) => {
+    const spawnPosition = {
       x: firstLaneX + laneSpacing * index,
       y: 0,
       z: -route.lengthM,
-    },
-    guardPosition: {
+    };
+    const guardPosition = {
       x: firstLaneX + laneSpacing * index,
       y: 0,
       z: guardZ,
-    },
-  }));
+    };
+    return {
+      routeId,
+      spawnPosition,
+      guardPosition,
+      waypoints: [spawnPosition, guardPosition],
+    };
+  });
 }
 
 export function findNearestRoute<TRouteId extends string>(

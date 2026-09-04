@@ -75,7 +75,7 @@ export class EnemyAgent<TRouteId extends string> {
   state: EnemyAiState = 'advance';
   fireWarningEndsAtMs: number | undefined;
 
-  private readonly goalPosition: Vector3;
+  private readonly waypoints: readonly Vector3[];
   private readonly behavior: EnemyBehaviorConfig;
   private readonly shared: EnemySharedAiConfig;
   private readonly weapon: EnemyWeaponAiConfig;
@@ -83,21 +83,22 @@ export class EnemyAgent<TRouteId extends string> {
   private targetId: string | undefined;
   private aimedPosition: Vector3 | undefined;
   private nextFireAtMs: number;
+  private waypointIndex = 1;
 
   constructor(options: EnemyAgentOptions<TRouteId>) {
     this.id = options.id;
     this.enemyType = options.enemyType;
     this.routeId = options.route.routeId;
-    this.position = {
-      x: options.route.spawnPosition.x + options.spawnOffset.x,
-      y: options.route.spawnPosition.y + options.spawnOffset.y,
-      z: options.route.spawnPosition.z + options.spawnOffset.z,
-    };
-    this.goalPosition = {
-      x: options.route.guardPosition.x + options.spawnOffset.x,
-      y: options.route.guardPosition.y + options.spawnOffset.y,
-      z: options.route.guardPosition.z + options.spawnOffset.z,
-    };
+    this.waypoints = options.route.waypoints.map((waypoint) => ({
+      x: waypoint.x + options.spawnOffset.x,
+      y: waypoint.y + options.spawnOffset.y,
+      z: waypoint.z + options.spawnOffset.z,
+    }));
+    const spawnPosition = this.waypoints[0];
+    if (!spawnPosition) {
+      throw new Error(`路线 "${options.route.routeId}" 缺少路径点`);
+    }
+    this.position = { ...spawnPosition };
     this.behavior = options.behavior;
     this.shared = options.shared;
     this.weapon = options.weapon;
@@ -110,11 +111,19 @@ export class EnemyAgent<TRouteId extends string> {
       return;
     }
 
-    moveToward(
+    const waypoint = this.waypoints[this.waypointIndex];
+    if (!waypoint) {
+      return;
+    }
+
+    // 路径在开局时预计算，tick 中只逐点推进，不运行实时寻路。
+    if (moveToward(
       this.position,
-      this.goalPosition,
+      waypoint,
       this.behavior.moveSpeed * deltaSec,
-    );
+    )) {
+      this.waypointIndex += 1;
+    }
   }
 
   resolvePendingAttack(
@@ -310,19 +319,20 @@ function moveToward(
   position: MutableVector3,
   target: Vector3,
   maxDistance: number,
-): void {
+): boolean {
   const deltaX = target.x - position.x;
   const deltaY = target.y - position.y;
   const deltaZ = target.z - position.z;
   const distance = Math.hypot(deltaX, deltaY, deltaZ);
   if (distance === 0) {
-    return;
+    return true;
   }
 
   const scale = Math.min(1, maxDistance / distance);
   position.x += deltaX * scale;
   position.y += deltaY * scale;
   position.z += deltaZ * scale;
+  return scale === 1;
 }
 
 function distanceBetween(first: Vector3, second: Vector3): number {
