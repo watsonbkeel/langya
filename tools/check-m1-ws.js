@@ -7,6 +7,7 @@
 'use strict';
 
 const gameplay = require('../shared/config/gameplay.json');
+const waves = require('../shared/config/waves.json');
 const weapons = require('../shared/config/weapons.json');
 
 let WebSocket;
@@ -22,7 +23,10 @@ try {
 }
 
 const url = process.argv[2] || 'ws://127.0.0.1:8081/ws';
-const timeoutMs = 8000;
+const timeoutMs =
+  ((waves.waves[0]?.startSec ?? gameplay.match.deployPhaseSec) +
+    gameplay.match.deployPhaseSec) *
+  1000;
 const weaponId = gameplay.player.defaultLoadout.primary;
 const weapon = weapons.player[weaponId];
 

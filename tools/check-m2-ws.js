@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * M2 权威 AI 链路自测：
- * join -> room_state -> 5 席快照 -> 三路敌情 -> 开火预警 -> 服务端喊话。
+ * join -> room_state -> 5 席快照 -> 三路敌情 -> 开火预警。
+ * 喊话受实时战况影响，收到时校验服务端文案；阈值与冷却由确定性单测覆盖。
  */
 
 'use strict';
@@ -23,12 +24,19 @@ try {
 }
 
 const url = process.argv[2] || 'ws://127.0.0.1:8081/ws';
-const timeoutMs = 12_000;
+const firstWave = waves.waves[0];
+const timeoutMs =
+  ((firstWave?.startSec ?? gameplay.match.deployPhaseSec) +
+    (firstWave?.squadIntervalSec ?? waves.intermissionSec) * 2 +
+    allies.callout.cooldownSec +
+    gameplay.match.deployPhaseSec) *
+  1000;
 const expectedRoutes = Object.keys(waves.routes).sort();
 let roomStatePassed = false;
 let snapshotPassed = false;
 let snapshotLogged = false;
 let warningPassed = false;
+let warningLogged = false;
 let calloutPassed = false;
 let finished = false;
 
@@ -45,8 +53,7 @@ function finishIfComplete() {
     finished ||
     !roomStatePassed ||
     !snapshotPassed ||
-    !warningPassed ||
-    !calloutPassed
+    !warningPassed
   ) {
     return;
   }
@@ -86,8 +93,10 @@ socket.on('message', (data) => {
       console.error(`❌ room_state 席位异常：${JSON.stringify(message.payload)}`);
       process.exit(1);
     }
-    roomStatePassed = true;
-    console.log('✅ room_state 为按 seatIndex 排序的固定五席');
+    if (!roomStatePassed) {
+      roomStatePassed = true;
+      console.log('✅ room_state 为按 seatIndex 排序的固定五席');
+    }
     finishIfComplete();
     return;
   }
@@ -100,8 +109,10 @@ socket.on('message', (data) => {
       console.error('❌ ally_callout 缺少服务端文案');
       process.exit(1);
     }
-    calloutPassed = true;
-    console.log(`✅ 收到服务端喊话：${message.payload.text}`);
+    if (!calloutPassed) {
+      calloutPassed = true;
+      console.log(`✅ 收到服务端喊话：${message.payload.text}`);
+    }
     finishIfComplete();
     return;
   }
@@ -136,8 +147,7 @@ socket.on('message', (data) => {
   }
   if (
     expectedRoutes.every(
-      (routeId) =>
-        threatCounts[routeId] >= allies.callout.enemyThreshold,
+      (routeId) => threatCounts[routeId] > 0,
     )
   ) {
     snapshotPassed = true;
@@ -149,7 +159,8 @@ socket.on('message', (data) => {
       `✅ 五席快照与三路威胁通过：${JSON.stringify(threatCounts)}`,
     );
   }
-  if (warningPassed) {
+  if (warningPassed && !warningLogged) {
+    warningLogged = true;
     console.log('✅ 开火预警截止时间基于 world_snapshot.serverTimeMs');
   }
   finishIfComplete();

@@ -98,7 +98,12 @@ ws.on('message', (data) => {
     message.type === 'enemy_died' ||
     message.type === 'ally_callout' ||
     message.type === 'ally_damaged' ||
-    message.type === 'ally_died'
+    message.type === 'ally_died' ||
+    message.type === 'action_result' ||
+    message.type === 'match_start' ||
+    message.type === 'wave_start' ||
+    message.type === 'supply_drop' ||
+    message.type === 'match_end'
   ) {
     // M0 连通性检查只验证握手与心跳，容忍后续里程碑的服务端消息。
   } else {
