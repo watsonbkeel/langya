@@ -16,6 +16,7 @@
 |---|---|
 | 开始开发（必读） | **[AGENTS.md](./AGENTS.md)** |
 | 了解双机怎么协作（必读） | **[docs/COLLAB.md](./docs/COLLAB.md)** |
+| 启动两台机器的 Codex | [docs/CODEX-PROMPTS.md](./docs/CODEX-PROMPTS.md) |
 | 了解要做什么 | [docs/PRD.md](./docs/PRD.md) |
 | 查看开发进度 | [docs/MILESTONES.md](./docs/MILESTONES.md) |
 | 确认待决策事项 | [docs/OPEN-QUESTIONS.md](./docs/OPEN-QUESTIONS.md) |
