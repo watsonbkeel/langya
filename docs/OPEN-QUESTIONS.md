@@ -51,7 +51,7 @@
 | # | 提案机器 | 日期 | 改什么 | 为什么 | 影响范围 | 状态 |
 |---|---|---|---|---|---|---|
 | 1 | debian | 2026-09-04 | 新建 `shared/protocol.ts`，定义 M0 的 `join` / `snapshot` / `ping` / `pong` 判别联合类型；统一使用 `{ type, payload }` JSON 信封 | 建立客户端与权威服务器的唯一协议真源，供 Mac 侧直接导入并完成 M0 联调 | 服务端 WS 握手、客户端网络层、`tools/check-ws.js` | 已完成，Mac 已拉取并通过 M0 联调 |
-| 2 | debian | 2026-09-04 | 在不改动 M0 消息的前提下，增量增加 M1 的 `input_state` / `fire` / `reload` / `world_snapshot` / `fire_result` / `enemy_died` 消息及共享状态类型 | 建立“输入 → 服务端命中裁决 → 扣血/死亡 → 客户端表现”的权威战斗链路，并同步权威弹药状态 | 服务端消息解析、20Hz 战斗循环、射线命中与弹药校验；Mac 输入、敌人占位、HUD 和命中反馈 | 待 watson 通知 Mac 并由双方确认 |
+| 2 | debian | 2026-09-04 | 在不改动 M0 消息的前提下，增量增加 M1 的 `input_state` / `fire` / `reload` / `world_snapshot` / `fire_result` / `enemy_died` 消息及共享状态类型 | 建立“输入 → 服务端命中裁决 → 扣血/死亡 → 客户端表现”的权威战斗链路，并同步权威弹药状态 | 服务端消息解析、20Hz 战斗循环、射线命中与弹药校验；Mac 输入、敌人占位、HUD 和命中反馈 | Mac 已审查确认，Debian 实现中 |
 
 <!-- 示例：
 | 1 | debian | 2026-09-05 | snapshot 增加 allyRoute 字段 | 客户端要显示队友在哪条路线 | 客户端队友面板 | 待确认 |

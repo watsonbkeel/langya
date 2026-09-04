@@ -1,7 +1,6 @@
 import {
   CLIENT_MESSAGE_TYPES,
   PROTOCOL_VERSION,
-  type ClientMessage,
   type JoinMessage,
   type PingMessage,
 } from '../../../shared/protocol';
@@ -41,7 +40,9 @@ function isPingMessage(value: unknown): value is PingMessage {
   );
 }
 
-export function parseClientMessage(raw: string): ClientMessage | undefined {
+export function parseClientMessage(
+  raw: string,
+): JoinMessage | PingMessage | undefined {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
