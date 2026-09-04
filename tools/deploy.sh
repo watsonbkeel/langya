@@ -75,6 +75,8 @@ node tools/check-m1-ws.js ws://127.0.0.1:8081/ws
 node tools/check-m1-ws.js ws://127.0.0.1:8080/ws
 node tools/check-m2-ws.js ws://127.0.0.1:8081/ws
 node tools/check-m2-ws.js ws://127.0.0.1:8080/ws
+node tools/check-m3-ws.js ws://127.0.0.1:8081/ws
+node tools/check-m3-ws.js ws://127.0.0.1:8080/ws
 
 TAILSCALE_IP="$(tailscale ip -4 2>/dev/null | head -n 1 || true)"
 if [[ -n "${TAILSCALE_IP}" ]]; then
@@ -85,6 +87,8 @@ if [[ -n "${TAILSCALE_IP}" ]]; then
   node tools/check-m1-ws.js "ws://${TAILSCALE_IP}:8080/ws"
   node tools/check-m2-ws.js "ws://${TAILSCALE_IP}:8081/ws"
   node tools/check-m2-ws.js "ws://${TAILSCALE_IP}:8080/ws"
+  node tools/check-m3-ws.js "ws://${TAILSCALE_IP}:8081/ws"
+  node tools/check-m3-ws.js "ws://${TAILSCALE_IP}:8080/ws"
 fi
 
 echo "部署完成"
