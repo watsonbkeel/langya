@@ -7,6 +7,8 @@
     "naturalRegen": 0,
     "moveSpeed": 4.0,
     "crouchSpeed": 1.8,
+    "aimPitchMinDeg": -60,
+    "aimPitchMaxDeg": 60,
     "crouchHitboxMultiplier": 0.6,
     "medkitCount": 2,
     "canRespawn": false,
@@ -17,6 +19,21 @@
       "throwableCount": 4
     },
     "comment": "阵亡不复活，转观战模式（可切换视角）。蹲下受击面积减少 40%"
+  },
+
+  "server": {
+    "tickRateHz": 20,
+    "comment": "权威服务器固定 20Hz 更新与状态同步"
+  },
+
+  "combat": {
+    "fireOriginToleranceM": 1.0,
+    "directionMagnitudeTolerance": 0.05,
+    "enemyHitboxRadiusM": 0.45,
+    "enemyHitboxHeightM": 1.8,
+    "headHitboxStartM": 1.4,
+    "torsoHitboxStartM": 0.5,
+    "comment": "M1 服务端射击请求校验与彩色占位敌人碰撞体"
   },
 
   "medkit": {

@@ -220,6 +220,9 @@ if (gameplay) {
   if (p.medkitCount !== 2) err(`玩家初始血包 = ${p.medkitCount}，PRD 规定 2 个`);
   if (p.canRespawn !== false) err('玩家 canRespawn 必须为 false（阵亡不复活，转观战）');
   if (p.naturalRegen !== 0) err('玩家 naturalRegen 必须为 0（只能靠血包）');
+  if (p.aimPitchMinDeg !== -60 || p.aimPitchMaxDeg !== 60) {
+    err(`玩家俯仰范围应为 -60°~60°，当前为 ${p.aimPitchMinDeg}°~${p.aimPitchMaxDeg}°`);
+  }
   if (weapons && p.defaultLoadout) {
     const { primary, throwable } = p.defaultLoadout;
     if (primary && !(weapons.player || {})[primary]) {
@@ -231,6 +234,35 @@ if (gameplay) {
     if (weapons.player && weapons.player[primary] && !weapons.player[primary].isDefault) {
       err(`默认主武器 "${primary}" 在 weapons.json 中未标记 isDefault`);
     }
+  }
+
+  const server = gameplay.server || {};
+  if (server.tickRateHz !== 20) {
+    err(`server.tickRateHz = ${server.tickRateHz}，PRD 规定为 20Hz`);
+  }
+
+  const combat = gameplay.combat || {};
+  if (!(combat.fireOriginToleranceM > 0)) {
+    err('combat.fireOriginToleranceM 必须为正数');
+  }
+  if (
+    !(combat.directionMagnitudeTolerance > 0) ||
+    combat.directionMagnitudeTolerance >= 1
+  ) {
+    err('combat.directionMagnitudeTolerance 必须大于 0 且小于 1');
+  }
+  if (!(combat.enemyHitboxRadiusM > 0)) {
+    err('combat.enemyHitboxRadiusM 必须为正数');
+  }
+  if (!(combat.enemyHitboxHeightM > 0)) {
+    err('combat.enemyHitboxHeightM 必须为正数');
+  }
+  if (
+    !(combat.torsoHitboxStartM >= 0) ||
+    !(combat.headHitboxStartM > combat.torsoHitboxStartM) ||
+    !(combat.headHitboxStartM < combat.enemyHitboxHeightM)
+  ) {
+    err('combat 命中部位高度必须满足 0 ≤ torso < head < hitboxHeight');
   }
 
   const m = gameplay.match || {};
