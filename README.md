@@ -5,6 +5,8 @@
 **项目代号**：`langyashan-defense`
 **当前阶段**：需求已确认（PRD v1.1），待开发
 **归属**：「AI+历史」游戏创作课程体系
+**仓库**：https://github.com/watsonbkeel/langya
+**开发方式**：Debian（服务端）+ Mac（客户端）双机并行，详见 [docs/COLLAB.md](./docs/COLLAB.md)
 
 ---
 
@@ -13,6 +15,7 @@
 | 我想…… | 看这个 |
 |---|---|
 | 开始开发（必读） | **[AGENTS.md](./AGENTS.md)** |
+| 了解双机怎么协作（必读） | **[docs/COLLAB.md](./docs/COLLAB.md)** |
 | 了解要做什么 | [docs/PRD.md](./docs/PRD.md) |
 | 查看开发进度 | [docs/MILESTONES.md](./docs/MILESTONES.md) |
 | 确认待决策事项 | [docs/OPEN-QUESTIONS.md](./docs/OPEN-QUESTIONS.md) |
@@ -66,6 +69,7 @@
 │
 ├── docs/                  文档
 │   ├── PRD.md             需求唯一真源
+│   ├── COLLAB.md          双机协作纪律（必读）
 │   ├── OPEN-QUESTIONS.md  开放问题
 │   ├── MILESTONES.md      里程碑进度（Codex 需持续更新）
 │   └── DEPLOY.md          部署说明（模板，部署后补齐）

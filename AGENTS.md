@@ -1,7 +1,29 @@
 # AGENTS.md — 狼牙山五壮士项目开发约束
 
 > **本文件是最高约束。任何与本文件冲突的判断，以本文件为准。**
-> 开始任何编码前必须完整读完本文件，以及 `docs/PRD.md`。
+> 开始任何编码前必须完整读完本文件，以及 `docs/PRD.md`、`docs/COLLAB.md`。
+
+---
+
+## ⚡ 开工前必做（每次会话第一件事）
+
+本项目由 **Debian 和 Mac 两台机器的 Codex 协同开发**，通过 GitHub 同步。
+
+```bash
+git pull --rebase origin main     # 不 pull 就动手 = 制造冲突
+node tools/verify-config.js       # 确认配置真源没被改坏
+```
+
+**先搞清楚你在哪台机器上**（`uname -a`），然后严格遵守 `docs/COLLAB.md` 的归属划分：
+
+| 路径 | 谁能改 |
+|---|---|
+| `server/**` | 只有 Debian |
+| `client/assets/scenes/**`、`resources/**`、`settings/**` | 只有 Mac |
+| `shared/**` | 改动前必须协商（见 COLLAB.md 第 4 节） |
+| `军服素材/` `武器素材/` | 谁都不能改 |
+
+⚠️ 仓库是 **PUBLIC 公开**的。禁止提交任何 token、密码、私钥。
 
 ---
 
@@ -18,10 +40,12 @@
 | 单局 | 5 分钟，存活即胜利 |
 | 部署 | Debian 工作站，PM2 + Nginx，内网可达即可 |
 | 需求文档 | `docs/PRD.md`（v1.1，唯一需求真源） |
+| 协作纪律 | `docs/COLLAB.md`（双机分工与同步规则） |
+| 代码仓库 | `github.com/watsonbkeel/langya`（**PUBLIC**） |
 
 ---
 
-## 1. 十条铁律（违反即返工）
+## 1. 十二条铁律（违反即返工）
 
 ### 铁律 1：需求以 PRD 为准，不要自行发挥
 
@@ -128,6 +152,37 @@ const damage = weapons.liaoshi13.damage;
 - 安装会影响全局的软件包
 - 对外发布任何链接
 - 变更技术选型（引擎、网络模型、数据库）
+- **`git push --force` 或任何会重写远程历史的操作**
+
+### 铁律 11：双机协作，不越界、不硬推
+
+本项目两台机器并行开发，共用一个 GitHub 仓库。
+
+```
+开工第一件事：git pull --rebase origin main
+完成一个小步骤就 commit + push，不要攒一堆
+```
+
+**归属划分**（详见 `docs/COLLAB.md`）：
+
+- `server/**` → 只有 Debian 改
+- `client/assets/scenes|resources|settings/**` → 只有 Mac 改
+- `shared/**` → 改动前必须走协商流程
+
+**冲突了不要猜**：`.scene` 冲突以 Mac 版为准；`shared/` 冲突停下来问 watson。
+**永远不要 `git push --force`** —— 会覆盖另一台机器的工作。
+
+### 铁律 12：公开仓库，禁止提交任何凭据
+
+仓库 `github.com/watsonbkeel/langya` 是 **PUBLIC** 的。
+
+token、密码、API Key、私钥、服务器凭据 —— 一个都不能进库。已推送的敏感信息删掉重推无效（历史里还在），发生了立刻告诉 watson。
+
+不确定就先扫一遍：
+
+```bash
+git diff --cached | grep -i -E "token|password|secret|ghp_|api[_-]?key"
+```
 
 ---
 
@@ -139,6 +194,7 @@ const damage = weapons.liaoshi13.damage;
 ├── README.md                    ← 项目入口说明
 ├── docs/
 │   ├── PRD.md                   ← 需求唯一真源（v1.1）
+│   ├── COLLAB.md                ← 双机协作纪律（必读）
 │   ├── OPEN-QUESTIONS.md        ← 开放问题 + Codex 追加区
 │   ├── DEPLOY.md                ← 部署说明（Codex 完成后补充）
 │   └── MILESTONES.md            ← 里程碑进度跟踪
