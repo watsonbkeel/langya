@@ -37,6 +37,8 @@ import { WeaponView } from '../weapon/weapon-view';
 
 interface M1DebugState {
   readonly connected: boolean;
+  readonly lastDisconnectCode: number | null;
+  readonly lastDisconnectReason: string | null;
   readonly snapshotTick: number;
   readonly enemyCount: number;
   readonly magazineAmmo: number | null;
@@ -93,6 +95,8 @@ export class M1Game {
   private availableWeaponIds: readonly string[] = [];
   private previousHp: number | null = null;
   private connected = false;
+  private lastDisconnectCode: number | null = null;
+  private lastDisconnectReason: string | null = null;
   private snapshotTick = 0;
   private kills = 0;
   private lastFireLatencyMs: number | null = null;
@@ -181,6 +185,13 @@ export class M1Game {
     this.netClient = new NetClient({
       onStatus: (status) => {
         this.connected = status.kind === 'connected';
+        if (status.kind === 'connecting') {
+          this.lastDisconnectCode = null;
+          this.lastDisconnectReason = null;
+        } else if (status.kind === 'disconnected') {
+          this.lastDisconnectCode = status.code;
+          this.lastDisconnectReason = status.reason;
+        }
         this.hud.renderConnection(status);
         this.publishDebugState();
       },
@@ -646,6 +657,8 @@ export class M1Game {
   private getDebugState(): M1DebugState {
     return {
       connected: this.connected,
+      lastDisconnectCode: this.lastDisconnectCode,
+      lastDisconnectReason: this.lastDisconnectReason,
       snapshotTick: this.snapshotTick,
       enemyCount: this.enemyRenderer.getActiveCount(),
       magazineAmmo: this.weaponState?.magazineAmmo ?? null,

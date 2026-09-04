@@ -44,7 +44,11 @@ export type ConnectionStatus =
   | { readonly kind: 'connecting' }
   | { readonly kind: 'measuring' }
   | { readonly kind: 'connected'; readonly latencyMs: number }
-  | { readonly kind: 'disconnected' }
+  | {
+      readonly kind: 'disconnected';
+      readonly code: number;
+      readonly reason: string;
+    }
   | { readonly kind: 'error'; readonly message: string };
 
 type StatusListener = (status: ConnectionStatus) => void;
@@ -614,10 +618,14 @@ export class NetClient {
       }
     });
 
-    socket.addEventListener('close', () => {
+    socket.addEventListener('close', (event) => {
       if (this.socket === socket) {
         this.socket = null;
-        this.listener.onStatus({ kind: 'disconnected' });
+        this.listener.onStatus({
+          kind: 'disconnected',
+          code: event.code,
+          reason: event.reason,
+        });
       }
     });
 
