@@ -7,16 +7,22 @@ import {
 } from '../config/project-config';
 import { SeededRandom } from '../ai/seeded-random';
 import {
-  createEnemySpawnPlan,
   simulateM2Match,
 } from './m2-match-simulator';
+import { createEnemySpawnPlan } from '../wave/enemy-spawn-plan';
 
 const config = loadProjectConfig(findRepositoryRoot());
 
 describe('M2 match simulator', () => {
   it('按配置生成四波共 200 名敌人的可复现投放计划', () => {
-    const first = createEnemySpawnPlan(config, new SeededRandom(9));
-    const second = createEnemySpawnPlan(config, new SeededRandom(9));
+    const first = createEnemySpawnPlan(
+      config.waves,
+      new SeededRandom(9),
+    );
+    const second = createEnemySpawnPlan(
+      config.waves,
+      new SeededRandom(9),
+    );
 
     assert.deepEqual(first, second);
     assert.equal(first.length, config.waves.totalEnemies);

@@ -1,24 +1,11 @@
 import type { ProjectConfig } from '../config/project-config';
-import { SeededRandom, type RandomSource } from '../ai/seeded-random';
+import { SeededRandom } from '../ai/seeded-random';
 import { createRouteLayouts } from '../ai/route-layout';
 import {
   createM2BattleRuntime,
-  type M2EnemyType,
-  type M2RouteId,
 } from '../game/m2-battle-factory';
 import { findPlayerWeaponConfig } from '../game/m1-battle-factory';
-
-interface WeightedValue<TValue extends string> {
-  readonly value: TValue;
-  readonly weight: number;
-}
-
-export interface PlannedEnemy {
-  readonly spawnAtMs: number;
-  readonly enemyType: M2EnemyType;
-  readonly routeId: M2RouteId;
-  readonly accuracy: number;
-}
+import { createEnemySpawnPlan } from '../wave/enemy-spawn-plan';
 
 export interface M2MatchSimulationResult {
   readonly seed: number;
@@ -36,52 +23,6 @@ export interface M2MatchSimulationResult {
   readonly ticks: number;
 }
 
-export function createEnemySpawnPlan(
-  config: ProjectConfig,
-  random: RandomSource,
-): readonly PlannedEnemy[] {
-  const routeWeights = Object.entries(config.waves.routes).map(
-    ([routeId, route]) => ({
-      value: routeId as M2RouteId,
-      weight: route.enemyRatio,
-    }),
-  );
-  const plan: PlannedEnemy[] = [];
-
-  for (const wave of config.waves.waves) {
-    const enemyTypes = expandWeightedValues(
-      wave.enemyCount,
-      Object.entries(wave.composition).map(([enemyType, weight]) => ({
-        value: enemyType as M2EnemyType,
-        weight,
-      })),
-    );
-    const routes = expandWeightedValues(wave.enemyCount, routeWeights);
-    shuffleInPlace(enemyTypes, random);
-    shuffleInPlace(routes, random);
-
-    for (let index = 0; index < wave.enemyCount; index += 1) {
-      const enemyType = enemyTypes[index];
-      const routeId = routes[index];
-      if (!enemyType || !routeId) {
-        throw new Error(`第 ${wave.index} 波生成计划数量不足`);
-      }
-      plan.push({
-        spawnAtMs:
-          (wave.startSec +
-            Math.floor(index / wave.squadSize) *
-              wave.squadIntervalSec) *
-          1000,
-        enemyType,
-        routeId,
-        accuracy: wave.accuracy,
-      });
-    }
-  }
-
-  return plan;
-}
-
 export function simulateM2Match(
   config: ProjectConfig,
   seed: number,
@@ -93,7 +34,7 @@ export function simulateM2Match(
     seed,
   );
   const spawnPlan = createEnemySpawnPlan(
-    config,
+    config.waves,
     new SeededRandom(seed + 1),
   );
   const tickDurationSec = 1 / tickRateHz;
@@ -253,53 +194,4 @@ export function simulateM2Match(
     wallMs,
     ticks: totalTicks,
   };
-}
-
-function expandWeightedValues<TValue extends string>(
-  total: number,
-  weights: readonly WeightedValue<TValue>[],
-): TValue[] {
-  const allocations = weights.map(({ value, weight }) => {
-    const exact = total * weight;
-    const count = Math.floor(exact);
-    return {
-      value,
-      count,
-      remainder: exact - count,
-    };
-  });
-  let assigned = allocations.reduce(
-    (sum, allocation) => sum + allocation.count,
-    0,
-  );
-
-  allocations.sort((first, second) => second.remainder - first.remainder);
-  for (
-    let index = 0;
-    assigned < total && allocations.length > 0;
-    index = (index + 1) % allocations.length
-  ) {
-    allocations[index]!.count += 1;
-    assigned += 1;
-  }
-
-  const result: TValue[] = [];
-  for (const allocation of allocations) {
-    for (let index = 0; index < allocation.count; index += 1) {
-      result.push(allocation.value);
-    }
-  }
-  return result;
-}
-
-function shuffleInPlace<TValue>(
-  values: TValue[],
-  random: RandomSource,
-): void {
-  for (let index = values.length - 1; index > 0; index -= 1) {
-    const swapIndex = Math.floor(random.next() * (index + 1));
-    const current = values[index]!;
-    values[index] = values[swapIndex]!;
-    values[swapIndex] = current;
-  }
 }
