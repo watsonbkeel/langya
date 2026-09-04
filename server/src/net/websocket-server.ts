@@ -11,17 +11,19 @@ import {
   type AllyDiedMessage,
   type EnemyDiedMessage,
   type FireMessage,
+  type MatchProgressState,
+  type MatchStartMessage,
   type PongMessage,
   type ServerMessage,
   type SnapshotMessage,
+  type WaveStartMessage,
 } from '../../../shared/protocol';
 import type { ProjectConfig } from '../config/project-config';
 import type { RuntimeConfig } from '../config/runtime-config';
 import { GameLoop } from '../game/game-loop';
 import { findPlayerWeaponConfig } from '../game/m1-battle-factory';
 import {
-  createM2BattleRuntime,
-  populateM2Battlefield,
+  createM3BattleRuntime,
   type M2EnemyType,
   type M2RouteId,
 } from '../game/m2-battle-factory';
@@ -32,12 +34,15 @@ import {
 } from '../game/m2-battle-session';
 import { ClientTickTracker } from './client-tick-tracker';
 import { parseClientMessage } from './message-parser';
+import type { WaveScheduler } from '../wave/wave-scheduler';
 
 interface ClientSession {
   readonly id: string;
   readonly socket: WebSocket;
   readonly tickTracker: ClientTickTracker;
   battle?: M2BattleSession<M2RouteId, M2EnemyType>;
+  waveScheduler?: WaveScheduler<M2EnemyType, M2RouteId>;
+  matchStartedAtMs?: number;
   loop: GameLoop | undefined;
   playerName?: string;
   joined: boolean;
@@ -154,11 +159,13 @@ export class GameWebSocketServer {
           session.loop?.start();
           this.broadcastSnapshots();
           this.send(session.socket, session.battle!.createRoomState());
+          this.sendMatchStart(session);
           this.send(
             session.socket,
             session.battle!.createSnapshot(
               session.loop?.currentTick ?? 0,
               Date.now(),
+              this.createMatchProgress(session, Date.now()),
             ),
           );
           return;
@@ -220,32 +227,123 @@ export class GameWebSocketServer {
   }
 
   private startBattle(session: ClientSession): void {
-    const runtime = createM2BattleRuntime(
+    const startedAtMs = Date.now();
+    const runtime = createM3BattleRuntime(
       this.projectConfig,
       session.id,
       session.playerName ?? session.id,
-      Date.now(),
+      startedAtMs,
     );
-    const nowMs = Date.now();
-    populateM2Battlefield(this.projectConfig, runtime.battle, nowMs);
     session.battle = runtime.battle;
+    session.waveScheduler = runtime.waveScheduler;
+    session.matchStartedAtMs = runtime.startedAtMs;
     session.loop = new GameLoop({
       tickRateHz: runtime.tickRateHz,
       onTick: ({ tick, deltaSec }) => {
         const battle = session.battle;
-        if (!session.joined || !battle) {
+        const waveScheduler = session.waveScheduler;
+        const matchStartedAtMs = session.matchStartedAtMs;
+        if (
+          !session.joined ||
+          !battle ||
+          !waveScheduler ||
+          matchStartedAtMs === undefined
+        ) {
           return;
         }
 
         const tickNowMs = Date.now();
+        const elapsedMs = tickNowMs - matchStartedAtMs;
+        const waveUpdate = waveScheduler.update(
+          elapsedMs,
+          battle.aliveEnemyCount,
+        );
+        for (const planned of waveUpdate.enemiesToSpawn) {
+          battle.spawnEnemy(
+            planned.enemyType,
+            planned.routeId,
+            planned.accuracy,
+            tickNowMs,
+          );
+        }
+        for (const wave of waveUpdate.waveStarts) {
+          const message: WaveStartMessage = {
+            type: SERVER_MESSAGE_TYPES.waveStart,
+            payload: {
+              waveIndex: wave.waveIndex,
+              enemyCount: wave.enemyCount,
+              totalWaves: this.projectConfig.waves.waves.length,
+              startedAtMs: matchStartedAtMs + wave.startedAtMs,
+            },
+          };
+          this.send(session.socket, message);
+        }
         const events = battle.update(deltaSec, tick, tickNowMs);
         this.sendBattleEvents(session, events);
         this.send(
           session.socket,
-          battle.createSnapshot(tick, tickNowMs),
+          battle.createSnapshot(
+            tick,
+            tickNowMs,
+            this.createMatchProgress(session, tickNowMs),
+          ),
         );
       },
     });
+  }
+
+  private sendMatchStart(session: ClientSession): void {
+    const startedAtMs = session.matchStartedAtMs;
+    if (startedAtMs === undefined) {
+      return;
+    }
+    const message: MatchStartMessage = {
+      type: SERVER_MESSAGE_TYPES.matchStart,
+      payload: {
+        matchId: session.battle?.room.id ?? `${session.id}:solo`,
+        startedAtMs,
+        deployEndsAtMs:
+          startedAtMs +
+          this.projectConfig.gameplay.match.deployPhaseSec * 1000,
+        endsAtMs:
+          startedAtMs +
+          this.projectConfig.gameplay.match.durationSec * 1000,
+        totalWaves: this.projectConfig.waves.waves.length,
+        totalEnemies: this.projectConfig.waves.totalEnemies,
+      },
+    };
+    this.send(session.socket, message);
+  }
+
+  private createMatchProgress(
+    session: ClientSession,
+    nowMs: number,
+  ): MatchProgressState {
+    const battle = session.battle;
+    const waveScheduler = session.waveScheduler;
+    const startedAtMs = session.matchStartedAtMs;
+    if (!battle || !waveScheduler || startedAtMs === undefined) {
+      throw new Error('比赛进度只能在战斗创建后生成');
+    }
+    const progress = waveScheduler.getProgress(nowMs - startedAtMs);
+    const defeatedEnemies =
+      battle.totalEnemyCount - battle.aliveEnemyCount;
+    return {
+      startedAtMs,
+      endsAtMs:
+        startedAtMs +
+        this.projectConfig.gameplay.match.durationSec * 1000,
+      phase: progress.phase,
+      currentWaveIndex: progress.currentWaveIndex,
+      totalWaves: this.projectConfig.waves.waves.length,
+      spawnedEnemies: progress.spawnedEnemies,
+      defeatedEnemies,
+      remainingEnemies: Math.max(
+        0,
+        progress.totalEnemies - defeatedEnemies,
+      ),
+      totalEnemies: progress.totalEnemies,
+    };
   }
 
   private acceptClientTick(

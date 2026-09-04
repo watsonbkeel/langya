@@ -665,7 +665,11 @@ export class M2BattleSession<
     };
   }
 
-  createSnapshot(tick: number, serverTimeMs: number): WorldSnapshotMessage {
+  createSnapshot(
+    tick: number,
+    serverTimeMs: number,
+    matchProgress?: MatchProgressState,
+  ): WorldSnapshotMessage {
     const playerSeat = this.getSeatByOccupantId(this.player.id);
     const allies: AllyState[] = [
       {
@@ -743,7 +747,8 @@ export class M2BattleSession<
         allies,
         enemies,
         items: [],
-        match: this.createMatchProgress(serverTimeMs),
+        match:
+          matchProgress ?? this.createMatchProgress(serverTimeMs),
         machineGuns: [],
       },
     };

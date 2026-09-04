@@ -2,6 +2,7 @@ import type { ProjectConfig } from '../config/project-config';
 import type { RouteId } from '../../../shared/protocol';
 import { createRouteLayouts } from '../ai/route-layout';
 import { SeededRandom } from '../ai/seeded-random';
+import { WaveScheduler } from '../wave/wave-scheduler';
 import { findPlayerWeaponConfig } from './m1-battle-factory';
 import {
   M2BattleSession,
@@ -19,6 +20,11 @@ export type M2EnemyType = keyof ProjectConfig['enemies']['units'];
 export interface M2BattleRuntime {
   readonly battle: M2BattleSession<M2RouteId, M2EnemyType>;
   readonly tickRateHz: number;
+}
+
+export interface M3BattleRuntime extends M2BattleRuntime {
+  readonly startedAtMs: number;
+  readonly waveScheduler: WaveScheduler<M2EnemyType, M2RouteId>;
 }
 
 export function populateM2Battlefield(
@@ -136,6 +142,34 @@ export function createM2BattleRuntime(
       config: battleConfig,
       random: new SeededRandom(seed),
     }),
+  };
+}
+
+export function createM3BattleRuntime(
+  config: ProjectConfig,
+  playerId: string,
+  playerName: string,
+  startedAtMs: number,
+): M3BattleRuntime {
+  const runtime = createM2BattleRuntime(
+    config,
+    playerId,
+    playerName,
+    startedAtMs,
+  );
+  return {
+    ...runtime,
+    startedAtMs,
+    waveScheduler: new WaveScheduler(
+      {
+        waves: config.waves.waves,
+        routes: config.waves.routes,
+        matchDurationSec: config.waves.matchDurationSec,
+        intermissionSec: config.waves.intermissionSec,
+        maxAliveEnemies: config.waves.maxAliveEnemies,
+      },
+      new SeededRandom(startedAtMs + 1),
+    ),
   };
 }
 
