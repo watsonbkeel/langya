@@ -23,7 +23,7 @@
 
 | 端口 | 用途 | 监听地址 | 说明 |
 |---|---|---|---|
-| 8080 | HTTP 静态站 | `0.0.0.0` | Nginx；当前托管 M0 连通性检查页，客户端构建就绪后托管 Cocos web-mobile |
+| 8080 | HTTP 静态站 | `0.0.0.0` | Nginx；当前托管 Cocos Creator 3.8.7 web-mobile 构建 |
 | 8081 | WebSocket | `0.0.0.0` | Node.js 权威服务器，路径 `/ws` |
 
 > **必须监听 `0.0.0.0`**，不能是 `127.0.0.1`，否则 Tailscale 网段访问不到。
@@ -116,8 +116,9 @@ node tools/check-ws.js ws://127.0.0.1:8080/ws
 node tools/check-ws.js ws://100.74.3.56:8080/ws
 ```
 
-浏览器（同一 Tailscale 网络的机器）打开 `http://100.74.3.56:8080`。M0 阶段
-显示连通性检查页；Mac 推送客户端构建后显示游戏。
+浏览器（同一 Tailscale 网络的机器）打开 `http://100.74.3.56:8080`。当前部署
+的是 Mac 构建并经 Taildrop 传入 Debian 的 Cocos web-mobile 产物，页面应显示
+「已连接，延迟 xx ms」。
 
 ## 7. Nginx 转发参考（watson 自行配置，不在 Codex 交付范围）
 
@@ -204,3 +205,4 @@ npx --no-install pm2 restart langyashan-server
 |---|---|---|
 | 2026-09-04 | 小B | 模板创建 |
 | 2026-09-04 | Codex Debian | 填写 M0 实际端口、Node/PM2/Nginx 路径、内网验证与运维命令 |
+| 2026-09-04 | Codex Debian | 部署 Mac 的 Cocos web-mobile 构建并完成浏览器最终验收 |

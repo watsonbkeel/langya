@@ -31,7 +31,7 @@ echo "-> 校验共享配置"
 node tools/verify-config.js
 
 echo "-> 安装并检查服务端依赖"
-npm --prefix server ci
+npm --prefix server ci --no-audit --no-fund
 npm --prefix server run typecheck
 npm --prefix server run build
 
