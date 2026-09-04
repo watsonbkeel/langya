@@ -53,6 +53,7 @@
 | 1 | debian | 2026-09-04 | 新建 `shared/protocol.ts`，定义 M0 的 `join` / `snapshot` / `ping` / `pong` 判别联合类型；统一使用 `{ type, payload }` JSON 信封 | 建立客户端与权威服务器的唯一协议真源，供 Mac 侧直接导入并完成 M0 联调 | 服务端 WS 握手、客户端网络层、`tools/check-ws.js` | 已完成，Mac 已拉取并通过 M0 联调 |
 | 2 | debian | 2026-09-04 | 在不改动 M0 消息的前提下，增量增加 M1 的 `input_state` / `fire` / `reload` / `world_snapshot` / `fire_result` / `enemy_died` 消息及共享状态类型 | 建立“输入 → 服务端命中裁决 → 扣血/死亡 → 客户端表现”的权威战斗链路，并同步权威弹药状态 | 服务端消息解析、20Hz 战斗循环、射线命中与弹药校验；Mac 输入、敌人占位、HUD 和命中反馈 | 双方已确认，Debian 已实现并推送 `51bd7f6` |
 | 3 | debian | 2026-09-04 | 在 `gameplay.json` 增加 M1 权威校验参数：`server.tickRateHz = 20`；`player.aimPitchMinDeg = -60`、`aimPitchMaxDeg = 60`；`combat.fireOriginToleranceM = 1.0`、`directionMagnitudeTolerance = 0.05`、`enemyHitboxRadiusM = 0.45`、`enemyHitboxHeightM = 1.8`、`headHitboxStartM = 1.4`、`torsoHitboxStartM = 0.5` | 现有配置缺少主循环、视角合法性、射击原点容差和服务端射线碰撞体数值；写死会违反配置唯一真源 | `shared/config/gameplay.json`、配置校验、服务端输入校验与射线命中；Mac 可读取相同俯仰范围和占位碰撞尺寸 | 双方已确认，Debian 已实现并推送 `8f849cc` |
+| 4 | debian | 2026-09-04 | M2 增量增加 `room_state` / `ally_callout` / `ally_damaged` / `ally_died`；新增 `RouteId`、敌我 AI 状态类型和 `RoomSeatState`；`AllyState` 增加 `seatIndex`、`heroName`、`routeId`、可选 `aiState`，`EnemyState` 增加 `routeId`、`aiState`、可选 `fireWarningEndsAtMs` | 客户端需要显示恒定 5 席、4 名 AI 队友的姓名/血量/路线/状态、三路威胁和喊话，并表现敌人移动、交战与 0.35 秒开火预警 | 服务端房间与 AI 系统、世界快照和事件广播；Mac 队友面板、喊话、路线威胁和敌人状态表现 | 待 Mac 确认 |
 
 <!-- 示例：
 | 1 | debian | 2026-09-05 | snapshot 增加 allyRoute 字段 | 客户端要显示队友在哪条路线 | 客户端队友面板 | 待确认 |
@@ -106,6 +107,44 @@
   `invalid_origin` 拒绝；具体容差由服务端配置决定，不写进协议。
 - 射速、弹匣、备弹、换弹时间、伤害、距离衰减和部位倍率全部读取
   `shared/config/*.json`，客户端不得提交命中对象或伤害值。
+
+### 提案 4：M2 房间与 AI 协议字段草案
+
+兼容策略：
+
+- 保留 `PROTOCOL_VERSION = 1` 和现有 M0/M1 消息，不新增客户端上行消息。
+- 现有 `join` 在 M2 继续表示进入单人战斗房间；服务端收到后补齐 4 个 AI 席位。
+- `world_snapshot` 保持现有信封与数组结构，仅给敌我实体增加 M2 表现字段。
+
+新增共享类型：
+
+| 类型 | 字段 |
+|---|---|
+| `RouteId` | `'A' \| 'B' \| 'C'` |
+| `AllyAiState` | `'deploy' \| 'guard' \| 'engage' \| 'reassign' \| 'dead'` |
+| `EnemyAiState` | `'advance' \| 'engage' \| 'dead'` |
+| `RoomStatus` | `'forming' \| 'active' \| 'ended'` |
+| `RoomSeatState` | `seatIndex`, `heroName`, `occupantId`, `displayName`, `isBot`, `alive`, `routeId` |
+
+现有状态扩充：
+
+| 类型 | 新增字段 |
+|---|---|
+| `AllyState` | `seatIndex`, `heroName`, `routeId`, `aiState?`（真人无 AI 状态） |
+| `EnemyState` | `routeId`, `aiState`, `fireWarningEndsAtMs?`（只在预警阶段出现） |
+
+新增服务端消息：
+
+| 消息 | payload 字段 |
+|---|---|
+| `room_state` | `roomId`, `status`, `seats: RoomSeatState[]` |
+| `ally_callout` | `allyId`, `routeId`, `text` |
+| `ally_damaged` | `allyId`, `hp`, `fromDir: Vector3` |
+| `ally_died` | `allyId`, `isBot`, `killerType` |
+
+开火预警不另发事件：服务端在敌人进入预警阶段时设置
+`EnemyState.fireWarningEndsAtMs`，客户端依据服务器时间显示枪口焰；伤害仍只由
+服务端在预警结束后结算。
 
 ## 执行期间新增（Codex 追加区）
 
