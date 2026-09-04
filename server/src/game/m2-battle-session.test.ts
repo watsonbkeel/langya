@@ -311,6 +311,52 @@ describe('M2BattleSession', () => {
     assert.equal(battle.tryUsePlayerMedkit(0), 'unavailable');
     assert.equal(battle.playerIsUsingMedkit, false);
   });
+
+  it('武器架拾取后才能切换且快照同步当前装备', () => {
+    const { battle } = createM2BattleRuntime(
+      config,
+      'player-weapons',
+      '测试玩家',
+      8,
+    );
+    const rack = battle
+      .createSnapshot(0, 0)
+      .payload.items.find((item) => item.kind === 'weapon_rack');
+    assert.ok(rack);
+    assert.equal(
+      battle.switchPlayerWeapon(rack.weaponId),
+      'unavailable',
+    );
+
+    const deltaX = rack.position.x - battle.playerPosition.x;
+    battle.applyInput({
+      type: 'input_state',
+      payload: {
+        clientTick: 1,
+        moveDir: { x: Math.sign(deltaX), y: 0 },
+        aimYaw: 0,
+        aimPitch: 0,
+        isCrouch: false,
+      },
+    });
+    battle.update(
+      Math.abs(deltaX) / config.gameplay.player.moveSpeed,
+      0,
+      1000,
+    );
+
+    assert.equal(battle.pickupItem(rack.id, 1000), undefined);
+    assert.equal(battle.switchPlayerWeapon(rack.weaponId), undefined);
+    const player = battle
+      .createSnapshot(1, 1000)
+      .payload.allies.find((ally) => !ally.isBot);
+    assert.ok(player);
+    assert.equal(player.weapon.weaponId, rack.weaponId);
+    assert.equal(
+      player.availableWeaponIds.includes(rack.weaponId),
+      true,
+    );
+  });
 });
 
 function normalize(vector: { x: number; y: number; z: number }) {

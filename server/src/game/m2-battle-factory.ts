@@ -10,6 +10,7 @@ import {
   type M2BattleConfig,
   type M2EnemyUnitConfig,
   type M2EnemyWeaponConfig,
+  type M2PlayerWeaponConfig,
 } from './m2-battle-session';
 
 export type M2RouteId = Extract<
@@ -79,10 +80,12 @@ export function createM2BattleRuntime(
     config.gameplay.arena,
   );
   const playerRoute = findPrimaryRoute(config);
-  const playerWeapon = findPlayerWeaponConfig(
-    config,
-    config.gameplay.player.defaultLoadout.primary,
-  );
+  const playerWeapons = createPlayerWeapons(config);
+  const playerWeapon =
+    playerWeapons[config.gameplay.player.defaultLoadout.primary];
+  if (!playerWeapon) {
+    throw new Error('默认玩家武器不存在');
+  }
   const enemyUnits = createEnemyUnits(config);
   const enemyWeapons = createEnemyWeapons(config);
   const routeNames = Object.fromEntries(
@@ -101,6 +104,7 @@ export function createM2BattleRuntime(
     totalEnemies: config.waves.totalEnemies,
     validation: config.gameplay.combat,
     playerWeapon,
+    playerWeapons,
     hitPartMultiplier: config.weapons.hitPartMultiplier,
     enemyHitbox: {
       radiusM: config.gameplay.combat.enemyHitboxRadiusM,
@@ -263,6 +267,21 @@ function createEnemyWeapons(
     config.weapons.enemy,
   )) {
     weapons[weaponId] = weapon;
+  }
+  return weapons;
+}
+
+function createPlayerWeapons(
+  config: ProjectConfig,
+): Readonly<Record<string, M2PlayerWeaponConfig>> {
+  const weapons: Record<string, M2PlayerWeaponConfig> = {};
+  for (const [weaponId, weapon] of Object.entries(
+    config.weapons.player,
+  )) {
+    if (!('fireRate' in weapon)) {
+      continue;
+    }
+    weapons[weaponId] = findPlayerWeaponConfig(config, weaponId);
   }
   return weapons;
 }

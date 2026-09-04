@@ -263,6 +263,33 @@ export class GameWebSocketServer {
             session.battle.tryUsePlayerMedkit(Date.now()),
           );
           return;
+        case CLIENT_MESSAGE_TYPES.switchWeapon:
+          if (
+            !session.joined ||
+            session.matchEnded ||
+            !session.battle
+          ) {
+            this.sendActionResult(
+              session,
+              message.payload.clientTick,
+              'switch_weapon',
+              'invalid_state',
+            );
+            return;
+          }
+          if (!this.acceptClientTick(session, message.payload.clientTick)) {
+            socket.close(1008, 'clientTick 必须严格递增');
+            return;
+          }
+          this.sendActionResult(
+            session,
+            message.payload.clientTick,
+            'switch_weapon',
+            session.battle.switchPlayerWeapon(
+              message.payload.weaponId,
+            ),
+          );
+          return;
         case CLIENT_MESSAGE_TYPES.pickup:
           if (
             !session.joined ||
@@ -285,7 +312,7 @@ export class GameWebSocketServer {
             session,
             message.payload.clientTick,
             'pickup',
-            session.battle.pickupSupply(
+            session.battle.pickupItem(
               message.payload.itemId,
               Date.now(),
             ),

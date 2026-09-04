@@ -14,6 +14,7 @@ import {
   type RouteId,
   type ScoreboardEntry,
   type Vector3,
+  type WeaponRackItemState,
   type WeaponState,
   type WorldSnapshotMessage,
 } from '../../../shared/protocol';
@@ -57,13 +58,13 @@ import {
   type RaycastEnemy,
 } from '../combat/raycast';
 import {
-  completeReload,
-  createWeaponState,
-  startReload,
-  tryFire,
   type WeaponRuntimeConfig,
   type WeaponRuntimeState,
 } from '../combat/weapon-state';
+import {
+  PlayerWeaponInventory,
+  type InventoryWeaponConfig,
+} from '../combat/player-weapon-inventory';
 import { SoloRoom, type SoloRoomConfig } from '../room/solo-room';
 import {
   ScoreTracker,
@@ -117,9 +118,8 @@ export interface M2MedkitConfig extends AllyMedkitConfig {
 }
 
 export interface M2PlayerWeaponConfig
-  extends WeaponRuntimeConfig,
+  extends InventoryWeaponConfig,
     Omit<WeaponDamageConfig, 'hitPartMultiplier'> {
-  readonly weaponId: string;
 }
 
 export interface M2EnemyWeaponConfig
@@ -144,6 +144,9 @@ export interface M2BattleConfig<
   readonly totalEnemies: number;
   readonly validation: M2ValidationConfig;
   readonly playerWeapon: M2PlayerWeaponConfig;
+  readonly playerWeapons: Readonly<
+    Record<string, M2PlayerWeaponConfig>
+  >;
   readonly hitPartMultiplier: WeaponDamageConfig['hitPartMultiplier'];
   readonly enemyHitbox: EnemyHitboxConfig;
   readonly room: SoloRoomConfig<TRouteId>;
@@ -190,7 +193,7 @@ interface MutablePlayer {
   isCrouch: boolean;
   moveDirX: number;
   moveDirY: number;
-  weapon: WeaponRuntimeState;
+  readonly weapons: PlayerWeaponInventory<M2PlayerWeaponConfig>;
   grenadesRemaining: number;
   medkitsRemaining: number;
   medkitEndsAtMs: number | undefined;
@@ -252,6 +255,7 @@ export class M2BattleSession<
   private readonly calloutController: CalloutController<TRouteId>;
   private readonly scoreTracker: ScoreTracker;
   private readonly supplyDropManager: SupplyDropManager;
+  private readonly weaponRacks: readonly WeaponRackItemState[];
   private enemySequence = 0;
   private elapsedSec = 0;
   private startedAtMs: number | undefined;
@@ -295,7 +299,10 @@ export class M2BattleSession<
       isCrouch: false,
       moveDirX: 0,
       moveDirY: 0,
-      weapon: createWeaponState(options.config.playerWeapon),
+      weapons: new PlayerWeaponInventory(
+        options.config.playerWeapons,
+        options.config.playerWeapon.weaponId,
+      ),
       grenadesRemaining:
         options.config.player.defaultLoadout.throwableCount,
       medkitsRemaining: options.config.player.medkitCount,
@@ -361,6 +368,12 @@ export class M2BattleSession<
       arenaWidthM: options.config.arena.widthM,
       random: options.supplyRandom,
     });
+    this.weaponRacks = createWeaponRacks(
+      this.room.id,
+      options.config.playerWeapons,
+      options.config.playerWeapon.weaponId,
+      options.config.routes,
+    );
   }
 
   get aliveEnemyCount(): number {
@@ -573,14 +586,7 @@ export class M2BattleSession<
   }
 
   reload(message: ReloadMessage, nowMs: number): void {
-    if (message.payload.weaponId !== this.config.playerWeapon.weaponId) {
-      return;
-    }
-    this.player.weapon = startReload(
-      this.player.weapon,
-      this.config.playerWeapon,
-      nowMs,
-    );
+    this.player.weapons.reload(message.payload.weaponId, nowMs);
   }
 
   resupplyPlayerAmmo(nowMs: number): boolean {
@@ -591,19 +597,23 @@ export class M2BattleSession<
     ) {
       return false;
     }
-    if (
-      this.player.weapon.reserveAmmo >=
-      this.config.playerWeapon.reserveAmmo
-    ) {
+    if (!this.player.weapons.resupplyCurrent()) {
       return false;
     }
-
-    this.player.weapon = {
-      ...this.player.weapon,
-      reserveAmmo: this.config.playerWeapon.reserveAmmo,
-    };
     this.lastPlayerResupplyAtMs = nowMs;
     return true;
+  }
+
+  switchPlayerWeapon(
+    weaponId: string,
+  ): ActionRejectReason | undefined {
+    if (this.player.hp === 0) {
+      return 'dead';
+    }
+    if (this.player.medkitEndsAtMs !== undefined) {
+      return 'invalid_state';
+    }
+    return this.player.weapons.switchTo(weaponId);
   }
 
   usePlayerMedkit(nowMs: number): boolean {
@@ -635,12 +645,32 @@ export class M2BattleSession<
     return undefined;
   }
 
-  pickupSupply(
+  pickupItem(
     itemId: string,
     nowMs: number,
   ): ActionRejectReason | undefined {
     if (this.player.hp === 0) {
       return 'dead';
+    }
+
+    const rack = this.weaponRacks.find(
+      (candidate) => candidate.id === itemId,
+    );
+    if (rack) {
+      if (
+        distanceBetween(this.player.position, rack.position) >
+        this.config.arena.itemPickupRangeM
+      ) {
+        return 'out_of_range';
+      }
+      return this.player.weapons.pickup(rack.weaponId);
+    }
+
+    const supply = this.supplyDropManager
+      .getItems(nowMs)
+      .find((candidate) => candidate.id === itemId);
+    if (!supply) {
+      return 'invalid_target';
     }
     if (this.player.hp === this.player.maxHp) {
       return 'unavailable';
@@ -687,7 +717,9 @@ export class M2BattleSession<
     ) {
       return this.rejectFire(message, 'cooldown');
     }
-    if (payload.weaponId !== this.config.playerWeapon.weaponId) {
+    if (
+      payload.weaponId !== this.player.weapons.currentWeaponId
+    ) {
       return this.rejectFire(message, 'invalid_weapon');
     }
     if (
@@ -705,15 +737,14 @@ export class M2BattleSession<
       return this.rejectFire(message, 'invalid_direction');
     }
 
-    const fireState = tryFire(
-      this.player.weapon,
-      this.config.playerWeapon,
+    const fireState = this.player.weapons.fire(
+      payload.weaponId,
       nowMs,
     );
-    this.player.weapon = fireState.state;
     if (!fireState.accepted) {
       return this.rejectFire(message, fireState.reason);
     }
+    const weaponConfig = this.player.weapons.currentConfig;
 
     const raycastEnemies: RaycastEnemy[] = this.enemies.map((enemy) => ({
       id: enemy.agent.id,
@@ -754,7 +785,7 @@ export class M2BattleSession<
     const hpBeforeDamage = enemy.hp;
     const damage = calculateDamage(
       {
-        ...this.config.playerWeapon,
+        ...weaponConfig,
         hitPartMultiplier: this.config.hitPartMultiplier,
       },
       hit.distanceM,
@@ -826,7 +857,7 @@ export class M2BattleSession<
         aimYaw: this.player.aimYaw,
         aimPitch: this.player.aimPitch,
         isCrouch: this.player.isCrouch,
-        availableWeaponIds: [this.config.playerWeapon.weaponId],
+        availableWeaponIds: this.player.weapons.availableWeaponIds,
         grenadesRemaining: this.player.grenadesRemaining,
         medkitsRemaining: this.player.medkitsRemaining,
         ...(this.player.medkitEndsAtMs === undefined
@@ -885,7 +916,10 @@ export class M2BattleSession<
         serverTimeMs,
         allies,
         enemies,
-        items: this.supplyDropManager.getItems(serverTimeMs),
+        items: [
+          ...this.weaponRacks,
+          ...this.supplyDropManager.getItems(serverTimeMs),
+        ],
         match:
           matchProgress ?? this.createMatchProgress(serverTimeMs),
         machineGuns: [],
@@ -969,7 +1003,7 @@ export class M2BattleSession<
     return {
       type: 'fire',
       payload: {
-        weaponId: this.config.playerWeapon.weaponId,
+        weaponId: this.player.weapons.currentWeaponId,
         originPos: this.player.position,
         dirVec: direction,
         clientTick,
@@ -1167,11 +1201,7 @@ export class M2BattleSession<
   }
 
   private updatePlayer(deltaSec: number, nowMs: number): void {
-    this.player.weapon = completeReload(
-      this.player.weapon,
-      this.config.playerWeapon,
-      nowMs,
-    );
+    this.player.weapons.update(nowMs);
     if (
       this.player.medkitEndsAtMs !== undefined &&
       nowMs >= this.player.medkitEndsAtMs
@@ -1411,17 +1441,15 @@ export class M2BattleSession<
     WeaponState,
     'magazineAmmo' | 'reserveAmmo'
   > {
+    const state = this.player.weapons.currentState;
     return {
-      magazineAmmo: this.player.weapon.magazineAmmo,
-      reserveAmmo: this.player.weapon.reserveAmmo,
+      magazineAmmo: state.magazineAmmo,
+      reserveAmmo: state.reserveAmmo,
     };
   }
 
   private getPlayerWeaponState(): WeaponState {
-    return toProtocolWeaponState(
-      this.config.playerWeapon.weaponId,
-      this.player.weapon,
-    );
+    return this.player.weapons.toProtocolState();
   }
 
   private getAllyWeaponState(ally: AllyAgent<TRouteId>): WeaponState {
@@ -1533,4 +1561,30 @@ function distanceBetween(first: Vector3, second: Vector3): number {
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
+}
+
+function createWeaponRacks<TRouteId extends string>(
+  roomId: string,
+  weapons: Readonly<Record<string, M2PlayerWeaponConfig>>,
+  defaultWeaponId: string,
+  routes: readonly RouteLayout<TRouteId>[],
+): readonly WeaponRackItemState[] {
+  if (routes.length === 0) {
+    throw new Error('生成武器架至少需要一条防守路线');
+  }
+  return Object.values(weapons)
+    .filter((weapon) => weapon.weaponId !== defaultWeaponId)
+    .map((weapon, index) => {
+      const route = routes[index % routes.length];
+      if (!route) {
+        throw new Error('武器架缺少可用防守路线');
+      }
+      return {
+        id: `${roomId}:rack:${weapon.weaponId}`,
+        kind: 'weapon_rack',
+        weaponId: weapon.weaponId,
+        position: route.guardPosition,
+        available: true,
+      };
+    });
 }
