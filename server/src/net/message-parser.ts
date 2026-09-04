@@ -5,8 +5,14 @@ import {
   type FireMessage,
   type InputStateMessage,
   type JoinMessage,
+  type MountMgMessage,
   type PingMessage,
+  type PickupMessage,
   type ReloadMessage,
+  type SwitchWeaponMessage,
+  type ThrowGrenadeMessage,
+  type UnmountMgMessage,
+  type UseMedkitMessage,
   type Vector2,
   type Vector3,
 } from '../../../shared/protocol';
@@ -136,6 +142,74 @@ function isReloadMessage(value: unknown): value is ReloadMessage {
   return isWeaponId(value.payload.weaponId);
 }
 
+function isSwitchWeaponMessage(
+  value: unknown,
+): value is SwitchWeaponMessage {
+  return (
+    isRecord(value) &&
+    value.type === CLIENT_MESSAGE_TYPES.switchWeapon &&
+    isRecord(value.payload) &&
+    isWeaponId(value.payload.weaponId) &&
+    isClientTick(value.payload.clientTick)
+  );
+}
+
+function isUseMedkitMessage(value: unknown): value is UseMedkitMessage {
+  return (
+    isRecord(value) &&
+    value.type === CLIENT_MESSAGE_TYPES.useMedkit &&
+    isRecord(value.payload) &&
+    isClientTick(value.payload.clientTick)
+  );
+}
+
+function isPickupMessage(value: unknown): value is PickupMessage {
+  return (
+    isRecord(value) &&
+    value.type === CLIENT_MESSAGE_TYPES.pickup &&
+    isRecord(value.payload) &&
+    typeof value.payload.itemId === 'string' &&
+    value.payload.itemId.trim().length > 0 &&
+    isClientTick(value.payload.clientTick)
+  );
+}
+
+function isMountMgMessage(value: unknown): value is MountMgMessage {
+  return (
+    isRecord(value) &&
+    value.type === CLIENT_MESSAGE_TYPES.mountMg &&
+    isRecord(value.payload) &&
+    typeof value.payload.mgId === 'string' &&
+    value.payload.mgId.trim().length > 0 &&
+    isClientTick(value.payload.clientTick)
+  );
+}
+
+function isUnmountMgMessage(value: unknown): value is UnmountMgMessage {
+  return (
+    isRecord(value) &&
+    value.type === CLIENT_MESSAGE_TYPES.unmountMg &&
+    isRecord(value.payload) &&
+    isClientTick(value.payload.clientTick)
+  );
+}
+
+function isThrowGrenadeMessage(
+  value: unknown,
+): value is ThrowGrenadeMessage {
+  return (
+    isRecord(value) &&
+    value.type === CLIENT_MESSAGE_TYPES.throwGrenade &&
+    isRecord(value.payload) &&
+    isVector3(value.payload.originPos) &&
+    isVector3(value.payload.dirVec) &&
+    isFiniteNumber(value.payload.force) &&
+    value.payload.force >= 0 &&
+    value.payload.force <= 1 &&
+    isClientTick(value.payload.clientTick)
+  );
+}
+
 export function parseClientMessage(raw: string): ClientMessage | undefined {
   let parsed: unknown;
   try {
@@ -149,7 +223,13 @@ export function parseClientMessage(raw: string): ClientMessage | undefined {
     isPingMessage(parsed) ||
     isInputStateMessage(parsed) ||
     isFireMessage(parsed) ||
-    isReloadMessage(parsed)
+    isReloadMessage(parsed) ||
+    isSwitchWeaponMessage(parsed) ||
+    isUseMedkitMessage(parsed) ||
+    isPickupMessage(parsed) ||
+    isMountMgMessage(parsed) ||
+    isUnmountMgMessage(parsed) ||
+    isThrowGrenadeMessage(parsed)
   ) {
     return parsed;
   }

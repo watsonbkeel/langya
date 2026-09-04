@@ -106,4 +106,79 @@ describe('parseClientMessage', () => {
     assert.equal(missingVectorComponent, undefined);
     assert.equal(emptyWeaponId, undefined);
   });
+
+  it('接受合法的 M3 交互与武器消息', () => {
+    const messages = [
+      {
+        type: 'switch_weapon',
+        payload: { weaponId: 'zb26', clientTick: 2 },
+      },
+      {
+        type: 'use_medkit',
+        payload: { clientTick: 3 },
+      },
+      {
+        type: 'pickup',
+        payload: { itemId: 'supply-1', clientTick: 4 },
+      },
+      {
+        type: 'mount_mg',
+        payload: { mgId: 'mg-1', clientTick: 5 },
+      },
+      {
+        type: 'unmount_mg',
+        payload: { clientTick: 6 },
+      },
+      {
+        type: 'throw_grenade',
+        payload: {
+          originPos: { x: 0, y: 1, z: 0 },
+          dirVec: { x: 0, y: 0, z: -1 },
+          force: 0.75,
+          clientTick: 7,
+        },
+      },
+    ];
+
+    assert.deepEqual(
+      messages.map(
+        (message) => parseClientMessage(encode(message))?.type,
+      ),
+      messages.map((message) => message.type),
+    );
+  });
+
+  it('拒绝非法 M3 标识、力度和 clientTick', () => {
+    const messages = [
+      {
+        type: 'switch_weapon',
+        payload: { weaponId: ' ', clientTick: 2 },
+      },
+      {
+        type: 'pickup',
+        payload: { itemId: '', clientTick: 3 },
+      },
+      {
+        type: 'mount_mg',
+        payload: { mgId: '', clientTick: 4 },
+      },
+      {
+        type: 'throw_grenade',
+        payload: {
+          originPos: { x: 0, y: 1, z: 0 },
+          dirVec: { x: 0, y: 0, z: -1 },
+          force: 1.01,
+          clientTick: 5,
+        },
+      },
+      {
+        type: 'use_medkit',
+        payload: { clientTick: -1 },
+      },
+    ];
+
+    for (const message of messages) {
+      assert.equal(parseClientMessage(encode(message)), undefined);
+    }
+  });
 });
