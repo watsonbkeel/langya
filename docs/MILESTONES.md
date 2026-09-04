@@ -393,6 +393,30 @@ Debian 提交 `ec948fa` 完成最小修复：任何客户端入站消息均刷�
 `action=drop`，未出现 heartbeat / send / connection error，恢复后正常
 接收并以 code 1000 关闭。M3 仍为进行中，等待 Mac 再跑真实完整单局。
 
+2026-09-05：`ec948fa` 后再次复现，服务端对应连接
+`87bd16ec-a9b5-4e54-8bbb-a30a3edfdf35` 于 00:41:56 被对端无关闭握手
+断开，记录 code 1006、`bufferedAmount=0`；本次没有
+`heartbeat_timeout`、`connection_error` 或 `send_error`。00:41:03
+至 00:41:26 期间有 4 次约 270 KiB 的 `world_snapshot action=drop`。
+
+SQLite 权威战报确认该局已在 196.8 秒因 `squad_eliminated` 结束：
+投放 107 人、歼敌 67 人，真人承受 100 伤害并于 196.765 秒阵亡，五席均
+不存活。客户端断开时仍显示 `matchEnded=false`、第 3 波和玩家存活，
+说明客户端看到的是陈旧快照；连接是在权威结算约 30 秒后由对端关闭，
+不是服务端心跳误杀。旧版本未记录逐条入站时间，因此该连接的最后入站时刻
+无法追溯。
+
+Debian 提交 `3df1288` 将可替代的 `world_snapshot` 改为仅在
+`socket.bufferedAmount===0` 时发送，已有任何积压即跳过；关键结算与动作
+消息不受此规则影响。同时结构化日志新增 `lastInboundAtMs`、
+`lastInboundAgeMs` 和 `lastInboundMessageType`。配置校验、TypeScript
+检查、96 项测试、生产构建和 M0–M3 四类地址联调全部通过。
+
+修复版于 `2026-09-05T00:48:45+08:00` 以 PID `3721254` 上线。慢读端
+暂停 40 秒后恢复，首个内核已排队快照年龄为 40 秒，但 60 ms 内即收到年龄
+35 ms 的最新快照，随后 code 1000 正常关闭；日志显示最后入站 ping 距关闭
+518 ms，且无 heartbeat / send / connection error。M3 继续等待真实整局复测。
+
 #### 💻 Mac
 > 填写：完整一局的帧率表现、重机枪手感、战报页截图说明
 
