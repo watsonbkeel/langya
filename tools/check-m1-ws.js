@@ -93,9 +93,17 @@ socket.on('message', (data) => {
 
   if (message.type === 'world_snapshot') {
     const player = message.payload.allies.find((ally) => !ally.isBot);
-    const enemy = targetId
+    let enemy = targetId
       ? message.payload.enemies.find((item) => item.id === targetId)
-      : message.payload.enemies[0];
+      : findNearestEnemy(message.payload.enemies, player?.position);
+
+    if (targetId && !enemy && !receivedKill) {
+      targetId = undefined;
+      enemy = findNearestEnemy(
+        message.payload.enemies,
+        player?.position,
+      );
+    }
 
     if (receivedKill && player?.weapon.isReloading && !reloadObserved) {
       reloadObserved = true;
@@ -233,3 +241,26 @@ socket.on('close', (code) => {
   console.error(`❌ 连接提前关闭（code=${code}）`);
   process.exit(1);
 });
+
+function findNearestEnemy(enemies, playerPosition) {
+  if (!playerPosition) {
+    return undefined;
+  }
+  let nearest;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  for (const enemy of enemies) {
+    if (!enemy.alive) {
+      continue;
+    }
+    const distance = Math.hypot(
+      enemy.position.x - playerPosition.x,
+      enemy.position.y - playerPosition.y,
+      enemy.position.z - playerPosition.z,
+    );
+    if (distance < nearestDistance) {
+      nearest = enemy;
+      nearestDistance = distance;
+    }
+  }
+  return nearest;
+}
