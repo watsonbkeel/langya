@@ -92,8 +92,15 @@ ws.on('message', (data) => {
       reportedWorldSnapshot = true;
       console.log(`✅ 收到 world_snapshot（tick ${message.payload.tick}）`);
     }
-  } else if (message.type === 'fire_result' || message.type === 'enemy_died') {
-    // M0 连通性检查不触发战斗，只需容忍同一连接上的 M1 服务端消息。
+  } else if (
+    message.type === 'room_state' ||
+    message.type === 'fire_result' ||
+    message.type === 'enemy_died' ||
+    message.type === 'ally_callout' ||
+    message.type === 'ally_damaged' ||
+    message.type === 'ally_died'
+  ) {
+    // M0 连通性检查只验证握手与心跳，容忍后续里程碑的服务端消息。
   } else {
     console.error(`❌ 收到未知消息类型：${String(message.type)}`);
     process.exit(1);

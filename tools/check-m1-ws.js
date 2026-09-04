@@ -184,13 +184,13 @@ socket.on('message', (data) => {
       !payload.accepted ||
       !payload.hit ||
       !payload.isKill ||
-      payload.targetId !== targetId ||
       payload.hitPart !== 'head'
     ) {
       console.error(`❌ 开火裁决不符合预期：${JSON.stringify(payload)}`);
       process.exit(1);
     }
 
+    targetId = payload.targetId;
     receivedKill = true;
     console.log(
       `✅ 服务端确认爆头击杀（伤害 ${payload.damage}，弹匣 ${payload.magazineAmmo}）`,

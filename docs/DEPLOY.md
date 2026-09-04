@@ -118,6 +118,10 @@ node tools/check-ws.js ws://100.74.3.56:8080/ws
 # M1 权威战斗链路（移动、命中、击杀、换弹、死亡移除）
 node tools/check-m1-ws.js ws://127.0.0.1:8080/ws
 node tools/check-m1-ws.js ws://100.74.3.56:8080/ws
+
+# M2 权威 AI 链路（五席、三路敌情、喊话、开火预警）
+node tools/check-m2-ws.js ws://127.0.0.1:8080/ws
+node tools/check-m2-ws.js ws://100.74.3.56:8080/ws
 ```
 
 浏览器（同一 Tailscale 网络的机器）打开 `http://100.74.3.56:8080`。当前部署
@@ -213,3 +217,4 @@ npx --no-install pm2 restart langyashan-server
 | 2026-09-04 | Codex Debian | 填写 M0 实际端口、Node/PM2/Nginx 路径、内网验证与运维命令 |
 | 2026-09-04 | Codex Debian | 部署 Mac 的 Cocos web-mobile 构建并完成浏览器最终验收 |
 | 2026-09-04 | Codex Debian | 发布 `59c49dd` 的 M1 构建并完成 Tailscale 浏览器战斗链路验收 |
+| 2026-09-04 | Codex Debian | M2 服务端增加五席房间、三路 AI 快照与事件的本机/Tailscale 自动验收 |
