@@ -55,6 +55,8 @@
 | 3 | debian | 2026-09-04 | 在 `gameplay.json` 增加 M1 权威校验参数：`server.tickRateHz = 20`；`player.aimPitchMinDeg = -60`、`aimPitchMaxDeg = 60`；`combat.fireOriginToleranceM = 1.0`、`directionMagnitudeTolerance = 0.05`、`enemyHitboxRadiusM = 0.45`、`enemyHitboxHeightM = 1.8`、`headHitboxStartM = 1.4`、`torsoHitboxStartM = 0.5` | 现有配置缺少主循环、视角合法性、射击原点容差和服务端射线碰撞体数值；写死会违反配置唯一真源 | `shared/config/gameplay.json`、配置校验、服务端输入校验与射线命中；Mac 可读取相同俯仰范围和占位碰撞尺寸 | 双方已确认，Debian 已实现并推送 `8f849cc` |
 | 4 | debian | 2026-09-04 | M2 增量增加 `room_state` / `ally_callout` / `ally_damaged` / `ally_died`；新增 `RouteId`、敌我 AI 状态类型和 `RoomSeatState`；`AllyState` 增加 `seatIndex`、`heroName`、`routeId`、可选 `aiState`，`EnemyState` 增加 `routeId`、`aiState`、可选 `fireWarningEndsAtMs` | 客户端需要显示恒定 5 席、4 名 AI 队友的姓名/血量/路线/状态、三路威胁和喊话，并表现敌人移动、交战与 0.35 秒开火预警 | 服务端房间与 AI 系统、世界快照和事件广播；Mac 队友面板、喊话、路线威胁和敌人状态表现 | 双方已确认，Debian 已实现 |
 | 5 | debian | 2026-09-04 | 在 `gameplay.json` 增加 `combat.defenderCoverExposureMultiplier = 0.15` 和 `server.maxSingleMatchCpuPercent = 20` | M2 实测发现敌方命中率已按 PRD 固定，但防守位石垒遮挡没有数值真源，导致 4 名队友平均仅存活 75.29 秒；10 局只读扫描中 0.15 可使平均生存约 192.68 秒并保持队友击杀占比约 25.31%。CPU 20% 是既有验收红线，也需由配置供校准器判定 | 服务端敌方命中结算、M2 校准器；客户端可忽略这两个服务端裁决字段 | 双方已确认，Debian 已实现 |
+| 6 | debian | 2026-09-04 | M3 增量增加 `use_medkit` / `pickup` / `mount_mg` / `unmount_mg` / `throw_grenade` 上行消息，增加 `action_result` / `match_start` / `wave_start` / `supply_drop` / `match_end` 下行消息；把 `ItemState = never` 替换为空投物资状态，并给世界快照增加比赛进度和重机枪状态 | 完成 5 分钟四波单局、血包、空投、重机枪、计分和战报必须由服务器裁决，同时给 Mac 提供倒计时、波次、物品、机枪和结算表现数据 | 服务端消息解析、M3 战斗会话、波次/物品/重机枪/计分/战报；Mac HUD、交互、空投、重机枪和战报页 | 待 Mac 确认 |
+| 7 | debian | 2026-09-04 | 在 `gameplay.json` 增加 `arena.itemPickupRangeM = 2.0`、`arena.machineGunMountRangeM = 2.0` | PRD 规定拾取与靠近枪位交互，但未给出服务端距离容差；该数值不能硬编码。2 米可覆盖第一人称交互误差且不会跨越阵地远程拾取或占枪 | 服务端拾取和重机枪占用校验；Mac 可用相同距离显示交互提示 | 待 Mac 确认 |
 
 <!-- 示例：
 | 1 | debian | 2026-09-05 | snapshot 增加 allyRoute 字段 | 客户端要显示队友在哪条路线 | 客户端队友面板 | 待确认 |
@@ -146,6 +148,77 @@
 开火预警不另发事件：服务端在敌人进入预警阶段时设置
 `EnemyState.fireWarningEndsAtMs`，客户端依据服务器时间显示枪口焰；伤害仍只由
 服务端在预警结束后结算。
+
+### 提案 6：M3 完整单局协议字段草案
+
+兼容策略：
+
+- 保留 `PROTOCOL_VERSION = 1` 和全部 M0-M2 消息；M3 只增量增加消息和字段。
+- 所有时间戳使用服务器 Unix 毫秒，客户端统一与
+  `world_snapshot.serverTimeMs` 比较，不使用客户端本地时钟。
+- M3 新增动作都携带全局单调递增的 `clientTick`，与移动和开火共用同一序列，
+  用于拒绝重复或乱序请求。
+
+客户端到服务端：
+
+| 消息 | payload 字段 |
+|---|---|
+| `use_medkit` | `clientTick` |
+| `pickup` | `itemId`, `clientTick` |
+| `mount_mg` | `mgId`, `clientTick` |
+| `unmount_mg` | `clientTick` |
+| `throw_grenade` | `originPos: Vector3`, `dirVec: Vector3`, `force`, `clientTick` |
+
+其中 `throw_grenade.force` 是 `[0, 1]` 的归一化力度，服务端按
+`weapons.player.grenade.throwRangeM` 换算实际距离，并复用射击原点与单位方向
+校验；客户端不提交命中目标或伤害。
+
+新增共享状态：
+
+| 类型 | 字段 |
+|---|---|
+| `MatchPhase` | `'deploy' \| 'wave' \| 'intermission' \| 'ended'` |
+| `MatchProgressState` | `startedAtMs`, `endsAtMs`, `phase`, `currentWaveIndex`, `totalWaves`, `spawnedEnemies`, `defeatedEnemies`, `remainingEnemies`, `totalEnemies` |
+| `SupplyItemState` | `id`, `kind: 'airdrop_medkit'`, `position`, `expiresAtMs`, `available` |
+| `MachineGunState` | `id`, `weaponId`, `position`, `baseYaw`, `occupantId?`, `beltAmmo`, `heatRatio`, `isOverheated`, `cooldownEndsAtMs?`, `reloadEndsAtMs?` |
+| `ScoreboardEntry` | `occupantId`, `seatIndex`, `heroName`, `displayName`, `isBot`, `alive`, `kills`, `mgKills`, `headshots`, `shotsFired`, `shotsHit`, `accuracy`, `survivalSec`, `damageDealt`, `damageTaken`, `medkitsUsed`, `killsByWave` |
+
+现有状态扩充：
+
+| 类型 | 新增或替换字段 |
+|---|---|
+| `AllyState` | 增加 `medkitsRemaining`, `medkitEndsAtMs?`, `mountedMgId?` |
+| `ItemState` | 从 `never` 替换为 `SupplyItemState` |
+| `WorldSnapshotPayload` | 增加 `match: MatchProgressState`, `machineGuns: MachineGunState[]` |
+
+新增服务端消息：
+
+| 消息 | payload 字段 |
+|---|---|
+| `action_result` | `clientTick`, `action`, `accepted`, `rejectReason?` |
+| `match_start` | `matchId`, `startedAtMs`, `deployEndsAtMs`, `endsAtMs`, `totalWaves`, `totalEnemies` |
+| `wave_start` | `waveIndex`, `enemyCount`, `totalWaves`, `startedAtMs` |
+| `supply_drop` | `dropId`, `position`, `expiresAtMs`, `text` |
+| `match_end` | `matchId`, `result`, `reason`, `endedAtMs`, `scoreboard: ScoreboardEntry[]`, `mvpPlayerId?`, `spawnedEnemies`, `defeatedEnemies`, `totalEnemies` |
+
+固定语义：
+
+- `action_result.action` 为
+  `'use_medkit' | 'pickup' | 'mount_mg' | 'unmount_mg' | 'throw_grenade'`；
+  `rejectReason` 为
+  `'dead' | 'invalid_state' | 'invalid_target' | 'out_of_range' |
+  'unavailable' | 'cooldown' | 'no_resource' | 'occupied'`。
+- `currentWaveIndex = 0` 表示部署期；进入战斗后为 `1..4`。
+- `remainingEnemies = totalEnemies - defeatedEnemies`，包含已投放存活敌人与尚未
+  投放的排队敌人；同屏达到 40 时只暂停投放，不丢弃队列。
+- `match_end.result` 为 `'victory' | 'defeat'`；`reason` 为
+  `'time_survived' | 'player_died' | 'squad_eliminated'`。
+- `scoreboard` 恒按 `seatIndex` 排序；AI 队友在战报中展示但
+  `mvpPlayerId` 只可能指向存活真人，若无符合条件的真人则省略。
+- 重机枪继续复用现有 `fire` / `fire_result`；挂载时 `weaponId` 为
+  `type92-hmg`，`fire_result.magazineAmmo` 表示弹链余量、`reserveAmmo = 0`。
+- 同一重机枪同时最多一个占用者；AI 的上枪请求永远拒绝。挂载期间服务器锁定
+  玩家移动，并按枪位 `baseYaw` 校验水平射界、按武器配置校验俯仰和过热。
 
 ## 执行期间新增（Codex 追加区）
 
