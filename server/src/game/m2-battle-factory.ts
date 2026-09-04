@@ -139,6 +139,7 @@ export function createM2BattleRuntime(
       tiebreakOrder:
         config.gameplay.score.tiebreakOrder as ScoreTiebreakField[],
     },
+    airdrop: config.gameplay.airdrop,
   };
 
   return {
@@ -149,6 +150,7 @@ export function createM2BattleRuntime(
       playerName,
       config: battleConfig,
       random: new SeededRandom(seed),
+      supplyRandom: new SeededRandom(seed + 2),
     }),
   };
 }

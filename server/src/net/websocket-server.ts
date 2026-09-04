@@ -20,6 +20,7 @@ import {
   type PongMessage,
   type ServerMessage,
   type SnapshotMessage,
+  type SupplyDropMessage,
   type WaveStartMessage,
 } from '../../../shared/protocol';
 import type { ProjectConfig } from '../config/project-config';
@@ -260,6 +261,34 @@ export class GameWebSocketServer {
             message.payload.clientTick,
             'use_medkit',
             session.battle.tryUsePlayerMedkit(Date.now()),
+          );
+          return;
+        case CLIENT_MESSAGE_TYPES.pickup:
+          if (
+            !session.joined ||
+            session.matchEnded ||
+            !session.battle
+          ) {
+            this.sendActionResult(
+              session,
+              message.payload.clientTick,
+              'pickup',
+              'invalid_state',
+            );
+            return;
+          }
+          if (!this.acceptClientTick(session, message.payload.clientTick)) {
+            socket.close(1008, 'clientTick 必须严格递增');
+            return;
+          }
+          this.sendActionResult(
+            session,
+            message.payload.clientTick,
+            'pickup',
+            session.battle.pickupSupply(
+              message.payload.itemId,
+              Date.now(),
+            ),
           );
           return;
       }
@@ -594,6 +623,19 @@ export class GameWebSocketServer {
         case 'ally_reassigned':
           roomStateChanged = true;
           break;
+        case 'supply_drop': {
+          const message: SupplyDropMessage = {
+            type: SERVER_MESSAGE_TYPES.supplyDrop,
+            payload: {
+              dropId: event.drop.id,
+              position: event.drop.position,
+              expiresAtMs: event.drop.expiresAtMs,
+              text: event.text,
+            },
+          };
+          this.send(session.socket, message);
+          break;
+        }
         case 'fire_warning':
         case 'shot':
           break;

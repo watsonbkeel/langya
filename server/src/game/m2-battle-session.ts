@@ -69,6 +69,11 @@ import {
   ScoreTracker,
   type ScoreTrackerConfig,
 } from '../score/score-tracker';
+import {
+  SupplyDropManager,
+  type SupplyDropConfig,
+  type SupplyDropEvent,
+} from '../wave/supply-drop-manager';
 
 export interface M2PlayerConfig {
   readonly maxHp: number;
@@ -88,6 +93,7 @@ export interface M2PlayerConfig {
 export interface M2ArenaConfig {
   readonly widthM: number;
   readonly depthM: number;
+  readonly itemPickupRangeM: number;
 }
 
 export interface M2MatchConfig {
@@ -104,6 +110,10 @@ export interface M2WaveTimingConfig {
 export interface M2ValidationConfig {
   readonly fireOriginToleranceM: number;
   readonly directionMagnitudeTolerance: number;
+}
+
+export interface M2MedkitConfig extends AllyMedkitConfig {
+  readonly airdropHeal: number;
 }
 
 export interface M2PlayerWeaponConfig
@@ -140,7 +150,7 @@ export interface M2BattleConfig<
   readonly bot: AllyBotConfig;
   readonly deployment: DeploymentConfig;
   readonly callout: CalloutConfig;
-  readonly medkit: AllyMedkitConfig;
+  readonly medkit: M2MedkitConfig;
   readonly routes: readonly RouteLayout<TRouteId>[];
   readonly routeNames: Readonly<Record<TRouteId, string>>;
   readonly seatSpacingM: number;
@@ -154,6 +164,7 @@ export interface M2BattleConfig<
   readonly maxAliveEnemies: number;
   readonly ammoBoxCooldownSec: number;
   readonly score: ScoreTrackerConfig;
+  readonly airdrop: SupplyDropConfig;
 }
 
 export interface M2BattleSessionOptions<
@@ -165,6 +176,7 @@ export interface M2BattleSessionOptions<
   readonly playerName: string;
   readonly config: M2BattleConfig<TRouteId, TEnemyType>;
   readonly random: RandomSource;
+  readonly supplyRandom: RandomSource;
 }
 
 interface MutablePlayer {
@@ -196,6 +208,7 @@ interface EnemyRuntime<TRouteId extends string, TEnemyType extends string> {
 export type M2BattleEvent<TRouteId extends RouteId> =
   | EnemyAiEvent
   | AllyCallout<TRouteId>
+  | SupplyDropEvent
   | {
       readonly type: 'ally_damaged';
       readonly allyId: string;
@@ -238,6 +251,7 @@ export class M2BattleSession<
   private readonly deploymentManager: AllyDeploymentManager<TRouteId>;
   private readonly calloutController: CalloutController<TRouteId>;
   private readonly scoreTracker: ScoreTracker;
+  private readonly supplyDropManager: SupplyDropManager;
   private enemySequence = 0;
   private elapsedSec = 0;
   private startedAtMs: number | undefined;
@@ -338,6 +352,15 @@ export class M2BattleSession<
         isBot: seat.occupant.isBot,
       })),
     );
+    this.supplyDropManager = new SupplyDropManager({
+      idPrefix: this.room.id,
+      config: options.config.airdrop,
+      waves: options.config.waves,
+      intermissionSec: options.config.intermissionSec,
+      matchDurationSec: options.config.match.durationSec,
+      arenaWidthM: options.config.arena.widthM,
+      random: options.supplyRandom,
+    });
   }
 
   get aliveEnemyCount(): number {
@@ -434,7 +457,12 @@ export class M2BattleSession<
       (nowMs - this.startedAtMs) / 1000,
     );
     this.updatePlayer(deltaSec, nowMs);
-    const events: M2BattleEvent<TRouteId>[] = [];
+    const events: M2BattleEvent<TRouteId>[] = [
+      ...this.supplyDropManager.update(
+        this.elapsedSec * 1000,
+        this.startedAtMs,
+      ),
+    ];
 
     const reassignment = this.deploymentManager.update(
       this.player.position,
@@ -603,6 +631,35 @@ export class M2BattleSession<
     this.player.medkitsRemaining -= 1;
     this.player.medkitEndsAtMs =
       nowMs + this.config.medkit.carriedUseSec * 1000;
+    this.scoreTracker.recordMedkitUsed(this.player.id);
+    return undefined;
+  }
+
+  pickupSupply(
+    itemId: string,
+    nowMs: number,
+  ): ActionRejectReason | undefined {
+    if (this.player.hp === 0) {
+      return 'dead';
+    }
+    if (this.player.hp === this.player.maxHp) {
+      return 'unavailable';
+    }
+    const result = this.supplyDropManager.pickup(
+      itemId,
+      this.player.position,
+      this.config.arena.itemPickupRangeM,
+      this.config.medkit.airdropHeal,
+      nowMs,
+    );
+    if (!result.accepted) {
+      return result.reason;
+    }
+
+    this.player.hp = Math.min(
+      this.player.maxHp,
+      this.player.hp + result.heal,
+    );
     this.scoreTracker.recordMedkitUsed(this.player.id);
     return undefined;
   }
@@ -828,7 +885,7 @@ export class M2BattleSession<
         serverTimeMs,
         allies,
         enemies,
-        items: [],
+        items: this.supplyDropManager.getItems(serverTimeMs),
         match:
           matchProgress ?? this.createMatchProgress(serverTimeMs),
         machineGuns: [],
