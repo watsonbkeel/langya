@@ -92,6 +92,8 @@ export interface PresentationConfig {
   readonly crosshairSizePx: number;
   readonly crosshairGapPx: number;
   readonly crosshairLineWidthPx: number;
+  readonly crosshairOutlineWidthPx: number;
+  readonly crosshairOutlineColor: string;
   readonly hudFontSizePx: number;
   readonly titleFontSizePx: number;
   readonly damageFontSizePx: number;
@@ -113,6 +115,7 @@ export interface PresentationConfig {
   readonly calloutDurationSec: number;
   readonly calloutSoundFrequencyHz: number;
   readonly calloutSoundDurationSec: number;
+  readonly helpVisibleSec: number;
   readonly matchHudOffsetYPx: number;
   readonly waveBannerOffsetYPx: number;
   readonly interactionOffsetYPx: number;
@@ -179,6 +182,7 @@ const PRESENTATION_NUMBER_KEYS = [
   'crosshairSizePx',
   'crosshairGapPx',
   'crosshairLineWidthPx',
+  'crosshairOutlineWidthPx',
   'hudFontSizePx',
   'titleFontSizePx',
   'damageFontSizePx',
@@ -200,6 +204,7 @@ const PRESENTATION_NUMBER_KEYS = [
   'calloutDurationSec',
   'calloutSoundFrequencyHz',
   'calloutSoundDurationSec',
+  'helpVisibleSec',
   'matchHudOffsetYPx',
   'waveBannerOffsetYPx',
   'interactionOffsetYPx',
@@ -351,6 +356,7 @@ function isPresentationConfig(value: unknown): value is PresentationConfig {
     typeof value.enemyEngageColor === 'string' &&
     typeof value.enemyHitColor === 'string' &&
     typeof value.fireWarningColor === 'string' &&
+    typeof value.crosshairOutlineColor === 'string' &&
     typeof value.medkitGlowColor === 'string' &&
     typeof value.supplyColor === 'string' &&
     typeof value.weaponRackColor === 'string' &&

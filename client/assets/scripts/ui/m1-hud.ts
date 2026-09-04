@@ -35,7 +35,7 @@ const REJECT_TEXT: Readonly<Record<FireRejectReason, string>> = {
   not_joined: '尚未加入战斗',
   invalid_weapon: '武器无效',
   invalid_origin: '射击位置需要校正',
-  invalid_direction: '矄准方向无效',
+  invalid_direction: '瞄准方向无效',
   cooldown: '枪机未就绪',
   empty_magazine: '弹仓已空，请换弹',
   reloading: '正在换弹',
@@ -46,6 +46,7 @@ export class M1Hud {
   private readonly root: Node;
   private readonly presentation: PresentationConfig;
   private readonly connectionLabel: Label;
+  private readonly debugVisible: boolean;
   private readonly healthLabel: Label;
   private readonly ammoLabel: Label;
   private readonly messageLabel: Label;
@@ -80,6 +81,9 @@ export class M1Hud {
     weapons: WeaponsConfig,
   ) {
     this.presentation = presentation;
+    this.debugVisible =
+      typeof location !== 'undefined' &&
+      new URLSearchParams(location.search).get('debug') === '1';
     this.gameplay = gameplay;
     this.weapons = weapons;
     this.routeNames = {
@@ -93,7 +97,7 @@ export class M1Hud {
 
     this.createLabel(
       'Title',
-      'M3 完整单局 · 五人坚守',
+      '狼牙山五壮士 · 坚守棋盘陀',
       presentation.titleFontSizePx,
       new Vec3(0, presentation.statusOffsetYPx, 0),
       '#F4E8C1',
@@ -105,13 +109,14 @@ export class M1Hud {
       new Vec3(0, presentation.statusOffsetYPx - presentation.titleFontSizePx, 0),
       '#C8F4FF',
     );
-    this.createLabel(
+    const helpLabel = this.createLabel(
       'Help',
       'WASD 移动  左键射击  R 换弹  Q 换枪  G 手榴弹  H 血包  F 交互  Ctrl 蹲下',
       presentation.hudFontSizePx,
       new Vec3(0, presentation.helpOffsetYPx, 0),
       '#DDE7EA',
     );
+    this.fadeLabel(helpLabel, presentation.helpVisibleSec);
     this.healthLabel = this.createLabel(
       'Health',
       '生命 --/--',
@@ -232,13 +237,15 @@ export class M1Hud {
   renderConnection(status: ConnectionStatus): void {
     switch (status.kind) {
       case 'connecting':
-        this.connectionLabel.string = '正在连接…';
+        this.connectionLabel.string = '正在进入阵地…';
         break;
       case 'measuring':
-        this.connectionLabel.string = '已连接，正在测量延迟…';
+        this.connectionLabel.string = '阵地准备中…';
         break;
       case 'connected':
-        this.connectionLabel.string = `已连接，延迟 ${status.latencyMs} ms`;
+        this.connectionLabel.string = this.debugVisible
+          ? `网络延迟 ${status.latencyMs} ms`
+          : '';
         break;
       case 'disconnected':
         this.connectionLabel.string = '连接已断开';
@@ -261,7 +268,9 @@ export class M1Hud {
   }
 
   showReady(enemyCount: number): void {
-    this.messageLabel.string = `敌人 ${enemyCount}  · 所有伤害等待服务器裁决`;
+    this.messageLabel.string = enemyCount > 0
+      ? `坚守阵地！剩余敌军 ${enemyCount}`
+      : '尽快选择防守位置';
   }
 
   updateMatch(match: MatchProgressState, serverTimeMs: number): void {
@@ -514,7 +523,7 @@ export class M1Hud {
   }
 
   showShotPending(): void {
-    this.messageLabel.string = '已开火，等待服务器裁决…';
+    this.messageLabel.string = '';
   }
 
   showReloadRequested(): void {
@@ -524,11 +533,11 @@ export class M1Hud {
   showFireResult(payload: FireResultPayload, latencyMs: number): void {
     this.ammoLabel.string = `${this.weaponName}  ${payload.magazineAmmo}/${payload.reserveAmmo}`;
     if (!payload.accepted) {
-      this.messageLabel.string = `${REJECT_TEXT[payload.rejectReason]} · ${latencyMs} ms`;
+      this.messageLabel.string = REJECT_TEXT[payload.rejectReason];
       return;
     }
     if (!payload.hit) {
-      this.messageLabel.string = `未命中 · 裁决 ${latencyMs} ms`;
+      this.messageLabel.string = '';
       return;
     }
 
@@ -540,8 +549,8 @@ export class M1Hud {
     );
     this.damageLabel.string = `-${payload.damage}`;
     this.messageLabel.string = payload.isKill
-      ? `消灭日军${precise ? ' · 精准射击' : ''} · ${latencyMs} ms`
-      : `命中 ${payload.damage} · 裁决 ${latencyMs} ms`;
+      ? `消灭日军${precise ? ' · 精准射击' : ''}`
+      : '';
     this.fadeLabel(this.hitLabel, this.presentation.hitFeedbackSec);
     this.fadeLabel(this.damageLabel, this.presentation.hitFeedbackSec);
     if (payload.isKill) {
@@ -614,10 +623,24 @@ export class M1Hud {
     this.setUiLayer(node);
     node.setParent(this.root);
     const graphics = node.addComponent(Graphics);
-    graphics.strokeColor = Color.WHITE;
-    graphics.lineWidth = this.presentation.crosshairLineWidthPx;
     const gap = this.presentation.crosshairGapPx;
     const size = this.presentation.crosshairSizePx;
+    graphics.strokeColor = Color.fromHEX(
+      new Color(),
+      this.presentation.crosshairOutlineColor,
+    );
+    graphics.lineWidth = this.presentation.crosshairOutlineWidthPx;
+    this.strokeCrosshair(graphics, gap, size);
+    graphics.strokeColor = Color.WHITE;
+    graphics.lineWidth = this.presentation.crosshairLineWidthPx;
+    this.strokeCrosshair(graphics, gap, size);
+  }
+
+  private strokeCrosshair(
+    graphics: Graphics,
+    gap: number,
+    size: number,
+  ): void {
     graphics.moveTo(-gap - size, 0);
     graphics.lineTo(-gap, 0);
     graphics.moveTo(gap, 0);

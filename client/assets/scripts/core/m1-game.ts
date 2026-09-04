@@ -226,6 +226,8 @@ export class M1Game {
 
   update(deltaTime: number): void {
     this.controller.update(deltaTime);
+    this.enemyRenderer.update(deltaTime);
+    this.allyRenderer.update(deltaTime);
     if (this.mountedMachineGun && this.controller.isFireHeld()) {
       const config =
         this.config.weapons.emplacement[this.mountedMachineGun.weaponId];
@@ -578,17 +580,10 @@ export class M1Game {
     if (typeof document === 'undefined') {
       return;
     }
-    document.documentElement.setAttribute(
-      'data-langyashan-m1',
-      JSON.stringify(this.getDebugState()),
-    );
-    document.documentElement.setAttribute(
-      'data-langyashan-m2',
-      JSON.stringify(this.getDebugState()),
-    );
+    const state = JSON.stringify(this.getDebugState());
     document.documentElement.setAttribute(
       'data-langyashan-m3',
-      JSON.stringify(this.getDebugState()),
+      state,
     );
   }
 }

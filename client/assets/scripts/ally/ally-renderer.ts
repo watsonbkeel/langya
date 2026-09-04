@@ -5,8 +5,6 @@ import {
   MeshRenderer,
   Node,
   primitives,
-  tween,
-  Tween,
   utils,
   Vec3,
 } from 'cc';
@@ -30,6 +28,10 @@ export class AllyRenderer {
   private readonly presentation: PresentationConfig;
   private readonly nodes = new Map<string, Node>();
   private readonly states = new Map<string, AllyAiState>();
+  private readonly targetPositions = new Map<string, Vec3>();
+  private readonly targetScales = new Map<string, Vec3>();
+  private readonly interpolationPosition = new Vec3();
+  private readonly interpolationScale = new Vec3();
 
   constructor(
     sceneRoot: Node,
@@ -72,6 +74,8 @@ export class AllyRenderer {
       if (!visibleIds.has(allyId)) {
         this.nodes.delete(allyId);
         this.states.delete(allyId);
+        this.targetPositions.delete(allyId);
+        this.targetScales.delete(allyId);
         node.destroy();
       }
     }
@@ -96,6 +100,33 @@ export class AllyRenderer {
     }, this.presentation.hitFeedbackSec * 1000);
   }
 
+  update(deltaTime: number): void {
+    const factor = 1 - Math.exp(
+      -this.presentation.entityPositionSmoothing * deltaTime,
+    );
+    for (const [allyId, node] of this.nodes) {
+      const targetPosition = this.targetPositions.get(allyId);
+      const targetScale = this.targetScales.get(allyId);
+      if (!targetPosition || !targetScale) {
+        continue;
+      }
+      Vec3.lerp(
+        this.interpolationPosition,
+        node.position,
+        targetPosition,
+        factor,
+      );
+      Vec3.lerp(
+        this.interpolationScale,
+        node.scale,
+        targetScale,
+        factor,
+      );
+      node.setPosition(this.interpolationPosition);
+      node.setScale(this.interpolationScale);
+    }
+  }
+
   getActiveCount(): number {
     return this.nodes.size;
   }
@@ -103,6 +134,8 @@ export class AllyRenderer {
   destroy(): void {
     this.nodes.clear();
     this.states.clear();
+    this.targetPositions.clear();
+    this.targetScales.clear();
     this.root.destroy();
     this.allyMaterial.destroy();
     this.engageMaterial.destroy();
@@ -136,20 +169,25 @@ export class AllyRenderer {
         : 1;
     const height = baseHeight * heightScale;
     const radius = this.gameplay.combat.enemyHitboxRadiusM;
-    const position = new Vec3(
+    let position = this.targetPositions.get(ally.id);
+    if (!position) {
+      position = new Vec3();
+      this.targetPositions.set(ally.id, position);
+    }
+    position.set(
       ally.position.x,
       ally.position.y + height / 2,
       ally.position.z,
     );
-    const scale = new Vec3(radius * 2, height, radius * 2);
+    let scale = this.targetScales.get(ally.id);
+    if (!scale) {
+      scale = new Vec3();
+      this.targetScales.set(ally.id, scale);
+    }
+    scale.set(radius * 2, height, radius * 2);
     if (immediate) {
       node.setPosition(position);
       node.setScale(scale);
-    } else {
-      Tween.stopAllByTarget(node);
-      tween(node)
-        .to(1 / this.gameplay.server.tickRateHz, { position, scale })
-        .start();
     }
 
     if (ally.aiState && this.states.get(ally.id) !== ally.aiState) {

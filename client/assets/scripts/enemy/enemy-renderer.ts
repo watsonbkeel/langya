@@ -32,6 +32,10 @@ export class EnemyRenderer {
   private readonly pool: Node[] = [];
   private readonly activeEnemies = new Map<string, Node>();
   private readonly enemyStates = new Map<string, EnemyAiState>();
+  private readonly targetPositions = new Map<string, Vec3>();
+  private readonly targetScales = new Map<string, Vec3>();
+  private readonly interpolationPosition = new Vec3();
+  private readonly interpolationScale = new Vec3();
 
   constructor(
     sceneRoot: Node,
@@ -83,6 +87,8 @@ export class EnemyRenderer {
       if (!visibleIds.has(enemyId)) {
         this.activeEnemies.delete(enemyId);
         this.enemyStates.delete(enemyId);
+        this.targetPositions.delete(enemyId);
+        this.targetScales.delete(enemyId);
         this.release(node);
       }
     }
@@ -108,6 +114,33 @@ export class EnemyRenderer {
     }, this.presentation.hitFeedbackSec * 1000);
   }
 
+  update(deltaTime: number): void {
+    const factor = 1 - Math.exp(
+      -this.presentation.entityPositionSmoothing * deltaTime,
+    );
+    for (const [enemyId, node] of this.activeEnemies) {
+      const targetPosition = this.targetPositions.get(enemyId);
+      const targetScale = this.targetScales.get(enemyId);
+      if (!targetPosition || !targetScale) {
+        continue;
+      }
+      Vec3.lerp(
+        this.interpolationPosition,
+        node.position,
+        targetPosition,
+        factor,
+      );
+      Vec3.lerp(
+        this.interpolationScale,
+        node.scale,
+        targetScale,
+        factor,
+      );
+      node.setPosition(this.interpolationPosition);
+      node.setScale(this.interpolationScale);
+    }
+  }
+
   remove(enemyId: string): void {
     const node = this.activeEnemies.get(enemyId);
     if (!node) {
@@ -115,6 +148,8 @@ export class EnemyRenderer {
     }
     this.activeEnemies.delete(enemyId);
     this.enemyStates.delete(enemyId);
+    this.targetPositions.delete(enemyId);
+    this.targetScales.delete(enemyId);
     const warning = node.getChildByName('FireWarning');
     if (warning) {
       warning.active = false;
@@ -146,6 +181,8 @@ export class EnemyRenderer {
   destroy(): void {
     this.activeEnemies.clear();
     this.enemyStates.clear();
+    this.targetPositions.clear();
+    this.targetScales.clear();
     this.pool.length = 0;
     this.worldRoot.destroy();
     this.enemyMaterial.destroy();
@@ -232,12 +269,22 @@ export class EnemyRenderer {
         ? this.presentation.engageHeightScale
         : 1;
     const height = enemyHitboxHeightM * heightScale;
-    const targetPosition = new Vec3(
+    let targetPosition = this.targetPositions.get(enemy.id);
+    if (!targetPosition) {
+      targetPosition = new Vec3();
+      this.targetPositions.set(enemy.id, targetPosition);
+    }
+    targetPosition.set(
       enemy.position.x,
       enemy.position.y + height / 2,
       enemy.position.z,
     );
-    const targetScale = new Vec3(
+    let targetScale = this.targetScales.get(enemy.id);
+    if (!targetScale) {
+      targetScale = new Vec3();
+      this.targetScales.set(enemy.id, targetScale);
+    }
+    targetScale.set(
       enemyHitboxRadiusM * 2,
       height,
       enemyHitboxRadiusM * 2,
@@ -245,14 +292,6 @@ export class EnemyRenderer {
     if (immediate) {
       node.setPosition(targetPosition);
       node.setScale(targetScale);
-    } else {
-      Tween.stopAllByTarget(node);
-      tween(node)
-        .to(1 / this.gameplay.server.tickRateHz, {
-          position: targetPosition,
-          scale: targetScale,
-        })
-        .start();
     }
 
     if (this.enemyStates.get(enemy.id) !== enemy.aiState) {
