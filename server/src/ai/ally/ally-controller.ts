@@ -125,6 +125,10 @@ export class AllyAgent<TRouteId extends string> {
     return this.weapon;
   }
 
+  get medkitUseEndsAtMs(): number | undefined {
+    return this.medkitEndsAtMs;
+  }
+
   update(deltaSec: number, nowMs: number): void {
     if (!this.isAlive) {
       return;

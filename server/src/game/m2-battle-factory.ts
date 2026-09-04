@@ -88,6 +88,10 @@ export function createM2BattleRuntime(
   const battleConfig: M2BattleConfig<M2RouteId, M2EnemyType> = {
     player: config.gameplay.player,
     arena: config.gameplay.arena,
+    match: config.gameplay.match,
+    waves: config.waves.waves,
+    intermissionSec: config.waves.intermissionSec,
+    totalEnemies: config.waves.totalEnemies,
     validation: config.gameplay.combat,
     playerWeapon,
     hitPartMultiplier: config.weapons.hitPartMultiplier,

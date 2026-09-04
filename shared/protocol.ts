@@ -6,6 +6,12 @@ export const CLIENT_MESSAGE_TYPES = {
   inputState: 'input_state',
   fire: 'fire',
   reload: 'reload',
+  switchWeapon: 'switch_weapon',
+  useMedkit: 'use_medkit',
+  pickup: 'pickup',
+  mountMg: 'mount_mg',
+  unmountMg: 'unmount_mg',
+  throwGrenade: 'throw_grenade',
 } as const;
 
 export const SERVER_MESSAGE_TYPES = {
@@ -18,6 +24,11 @@ export const SERVER_MESSAGE_TYPES = {
   allyCallout: 'ally_callout',
   allyDamaged: 'ally_damaged',
   allyDied: 'ally_died',
+  actionResult: 'action_result',
+  matchStart: 'match_start',
+  waveStart: 'wave_start',
+  supplyDrop: 'supply_drop',
+  matchEnd: 'match_end',
 } as const;
 
 export type ClientMessageType =
@@ -116,6 +127,66 @@ export type ReloadMessage = MessageEnvelope<
   ReloadPayload
 >;
 
+export interface SwitchWeaponPayload {
+  readonly weaponId: string;
+  readonly clientTick: number;
+}
+
+export type SwitchWeaponMessage = MessageEnvelope<
+  typeof CLIENT_MESSAGE_TYPES.switchWeapon,
+  SwitchWeaponPayload
+>;
+
+export interface UseMedkitPayload {
+  readonly clientTick: number;
+}
+
+export type UseMedkitMessage = MessageEnvelope<
+  typeof CLIENT_MESSAGE_TYPES.useMedkit,
+  UseMedkitPayload
+>;
+
+export interface PickupPayload {
+  readonly itemId: string;
+  readonly clientTick: number;
+}
+
+export type PickupMessage = MessageEnvelope<
+  typeof CLIENT_MESSAGE_TYPES.pickup,
+  PickupPayload
+>;
+
+export interface MountMgPayload {
+  readonly mgId: string;
+  readonly clientTick: number;
+}
+
+export type MountMgMessage = MessageEnvelope<
+  typeof CLIENT_MESSAGE_TYPES.mountMg,
+  MountMgPayload
+>;
+
+export interface UnmountMgPayload {
+  readonly clientTick: number;
+}
+
+export type UnmountMgMessage = MessageEnvelope<
+  typeof CLIENT_MESSAGE_TYPES.unmountMg,
+  UnmountMgPayload
+>;
+
+export interface ThrowGrenadePayload {
+  readonly originPos: Vector3;
+  readonly dirVec: Vector3;
+  readonly force: number;
+  readonly clientTick: number;
+}
+
+export type ThrowGrenadeMessage = MessageEnvelope<
+  typeof CLIENT_MESSAGE_TYPES.throwGrenade,
+  ThrowGrenadePayload
+>;
+
 export interface ConnectionSnapshot {
   readonly clientId: string;
   readonly joined: boolean;
@@ -186,6 +257,11 @@ export interface AllyState {
   readonly aimYaw: number;
   readonly aimPitch: number;
   readonly isCrouch: boolean;
+  readonly availableWeaponIds: readonly string[];
+  readonly grenadesRemaining: number;
+  readonly medkitsRemaining: number;
+  readonly medkitEndsAtMs?: number;
+  readonly mountedMgId?: string;
   readonly weapon: WeaponState;
 }
 
@@ -201,7 +277,56 @@ export interface EnemyState {
   readonly alive: boolean;
 }
 
-export type ItemState = never;
+export interface SupplyItemState {
+  readonly id: string;
+  readonly kind: 'airdrop_medkit';
+  readonly position: Vector3;
+  readonly expiresAtMs: number;
+  readonly available: boolean;
+}
+
+export interface WeaponRackItemState {
+  readonly id: string;
+  readonly kind: 'weapon_rack';
+  readonly weaponId: string;
+  readonly position: Vector3;
+  readonly available: boolean;
+}
+
+export type ItemState = SupplyItemState | WeaponRackItemState;
+
+export type MatchPhase =
+  | 'deploy'
+  | 'wave'
+  | 'intermission'
+  | 'ended';
+
+export interface MatchProgressState {
+  readonly startedAtMs: number;
+  readonly endsAtMs: number;
+  readonly phase: MatchPhase;
+  readonly currentWaveIndex: number;
+  readonly totalWaves: number;
+  readonly spawnedEnemies: number;
+  readonly defeatedEnemies: number;
+  readonly remainingEnemies: number;
+  readonly totalEnemies: number;
+}
+
+export interface MachineGunState {
+  readonly id: string;
+  readonly weaponId: string;
+  readonly position: Vector3;
+  /** 角度制，Cocos 世界坐标 Y 轴旋转角。 */
+  readonly baseYaw: number;
+  readonly occupantId?: string;
+  readonly beltAmmo: number;
+  /** 归一化热量，范围 [0, 1]。 */
+  readonly heatRatio: number;
+  readonly isOverheated: boolean;
+  readonly cooldownEndsAtMs?: number;
+  readonly reloadEndsAtMs?: number;
+}
 
 export interface WorldSnapshotPayload {
   readonly tick: number;
@@ -209,6 +334,8 @@ export interface WorldSnapshotPayload {
   readonly allies: readonly AllyState[];
   readonly enemies: readonly EnemyState[];
   readonly items: readonly ItemState[];
+  readonly match: MatchProgressState;
+  readonly machineGuns: readonly MachineGunState[];
 }
 
 export type WorldSnapshotMessage = MessageEnvelope<
@@ -301,12 +428,140 @@ export type AllyDiedMessage = MessageEnvelope<
   AllyDiedPayload
 >;
 
+export type ActionType =
+  | 'switch_weapon'
+  | 'use_medkit'
+  | 'pickup'
+  | 'mount_mg'
+  | 'unmount_mg'
+  | 'throw_grenade';
+
+export type ActionRejectReason =
+  | 'dead'
+  | 'invalid_state'
+  | 'invalid_target'
+  | 'out_of_range'
+  | 'unavailable'
+  | 'cooldown'
+  | 'no_resource'
+  | 'occupied';
+
+interface ActionResultCommon {
+  readonly clientTick: number;
+  readonly action: ActionType;
+}
+
+export interface ActionAcceptedPayload extends ActionResultCommon {
+  readonly accepted: true;
+}
+
+export interface ActionRejectedPayload extends ActionResultCommon {
+  readonly accepted: false;
+  readonly rejectReason: ActionRejectReason;
+}
+
+export type ActionResultPayload =
+  | ActionAcceptedPayload
+  | ActionRejectedPayload;
+
+export type ActionResultMessage = MessageEnvelope<
+  typeof SERVER_MESSAGE_TYPES.actionResult,
+  ActionResultPayload
+>;
+
+export interface MatchStartPayload {
+  readonly matchId: string;
+  readonly startedAtMs: number;
+  readonly deployEndsAtMs: number;
+  readonly endsAtMs: number;
+  readonly totalWaves: number;
+  readonly totalEnemies: number;
+}
+
+export type MatchStartMessage = MessageEnvelope<
+  typeof SERVER_MESSAGE_TYPES.matchStart,
+  MatchStartPayload
+>;
+
+export interface WaveStartPayload {
+  readonly waveIndex: number;
+  readonly enemyCount: number;
+  readonly totalWaves: number;
+  readonly startedAtMs: number;
+}
+
+export type WaveStartMessage = MessageEnvelope<
+  typeof SERVER_MESSAGE_TYPES.waveStart,
+  WaveStartPayload
+>;
+
+export interface SupplyDropPayload {
+  readonly dropId: string;
+  readonly position: Vector3;
+  readonly expiresAtMs: number;
+  readonly text: string;
+}
+
+export type SupplyDropMessage = MessageEnvelope<
+  typeof SERVER_MESSAGE_TYPES.supplyDrop,
+  SupplyDropPayload
+>;
+
+export type MatchResult = 'victory' | 'defeat';
+export type MatchEndReason =
+  | 'time_survived'
+  | 'player_died'
+  | 'squad_eliminated';
+
+export interface ScoreboardEntry {
+  readonly occupantId: string;
+  readonly seatIndex: number;
+  readonly heroName: string;
+  readonly displayName: string;
+  readonly isBot: boolean;
+  readonly alive: boolean;
+  readonly kills: number;
+  readonly mgKills: number;
+  readonly headshots: number;
+  readonly shotsFired: number;
+  readonly shotsHit: number;
+  readonly accuracy: number;
+  readonly survivalSec: number;
+  readonly damageDealt: number;
+  readonly damageTaken: number;
+  readonly medkitUsed: number;
+  readonly killsByWave: readonly number[];
+}
+
+export interface MatchEndPayload {
+  readonly matchId: string;
+  readonly result: MatchResult;
+  readonly reason: MatchEndReason;
+  readonly endedAtMs: number;
+  readonly scoreboard: readonly ScoreboardEntry[];
+  readonly mvpPlayerId?: string;
+  readonly spawnedEnemies: number;
+  readonly defeatedEnemies: number;
+  readonly totalEnemies: number;
+}
+
+export type MatchEndMessage = MessageEnvelope<
+  typeof SERVER_MESSAGE_TYPES.matchEnd,
+  MatchEndPayload
+>;
+
 export type ClientMessage =
   | JoinMessage
   | PingMessage
   | InputStateMessage
   | FireMessage
-  | ReloadMessage;
+  | ReloadMessage
+  | SwitchWeaponMessage
+  | UseMedkitMessage
+  | PickupMessage
+  | MountMgMessage
+  | UnmountMgMessage
+  | ThrowGrenadeMessage;
 
 export type ServerMessage =
   | SnapshotMessage
@@ -317,4 +572,9 @@ export type ServerMessage =
   | EnemyDiedMessage
   | AllyCalloutMessage
   | AllyDamagedMessage
-  | AllyDiedMessage;
+  | AllyDiedMessage
+  | ActionResultMessage
+  | MatchStartMessage
+  | WaveStartMessage
+  | SupplyDropMessage
+  | MatchEndMessage;

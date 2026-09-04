@@ -7,6 +7,7 @@ import {
   type FireRejectReason,
   type FireResultMessage,
   type InputStateMessage,
+  type MatchProgressState,
   type ReloadMessage,
   type RoomStateMessage,
   type RouteId,
@@ -69,6 +70,11 @@ export interface M2PlayerConfig {
   readonly crouchSpeed: number;
   readonly crouchHitboxMultiplier: number;
   readonly medkitCount: number;
+  readonly defaultLoadout: {
+    readonly primary: string;
+    readonly throwable: string;
+    readonly throwableCount: number;
+  };
   readonly aimPitchMinDeg: number;
   readonly aimPitchMaxDeg: number;
 }
@@ -76,6 +82,16 @@ export interface M2PlayerConfig {
 export interface M2ArenaConfig {
   readonly widthM: number;
   readonly depthM: number;
+}
+
+export interface M2MatchConfig {
+  readonly durationSec: number;
+  readonly deployPhaseSec: number;
+}
+
+export interface M2WaveTimingConfig {
+  readonly index: number;
+  readonly startSec: number;
 }
 
 export interface M2ValidationConfig {
@@ -105,6 +121,10 @@ export interface M2BattleConfig<
 > {
   readonly player: M2PlayerConfig;
   readonly arena: M2ArenaConfig;
+  readonly match: M2MatchConfig;
+  readonly waves: readonly M2WaveTimingConfig[];
+  readonly intermissionSec: number;
+  readonly totalEnemies: number;
   readonly validation: M2ValidationConfig;
   readonly playerWeapon: M2PlayerWeaponConfig;
   readonly hitPartMultiplier: WeaponDamageConfig['hitPartMultiplier'];
@@ -151,6 +171,7 @@ interface MutablePlayer {
   moveDirX: number;
   moveDirY: number;
   weapon: WeaponRuntimeState;
+  grenadesRemaining: number;
   medkitsRemaining: number;
   medkitEndsAtMs: number | undefined;
   kills: number;
@@ -253,6 +274,8 @@ export class M2BattleSession<
       moveDirX: 0,
       moveDirY: 0,
       weapon: createWeaponState(options.config.playerWeapon),
+      grenadesRemaining:
+        options.config.player.defaultLoadout.throwableCount,
       medkitsRemaining: options.config.player.medkitCount,
       medkitEndsAtMs: undefined,
       kills: 0,
@@ -660,6 +683,12 @@ export class M2BattleSession<
         aimYaw: this.player.aimYaw,
         aimPitch: this.player.aimPitch,
         isCrouch: this.player.isCrouch,
+        availableWeaponIds: [this.config.playerWeapon.weaponId],
+        grenadesRemaining: this.player.grenadesRemaining,
+        medkitsRemaining: this.player.medkitsRemaining,
+        ...(this.player.medkitEndsAtMs === undefined
+          ? {}
+          : { medkitEndsAtMs: this.player.medkitEndsAtMs }),
         weapon: this.getPlayerWeaponState(),
       },
       ...this.allies.map((ally) => {
@@ -677,6 +706,12 @@ export class M2BattleSession<
           aimYaw: 0,
           aimPitch: 0,
           isCrouch: ally.isCrouching,
+          availableWeaponIds: [this.config.bot.weapon],
+          grenadesRemaining: 0,
+          medkitsRemaining: ally.medkitsRemaining,
+          ...(ally.medkitUseEndsAtMs === undefined
+            ? {}
+            : { medkitEndsAtMs: ally.medkitUseEndsAtMs }),
           weapon: this.getAllyWeaponState(ally),
         };
       }),
@@ -708,6 +743,8 @@ export class M2BattleSession<
         allies,
         enemies,
         items: [],
+        match: this.createMatchProgress(serverTimeMs),
+        machineGuns: [],
       },
     };
   }
@@ -1206,6 +1243,55 @@ export class M2BattleSession<
       this.config.bot.weapon,
       ally.weaponState,
     );
+  }
+
+  private createMatchProgress(serverTimeMs: number): MatchProgressState {
+    if (this.startedAtMs === undefined) {
+      this.startedAtMs = serverTimeMs;
+    }
+    const elapsedSec = Math.max(
+      0,
+      (serverTimeMs - this.startedAtMs) / 1000,
+    );
+    const defeatedEnemies =
+      this.totalEnemyCount - this.aliveEnemyCount;
+    let currentWaveIndex = 0;
+    let phase: MatchProgressState['phase'] = 'deploy';
+
+    for (let index = 0; index < this.config.waves.length; index += 1) {
+      const wave = this.config.waves[index];
+      if (!wave || elapsedSec < wave.startSec) {
+        break;
+      }
+      currentWaveIndex = wave.index;
+      phase = 'wave';
+      const nextWave = this.config.waves[index + 1];
+      if (
+        nextWave &&
+        elapsedSec >= nextWave.startSec - this.config.intermissionSec
+      ) {
+        phase = 'intermission';
+      }
+    }
+    if (elapsedSec >= this.config.match.durationSec) {
+      phase = 'ended';
+    }
+
+    return {
+      startedAtMs: this.startedAtMs,
+      endsAtMs:
+        this.startedAtMs + this.config.match.durationSec * 1000,
+      phase,
+      currentWaveIndex,
+      totalWaves: this.config.waves.length,
+      spawnedEnemies: this.totalEnemyCount,
+      defeatedEnemies,
+      remainingEnemies: Math.max(
+        0,
+        this.config.totalEnemies - defeatedEnemies,
+      ),
+      totalEnemies: this.config.totalEnemies,
+    };
   }
 }
 

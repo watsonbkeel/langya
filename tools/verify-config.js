@@ -312,6 +312,12 @@ if (gameplay) {
 
   const a = gameplay.arena || {};
   if (a.playerCanLeaveHill !== false) err('arena.playerCanLeaveHill 必须为 false（玩家不能下山）');
+  if (!(a.itemPickupRangeM > 0)) {
+    err('arena.itemPickupRangeM 必须为正数');
+  }
+  if (!(a.machineGunMountRangeM > 0)) {
+    err('arena.machineGunMountRangeM 必须为正数');
+  }
   const el = a.elements || {};
   if (allies && el.spawnPoints !== allies.seatCount) {
     err(`出生点数量(${el.spawnPoints}) 应等于席位数(${allies.seatCount})`);

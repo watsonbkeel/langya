@@ -354,6 +354,9 @@ export class BattleSession {
       aimYaw: this.player.aimYaw,
       aimPitch: this.player.aimPitch,
       isCrouch: this.player.isCrouch,
+      availableWeaponIds: [this.config.weapon.weaponId],
+      grenadesRemaining: 0,
+      medkitsRemaining: 0,
       weapon: this.getWeaponState(),
     };
     const enemies: EnemyState[] = [];
@@ -378,6 +381,18 @@ export class BattleSession {
         allies: [ally],
         enemies,
         items: [],
+        match: {
+          startedAtMs: serverTimeMs,
+          endsAtMs: serverTimeMs,
+          phase: 'ended',
+          currentWaveIndex: 0,
+          totalWaves: 0,
+          spawnedEnemies: this.enemies.size,
+          defeatedEnemies: 0,
+          remainingEnemies: this.enemies.size,
+          totalEnemies: this.enemies.size,
+        },
+        machineGuns: [],
       },
     };
   }
