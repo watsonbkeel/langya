@@ -476,14 +476,17 @@ Node.js 22.23.2 下配置校验、TypeScript 检查、98 项服务端测试和�
 `f0273a06395bed60da258fb9c5b850ae3a7ac2973ead0614b6198edfc2179d3f`。
 静态包覆盖发布后，Cocos 配置副本与 `shared/config` 一致；未修改
 `client/**` 源码。Node.js 22.23.2 下配置校验、client check-config、
-TypeScript 检查、98 项服务端测试、生产构建、Nginx 校验及本机直连、
-本机 Nginx、Tailscale 直连、Tailscale Nginx 四路径 M0–M3 联调全部通过。
-现行权威服务保持为 PM2 `langyashan-server`，PID `3967390`，于
-`2026-09-05T14:29:54+08:00` 重载，状态 online。
+server TypeScript 检查、98 项服务端测试、生产构建、Nginx 校验及本机
+直连、本机 Nginx、Tailscale 直连、Tailscale Nginx 四路径 M0–M3 联调
+全部通过。线上主脚本 SHA-256 为
+`31c7d85e0367d232808803eb375f1c37eee87299fc8eaa4767ea07b4de1ec670`。
+现行权威服务保持为 PM2 `langyashan-server`，PID `3969521`，于
+`2026-09-05T14:32:35+08:00` 重载，状态 online；本轮 Pointer Lock、
+WASD、立即血包和红绿边缘效果仍等待 Watson 在真实浏览器中最终确认。
 
 #### 交付
 
-2026-09-05 统一交付地址：`http://100.74.3.56:8080/?build=fc67c72`
+2026-09-05 统一交付地址：`http://100.74.3.56:8080/?build=99fc216`
 
 试玩方式：进入页面后使用 WASD 移动、鼠标瞄准、左键射击，R 换弹，
 Ctrl 蹲下，H 使用血包，G 投掷手榴弹，F 操作九二式重机枪，Q 切换
