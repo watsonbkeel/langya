@@ -299,7 +299,7 @@ describe('M2BattleSession', () => {
     );
   });
 
-  it('真人血包接受后立即扣除并回血，且不阻止移动或开火', () => {
+  it('真人血包在阈值等号时接受，立即扣除并回血到上限，且不阻止移动或开火', () => {
     const injuredConfig = {
       ...config,
       gameplay: {
@@ -322,6 +322,11 @@ describe('M2BattleSession', () => {
       .createSnapshot(0, 0)
       .payload.allies.find((ally) => !ally.isBot);
     assert.ok(before);
+    assert.equal(
+      before.hp,
+      config.gameplay.player.maxHp -
+        config.gameplay.medkit.carriedHeal,
+    );
 
     assert.equal(battle.tryUsePlayerMedkit(), undefined);
     const healed = battle
@@ -329,6 +334,7 @@ describe('M2BattleSession', () => {
       .payload.allies.find((ally) => !ally.isBot);
     assert.ok(healed);
     assert.equal(healed.hp, config.gameplay.player.maxHp);
+    assert.equal(healed.hp <= config.gameplay.player.maxHp, true);
     assert.equal(
       healed.medkitsRemaining,
       before.medkitsRemaining - 1,
@@ -362,6 +368,40 @@ describe('M2BattleSession', () => {
     const fire = battle.createFireMessageForEnemy(enemyId, 2, 'head');
     assert.ok(fire);
     assert.equal(battle.fire(fire, 1000).result.payload.accepted, true);
+  });
+
+  it('真人连续请求血包不会把剩余数量扣成负数', () => {
+    const rapidUseConfig = {
+      ...config,
+      gameplay: {
+        ...config.gameplay,
+        player: {
+          ...config.gameplay.player,
+          initialHp:
+            config.gameplay.player.maxHp -
+            config.gameplay.medkit.carriedHeal -
+            config.gameplay.medkit.carriedHeal,
+          medkitCount: 1,
+        },
+      },
+    };
+    const { battle } = createM2BattleRuntime(
+      rapidUseConfig,
+      'player-medkit-rapid',
+      '测试玩家',
+      60,
+    );
+
+    assert.equal(battle.tryUsePlayerMedkit(), undefined);
+    assert.equal(battle.tryUsePlayerMedkit(), 'no_resource');
+    assert.equal(battle.tryUsePlayerMedkit(), 'no_resource');
+
+    const player = battle
+      .createSnapshot(2, 0)
+      .payload.allies.find((ally) => !ally.isBot);
+    assert.ok(player);
+    assert.equal(player.medkitsRemaining, 0);
+    assert.equal(player.medkitEndsAtMs, undefined);
   });
 
   it('真人血包拒绝高生命值、耗尽和阵亡状态', () => {
