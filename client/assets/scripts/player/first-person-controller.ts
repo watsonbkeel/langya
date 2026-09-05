@@ -36,6 +36,7 @@ interface MountedAimLimits {
 }
 
 const MAX_MOUSE_DELTA_PX = 120;
+const FOOTSTEP_INTERVAL_SEC = 0.42;
 
 export class FirstPersonController {
   private readonly cameraNode: Node;
@@ -53,6 +54,8 @@ export class FirstPersonController {
   private ignoreMouseUntilMs = 0;
   private fireHeld = false;
   private spectatorMode = false;
+  private footstepAccumulatorSec = 0;
+  private audioContext: AudioContext | null = null;
   private readonly preventContextMenu = (event: Event): void => {
     event.preventDefault();
   };
@@ -211,6 +214,16 @@ export class FirstPersonController {
       interpolation,
     );
     this.cameraNode.setPosition(this.renderedPosition);
+
+    if (this.isPointerLocked() && this.isMoving()) {
+      this.footstepAccumulatorSec += deltaTime;
+      if (this.footstepAccumulatorSec >= FOOTSTEP_INTERVAL_SEC) {
+        this.footstepAccumulatorSec -= FOOTSTEP_INTERVAL_SEC;
+        this.playFootstep();
+      }
+    } else {
+      this.footstepAccumulatorSec = 0;
+    }
   }
 
   destroy(): void {
@@ -231,6 +244,8 @@ export class FirstPersonController {
       );
     }
     this.cameraNode.destroy();
+    void this.audioContext?.close();
+    this.audioContext = null;
   }
 
   private onKeyDown(event: EventKeyboard): void {
@@ -395,6 +410,39 @@ export class FirstPersonController {
       '浏览器未能锁定鼠标，请再次点击画面重试',
     );
   };
+
+  private isMoving(): boolean {
+    return (
+      this.pressedKeys.has(KeyCode.KEY_W) ||
+      this.pressedKeys.has(KeyCode.KEY_A) ||
+      this.pressedKeys.has(KeyCode.KEY_S) ||
+      this.pressedKeys.has(KeyCode.KEY_D)
+    );
+  }
+
+  private playFootstep(): void {
+    if (typeof AudioContext === 'undefined') {
+      return;
+    }
+    this.audioContext ??= new AudioContext();
+    const context = this.audioContext;
+    void context.resume().catch(() => {
+      // 浏览器尚未收到手势时静音，下一次移动继续尝试。
+    });
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = 'triangle';
+    oscillator.frequency.setValueAtTime(78, context.currentTime);
+    gain.gain.setValueAtTime(0.08, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(
+      0.001,
+      context.currentTime + 0.08,
+    );
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start();
+    oscillator.stop(context.currentTime + 0.08);
+  }
 
   private applyAimRotation(): void {
     // 始终显式清零 roll；只允许 yaw/pitch 两个自由度。

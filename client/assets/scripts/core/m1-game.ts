@@ -32,6 +32,7 @@ import {
   M3WorldInteractions,
   type InteractionTarget,
 } from '../level/m3-world-interactions';
+import { M4SceneDecorations } from '../level/m4-scene-decorations';
 import { M1Hud } from '../ui/m1-hud';
 import { WeaponView } from '../weapon/weapon-view';
 
@@ -92,6 +93,7 @@ export class M1Game {
   private readonly controller: FirstPersonController;
   private readonly netClient: NetClient;
   private readonly worldInteractions: M3WorldInteractions;
+  private readonly sceneDecorations: M4SceneDecorations;
   private readonly pendingShots = new Map<number, number>();
   private readonly inputIntervalSec: number;
   private inputAccumulatorSec = 0;
@@ -185,6 +187,11 @@ export class M1Game {
       config.gameplay,
       config.presentation,
       config.weapons,
+    );
+    this.sceneDecorations = new M4SceneDecorations(
+      sceneRoot,
+      config.gameplay,
+      config.presentation,
     );
     this.controller = new FirstPersonController(
       sceneRoot,
@@ -296,6 +303,7 @@ export class M1Game {
     this.allyRenderer.destroy();
     this.enemyRenderer.destroy();
     this.worldInteractions.destroy();
+    this.sceneDecorations.destroy();
     this.weaponView.destroy();
     this.hud.destroy();
     if (typeof window !== 'undefined') {

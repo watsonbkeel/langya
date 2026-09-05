@@ -334,6 +334,8 @@ export class M1Hud {
     this.waveBannerLabel.color = Color.fromHEX(new Color(), '#FFD56A');
     this.waveBannerLabel.string = `第 ${waveIndex} 波进攻开始  /  共 ${totalWaves} 波`;
     this.fadeLabel(this.waveBannerLabel, this.presentation.waveBannerSec);
+    // 先用短促程序音效占位，待正式战鼓素材补齐后替换。
+    this.playCalloutSound();
   }
 
   showSupplyDrop(text: string): void {
@@ -343,6 +345,8 @@ export class M1Hud {
       this.presentation.supplyColor,
     );
     this.fadeLabel(this.waveBannerLabel, this.presentation.supplyBannerSec);
+    // 补给提示复用短音效占位，避免事件只有文字没有听觉反馈。
+    this.playCalloutSound();
   }
 
   showInteraction(text: string): void {
