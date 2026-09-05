@@ -367,9 +367,7 @@ export class M1Game {
     if (!player) {
       return;
     }
-    if (this.previousHp !== null && player.hp < this.previousHp) {
-      this.hud.showDamage();
-    }
+    const previousHp = this.previousHp;
     this.previousHp = player.hp;
     this.playerPosition = { ...player.position };
     if (
@@ -395,6 +393,9 @@ export class M1Game {
       this.config.weapons.player[player.weapon.weaponId]?.displayName ??
       player.weapon.weaponId;
     this.hud.updatePlayer(player, weaponName);
+    if (previousHp !== null && player.hp < previousHp) {
+      this.hud.showDamage();
+    }
     this.hud.updateInventory(player);
     this.interactionTarget = this.worldInteractions.findInteraction(
       player.position,
@@ -623,15 +624,20 @@ export class M1Game {
     player: AllyState | undefined,
     allies: readonly AllyState[],
   ): void {
+    const wasPlayerAlive = this.playerAlive;
     this.playerAlive = player !== undefined && player.hp > 0;
     if (this.playerAlive) {
       this.spectatingAllyId = null;
       this.controller.leaveSpectatorMode();
       this.weaponView.setVisible(!this.matchEnded);
+      if (!wasPlayerAlive) {
+        this.hud.setCombatFocus(this.controller.isPointerLocked());
+      }
       this.hud.hideSpectating();
       return;
     }
 
+    this.hud.setCombatFocus(true);
     const current = allies.find(
       (ally) =>
         ally.isBot &&

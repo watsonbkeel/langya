@@ -115,7 +115,7 @@ export class M1Hud {
     const helpLabel = this.createLabel(
       'Help',
       '点击画面进入战斗 · WASD 移动 · 鼠标瞄准 · 左键射击 · Esc 释放鼠标\nR 换弹 · Q 切枪 · G 手榴弹 · H 立即使用血包 · F 交互/上下重机枪 · Ctrl 蹲下',
-      presentation.hudFontSizePx,
+      presentation.helpFontSizePx,
       new Vec3(0, presentation.helpOffsetYPx, 0),
       '#DDE7EA',
     );

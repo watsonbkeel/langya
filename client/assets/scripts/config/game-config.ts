@@ -96,6 +96,7 @@ export interface PresentationConfig {
   readonly crosshairOutlineColor: string;
   readonly hudFontSizePx: number;
   readonly titleFontSizePx: number;
+  readonly helpFontSizePx: number;
   readonly damageFontSizePx: number;
   readonly statusOffsetYPx: number;
   readonly helpOffsetYPx: number;
@@ -189,6 +190,7 @@ const PRESENTATION_NUMBER_KEYS = [
   'crosshairOutlineWidthPx',
   'hudFontSizePx',
   'titleFontSizePx',
+  'helpFontSizePx',
   'damageFontSizePx',
   'statusOffsetYPx',
   'helpOffsetYPx',
