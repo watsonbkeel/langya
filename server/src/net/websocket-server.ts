@@ -289,7 +289,7 @@ export class GameWebSocketServer {
             session,
             message.payload.clientTick,
             'use_medkit',
-            session.battle.tryUsePlayerMedkit(Date.now()),
+            session.battle.tryUsePlayerMedkit(),
           );
           return;
         case CLIENT_MESSAGE_TYPES.switchWeapon:

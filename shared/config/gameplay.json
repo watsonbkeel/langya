@@ -40,12 +40,12 @@
 
   "medkit": {
     "carriedHeal": 40,
-    "carriedUseSec": 2.5,
-    "carriedBlocksFire": true,
+    "carriedUseSec": 0,
+    "carriedBlocksFire": false,
     "airdropHeal": 50,
     "airdropPickupInstant": true,
     "airdropOnlyForHumanPlayer": true,
-    "comment": "空投仅真人可拾取，AI 队友不抢（PRD 5.5）"
+    "comment": "随身血包由服务器接受后立即扣除并回血，不阻止开火或移动；空投仅真人可拾取，AI 队友不抢（PRD 5.5）"
   },
 
   "airdrop": {

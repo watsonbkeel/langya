@@ -124,11 +124,10 @@ export function verifyM3Match(
       battle.aliveEnemyCount,
     );
     battle.resupplyPlayerAmmo(nowMs);
-    battle.usePlayerMedkit(nowMs);
+    battle.usePlayerMedkit();
 
     if (
       battle.playerAlive &&
-      !battle.playerIsUsingMedkit &&
       nowMs >= nextPlayerFireAtMs
     ) {
       const weapon = battle.playerWeaponState;

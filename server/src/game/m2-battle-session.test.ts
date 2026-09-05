@@ -299,17 +299,131 @@ describe('M2BattleSession', () => {
     );
   });
 
-  it('真人血包使用受数量和治疗时间约束', () => {
+  it('真人血包接受后立即扣除并回血，且不阻止移动或开火', () => {
+    const injuredConfig = {
+      ...config,
+      gameplay: {
+        ...config.gameplay,
+        player: {
+          ...config.gameplay.player,
+          initialHp:
+            config.gameplay.player.maxHp -
+            config.gameplay.medkit.carriedHeal,
+        },
+      },
+    };
     const { battle } = createM2BattleRuntime(
-      config,
+      injuredConfig,
       'player-6',
       '测试玩家',
       6,
     );
+    const before = battle
+      .createSnapshot(0, 0)
+      .payload.allies.find((ally) => !ally.isBot);
+    assert.ok(before);
 
-    assert.equal(battle.usePlayerMedkit(0), false);
-    assert.equal(battle.tryUsePlayerMedkit(0), 'unavailable');
-    assert.equal(battle.playerIsUsingMedkit, false);
+    assert.equal(battle.tryUsePlayerMedkit(), undefined);
+    const healed = battle
+      .createSnapshot(1, 0)
+      .payload.allies.find((ally) => !ally.isBot);
+    assert.ok(healed);
+    assert.equal(healed.hp, config.gameplay.player.maxHp);
+    assert.equal(
+      healed.medkitsRemaining,
+      before.medkitsRemaining - 1,
+    );
+    assert.equal(healed.medkitEndsAtMs, undefined);
+
+    const startPosition = battle.playerPosition;
+    assert.equal(
+      battle.applyInput({
+        type: 'input_state',
+        payload: {
+          clientTick: 1,
+          moveDir: { x: 1, y: 0 },
+          aimYaw: 0,
+          aimPitch: 0,
+          isCrouch: false,
+        },
+      }),
+      true,
+    );
+    battle.update(1, 0, 1000);
+    assert.notDeepEqual(battle.playerPosition, startPosition);
+
+    const enemyId = battle.spawnEnemy(
+      'rifleman',
+      'A',
+      config.waves.waves[0]!.accuracy,
+      1000,
+    );
+    assert.ok(enemyId);
+    const fire = battle.createFireMessageForEnemy(enemyId, 2, 'head');
+    assert.ok(fire);
+    assert.equal(battle.fire(fire, 1000).result.payload.accepted, true);
+  });
+
+  it('真人血包拒绝高生命值、耗尽和阵亡状态', () => {
+    const highHealthConfig = {
+      ...config,
+      gameplay: {
+        ...config.gameplay,
+        player: {
+          ...config.gameplay.player,
+          initialHp:
+            config.gameplay.player.maxHp -
+            config.gameplay.medkit.carriedHeal +
+            1,
+        },
+      },
+    };
+    const highHealth = createM2BattleRuntime(
+      highHealthConfig,
+      'player-medkit-full',
+      '测试玩家',
+      61,
+    ).battle;
+    assert.equal(highHealth.tryUsePlayerMedkit(), 'unavailable');
+
+    const noResourceConfig = {
+      ...config,
+      gameplay: {
+        ...config.gameplay,
+        player: {
+          ...config.gameplay.player,
+          initialHp:
+            config.gameplay.player.maxHp -
+            config.gameplay.medkit.carriedHeal,
+          medkitCount: 0,
+        },
+      },
+    };
+    const noResource = createM2BattleRuntime(
+      noResourceConfig,
+      'player-medkit-empty',
+      '测试玩家',
+      62,
+    ).battle;
+    assert.equal(noResource.tryUsePlayerMedkit(), 'no_resource');
+
+    const deadConfig = {
+      ...config,
+      gameplay: {
+        ...config.gameplay,
+        player: {
+          ...config.gameplay.player,
+          initialHp: 0,
+        },
+      },
+    };
+    const dead = createM2BattleRuntime(
+      deadConfig,
+      'player-medkit-dead',
+      '测试玩家',
+      63,
+    ).battle;
+    assert.equal(dead.tryUsePlayerMedkit(), 'dead');
   });
 
   it('武器架拾取后才能切换且快照同步当前装备', () => {

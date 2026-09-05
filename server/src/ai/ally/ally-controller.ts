@@ -38,8 +38,6 @@ export interface AllyBotConfig {
 
 export interface AllyMedkitConfig {
   readonly carriedHeal: number;
-  readonly carriedUseSec: number;
-  readonly carriedBlocksFire: boolean;
 }
 
 export interface AllyAgentOptions<TRouteId extends string> {
@@ -87,7 +85,6 @@ export class AllyAgent<TRouteId extends string> {
   private weapon: WeaponRuntimeState;
   private targetId: string | undefined;
   private targetAcquiredAtMs: number | undefined;
-  private medkitEndsAtMs: number | undefined;
 
   constructor(options: AllyAgentOptions<TRouteId>) {
     this.id = options.id;
@@ -115,18 +112,11 @@ export class AllyAgent<TRouteId extends string> {
   }
 
   get isCrouching(): boolean {
-    return (
-      this.weapon.reloadEndsAtMs !== undefined ||
-      this.medkitEndsAtMs !== undefined
-    );
+    return this.weapon.reloadEndsAtMs !== undefined;
   }
 
   get weaponState(): WeaponRuntimeState {
     return this.weapon;
-  }
-
-  get medkitUseEndsAtMs(): number | undefined {
-    return this.medkitEndsAtMs;
   }
 
   update(deltaSec: number, nowMs: number): void {
@@ -139,17 +129,6 @@ export class AllyAgent<TRouteId extends string> {
       this.weaponConfig,
       nowMs,
     );
-    if (
-      this.medkitEndsAtMs !== undefined &&
-      nowMs >= this.medkitEndsAtMs
-    ) {
-      this.hp = Math.min(
-        this.maxHp,
-        this.hp + this.medkitConfig.carriedHeal,
-      );
-      this.medkitEndsAtMs = undefined;
-    }
-
     if (this.state === 'deploy' || this.state === 'reassign') {
       const arrived = moveToward(
         this.position,
@@ -166,7 +145,7 @@ export class AllyAgent<TRouteId extends string> {
     nowMs: number,
     targets: readonly AllyTarget<TRouteId>[],
   ): AllyShotIntent | undefined {
-    if (!this.isAlive || this.medkitEndsAtMs !== undefined) {
+    if (!this.isAlive) {
       return undefined;
     }
 
@@ -242,7 +221,7 @@ export class AllyAgent<TRouteId extends string> {
     this.state = 'reassign';
   }
 
-  takeDamage(damage: number, nowMs: number): boolean {
+  takeDamage(damage: number): boolean {
     if (!this.isAlive || damage <= 0) {
       return false;
     }
@@ -252,18 +231,18 @@ export class AllyAgent<TRouteId extends string> {
       this.state = 'dead';
       this.targetId = undefined;
       this.targetAcquiredAtMs = undefined;
-      this.medkitEndsAtMs = undefined;
       return true;
     }
 
     if (
       this.medkitsRemaining > 0 &&
-      this.medkitEndsAtMs === undefined &&
       this.hp / this.maxHp < this.bot.medkitAutoUseThreshold
     ) {
       this.medkitsRemaining -= 1;
-      this.medkitEndsAtMs =
-        nowMs + this.medkitConfig.carriedUseSec * 1000;
+      this.hp = Math.min(
+        this.maxHp,
+        this.hp + this.medkitConfig.carriedHeal,
+      );
     }
     return false;
   }

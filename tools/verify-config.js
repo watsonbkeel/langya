@@ -287,6 +287,12 @@ if (gameplay) {
   }
 
   const md = gameplay.medkit || {};
+  if (md.carriedUseSec !== 0) {
+    err(`medkit.carriedUseSec = ${md.carriedUseSec}，立即生效规则要求为 0`);
+  }
+  if (md.carriedBlocksFire !== false) {
+    err('medkit.carriedBlocksFire 必须为 false（使用血包不阻止开火）');
+  }
   if (md.airdropOnlyForHumanPlayer !== true) {
     err('medkit.airdropOnlyForHumanPlayer 必须为 true（AI 队友不抢空投）');
   }

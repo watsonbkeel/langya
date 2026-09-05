@@ -142,11 +142,8 @@ describe('AllyAgent', () => {
     const thresholdHp =
       alliesConfig.bot.hp * alliesConfig.bot.medkitAutoUseThreshold;
 
-    ally.takeDamage(alliesConfig.bot.hp - thresholdHp + 1, 0);
+    ally.takeDamage(alliesConfig.bot.hp - thresholdHp + 1);
     assert.equal(ally.medkitsRemaining, alliesConfig.bot.medkitCount - 1);
-    assert.equal(ally.isCrouching, true);
-
-    ally.update(0, gameplayConfig.medkit.carriedUseSec * 1000);
     assert.equal(
       ally.hp,
       Math.min(
@@ -154,7 +151,9 @@ describe('AllyAgent', () => {
         thresholdHp - 1 + gameplayConfig.medkit.carriedHeal,
       ),
     );
-    ally.takeDamage(ally.hp, 10_000);
+    assert.equal(ally.isCrouching, false);
+
+    ally.takeDamage(ally.hp);
     ally.update(10, 20_000);
     assert.equal(ally.state, 'dead');
     assert.equal(ally.hp, 0);

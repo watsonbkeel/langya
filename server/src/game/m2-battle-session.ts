@@ -89,6 +89,7 @@ import {
 
 export interface M2PlayerConfig {
   readonly maxHp: number;
+  readonly initialHp: number;
   readonly moveSpeed: number;
   readonly crouchSpeed: number;
   readonly crouchHitboxMultiplier: number;
@@ -214,7 +215,6 @@ interface MutablePlayer {
   readonly weapons: PlayerWeaponInventory<M2PlayerWeaponConfig>;
   grenadesRemaining: number;
   medkitsRemaining: number;
-  medkitEndsAtMs: number | undefined;
 }
 
 interface EnemyRuntime<TRouteId extends string, TEnemyType extends string> {
@@ -314,7 +314,7 @@ export class M2BattleSession<
       id: options.playerId,
       name: options.playerName,
       maxHp: options.config.player.maxHp,
-      hp: options.config.player.maxHp,
+      hp: options.config.player.initialHp,
       position: {
         ...playerPosition,
         y: playerHeightM,
@@ -331,7 +331,6 @@ export class M2BattleSession<
       grenadesRemaining:
         options.config.player.defaultLoadout.throwableCount,
       medkitsRemaining: options.config.player.medkitCount,
-      medkitEndsAtMs: undefined,
     };
 
     for (const seat of this.room.seats) {
@@ -468,10 +467,6 @@ export class M2BattleSession<
     return this.getPlayerWeaponState();
   }
 
-  get playerIsUsingMedkit(): boolean {
-    return this.player.medkitEndsAtMs !== undefined;
-  }
-
   applyInput(message: InputStateMessage): boolean {
     const { payload } = message;
     if (
@@ -555,7 +550,7 @@ export class M2BattleSession<
 
     for (const event of enemyEvents) {
       if (event.type === 'shot') {
-        events.push(...this.resolveEnemyShot(event, nowMs));
+        events.push(...this.resolveEnemyShot(event));
       } else {
         events.push(event);
       }
@@ -656,33 +651,22 @@ export class M2BattleSession<
     if (this.player.hp === 0) {
       return 'dead';
     }
-    if (this.player.medkitEndsAtMs !== undefined) {
-      return 'invalid_state';
-    }
     if (this.machineGunController.getMounted(this.player.id)) {
       return 'invalid_state';
     }
     return this.player.weapons.switchTo(weaponId);
   }
 
-  usePlayerMedkit(nowMs: number): boolean {
-    return this.tryUsePlayerMedkit(nowMs) === undefined;
+  usePlayerMedkit(): boolean {
+    return this.tryUsePlayerMedkit() === undefined;
   }
 
-  tryUsePlayerMedkit(
-    nowMs: number,
-  ): ActionRejectReason | undefined {
+  tryUsePlayerMedkit(): ActionRejectReason | undefined {
     if (this.player.hp === 0) {
       return 'dead';
     }
     if (this.player.medkitsRemaining === 0) {
       return 'no_resource';
-    }
-    if (this.player.medkitEndsAtMs !== undefined) {
-      return 'invalid_state';
-    }
-    if (this.machineGunController.getMounted(this.player.id)) {
-      return 'invalid_state';
     }
     if (
       this.player.hp >
@@ -691,8 +675,10 @@ export class M2BattleSession<
       return 'unavailable';
     }
     this.player.medkitsRemaining -= 1;
-    this.player.medkitEndsAtMs =
-      nowMs + this.config.medkit.carriedUseSec * 1000;
+    this.player.hp = Math.min(
+      this.player.maxHp,
+      this.player.hp + this.config.medkit.carriedHeal,
+    );
     this.scoreTracker.recordMedkitUsed(this.player.id);
     return undefined;
   }
@@ -756,9 +742,6 @@ export class M2BattleSession<
     if (this.player.hp === 0) {
       return 'dead';
     }
-    if (this.player.medkitEndsAtMs !== undefined) {
-      return 'invalid_state';
-    }
     if (this.machineGunController.getMounted(this.player.id)) {
       return 'invalid_state';
     }
@@ -803,9 +786,6 @@ export class M2BattleSession<
   ): ActionRejectReason | undefined {
     if (this.player.hp === 0) {
       return 'dead';
-    }
-    if (this.player.medkitEndsAtMs !== undefined) {
-      return 'invalid_state';
     }
     const rejectReason = this.machineGunController.mount(
       mgId,
@@ -853,12 +833,6 @@ export class M2BattleSession<
     const { payload } = message;
     if (this.player.hp === 0) {
       return this.rejectFire(message, 'dead');
-    }
-    if (
-      this.config.medkit.carriedBlocksFire &&
-      this.player.medkitEndsAtMs !== undefined
-    ) {
-      return this.rejectFire(message, 'cooldown');
     }
     if (
       distanceBetween(payload.originPos, this.player.position) >
@@ -1047,9 +1021,6 @@ export class M2BattleSession<
         availableWeaponIds: this.player.weapons.availableWeaponIds,
         grenadesRemaining: this.player.grenadesRemaining,
         medkitsRemaining: this.player.medkitsRemaining,
-        ...(this.player.medkitEndsAtMs === undefined
-          ? {}
-          : { medkitEndsAtMs: this.player.medkitEndsAtMs }),
         ...(mountedMachineGun === undefined
           ? {}
           : { mountedMgId: mountedMachineGun.id }),
@@ -1073,9 +1044,6 @@ export class M2BattleSession<
           availableWeaponIds: [this.config.bot.weapon],
           grenadesRemaining: 0,
           medkitsRemaining: ally.medkitsRemaining,
-          ...(ally.medkitUseEndsAtMs === undefined
-            ? {}
-            : { medkitEndsAtMs: ally.medkitUseEndsAtMs }),
           weapon: this.getAllyWeaponState(ally),
         };
       }),
@@ -1277,7 +1245,6 @@ export class M2BattleSession<
 
   private resolveEnemyShot(
     shot: EnemyShotIntent,
-    nowMs: number,
   ): readonly M2BattleEvent<TRouteId>[] {
     const enemy = this.enemies.find(
       (candidate) => candidate.agent.id === shot.enemyId,
@@ -1362,10 +1329,10 @@ export class M2BattleSession<
     }
     const hpBeforeDamage = ally.hp;
     const medkitsBeforeDamage = ally.medkitsRemaining;
-    const died = ally.takeDamage(damage, nowMs);
+    const died = ally.takeDamage(damage);
     this.scoreTracker.recordDamageTaken(
       ally.id,
-      hpBeforeDamage - ally.hp,
+      Math.min(damage, hpBeforeDamage),
     );
     if (ally.medkitsRemaining < medkitsBeforeDamage) {
       this.scoreTracker.recordMedkitUsed(ally.id);
@@ -1451,16 +1418,6 @@ export class M2BattleSession<
 
   private updatePlayer(deltaSec: number, nowMs: number): void {
     this.player.weapons.update(nowMs);
-    if (
-      this.player.medkitEndsAtMs !== undefined &&
-      nowMs >= this.player.medkitEndsAtMs
-    ) {
-      this.player.hp = Math.min(
-        this.player.maxHp,
-        this.player.hp + this.config.medkit.carriedHeal,
-      );
-      this.player.medkitEndsAtMs = undefined;
-    }
     if (this.player.hp === 0) {
       return;
     }

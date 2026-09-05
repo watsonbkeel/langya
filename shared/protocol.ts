@@ -260,6 +260,7 @@ export interface AllyState {
   readonly availableWeaponIds: readonly string[];
   readonly grenadesRemaining: number;
   readonly medkitsRemaining: number;
+  /** @deprecated 随身血包已立即生效；服务端保留字段仅用于旧客户端类型兼容且不再发送。 */
   readonly medkitEndsAtMs?: number;
   readonly mountedMgId?: string;
   readonly weapon: WeaponState;

@@ -122,11 +122,10 @@ export function simulateM2Match(
     battle.update(tickDurationSec, tick, nowMs);
     maxAliveEnemies = Math.max(maxAliveEnemies, battle.aliveEnemyCount);
     battle.resupplyPlayerAmmo(nowMs);
-    battle.usePlayerMedkit(nowMs);
+    battle.usePlayerMedkit();
 
     if (
       battle.playerHp <= 0 ||
-      battle.playerIsUsingMedkit ||
       nowMs < nextPlayerFireAtMs
     ) {
       continue;
