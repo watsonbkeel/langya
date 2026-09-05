@@ -376,6 +376,21 @@ function isPresentationConfig(value: unknown): value is PresentationConfig {
   );
 }
 
+function normalizePresentationConfig(value: unknown): PresentationConfig | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  // 旧缓存的 presentation 资产没有帮助文字字号；沿用 HUD 字号即可安全兼容，
+  // 避免入口脚本与资源缓存短暂错位时整页黑屏。新资源仍优先使用自己的值。
+  const normalized: Record<string, unknown> = { ...value };
+  if (!isFiniteNumber(normalized.helpFontSizePx)) {
+    normalized.helpFontSizePx = normalized.hudFontSizePx;
+  }
+
+  return isPresentationConfig(normalized) ? normalized : null;
+}
+
 function loadJson(path: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
     resources.load(path, JsonAsset, (error, asset) => {
@@ -405,9 +420,10 @@ export async function loadM1GameConfig(): Promise<M1GameConfig> {
   if (!isWavesConfig(waves)) {
     throw new Error('waves.json 缺少同屏敌人上限');
   }
-  if (!isPresentationConfig(presentation)) {
+  const normalizedPresentation = normalizePresentationConfig(presentation);
+  if (!normalizedPresentation) {
     throw new Error('presentation.json 格式无效');
   }
 
-  return { gameplay, weapons, waves, presentation };
+  return { gameplay, weapons, waves, presentation: normalizedPresentation };
 }
