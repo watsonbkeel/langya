@@ -74,6 +74,7 @@ interface M1DebugState {
   readonly supplyEvents: number;
   readonly matchEnded: boolean;
   readonly scoreboardEntries: number;
+  readonly fps: number;
 }
 
 declare global {
@@ -139,6 +140,9 @@ export class M1Game {
   private supplyEvents = 0;
   private matchEnded = false;
   private scoreboardEntries = 0;
+  private fps = 0;
+  private fpsElapsedSec = 0;
+  private fpsFrames = 0;
   private nextMachineGunFireAtMs = 0;
 
   constructor(canvas: Node, config: M1GameConfig) {
@@ -270,6 +274,14 @@ export class M1Game {
   }
 
   update(deltaTime: number): void {
+    this.fpsElapsedSec += deltaTime;
+    this.fpsFrames += 1;
+    if (this.fpsElapsedSec >= 1) {
+      this.fps = Math.round(this.fpsFrames / this.fpsElapsedSec);
+      this.fpsElapsedSec = 0;
+      this.fpsFrames = 0;
+      this.publishDebugState();
+    }
     this.controller.update(deltaTime);
     this.inputAccumulatorSec += deltaTime;
     while (this.inputAccumulatorSec >= this.inputIntervalSec) {
@@ -750,6 +762,7 @@ export class M1Game {
       supplyEvents: this.supplyEvents,
       matchEnded: this.matchEnded,
       scoreboardEntries: this.scoreboardEntries,
+      fps: this.fps,
     };
   }
 
