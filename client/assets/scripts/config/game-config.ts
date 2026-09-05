@@ -28,7 +28,7 @@ export interface GameplayConfig {
     readonly machineGunMountRangeM: number;
   };
   readonly medkit: {
-    readonly carriedUseSec: number;
+    readonly carriedHeal: number;
   };
   readonly match: {
     readonly durationSec: number;
@@ -104,6 +104,8 @@ export interface PresentationConfig {
   readonly ammoOffsetXPx: number;
   readonly ammoOffsetYPx: number;
   readonly messageOffsetYPx: number;
+  readonly focusOffsetYPx: number;
+  readonly lowHealthOffsetYPx: number;
   readonly spectatorOffsetYPx: number;
   readonly allyPanelOffsetXPx: number;
   readonly allyPanelOffsetYPx: number;
@@ -122,11 +124,12 @@ export interface PresentationConfig {
   readonly interactionOffsetYPx: number;
   readonly inventoryOffsetYPx: number;
   readonly machineGunOffsetYPx: number;
-  readonly medkitProgressOffsetYPx: number;
-  readonly medkitProgressWidthPx: number;
-  readonly medkitProgressHeightPx: number;
   readonly medkitGlowColor: string;
-  readonly medkitGlowOpacity: number;
+  readonly medkitFlashOpacity: number;
+  readonly medkitFlashSec: number;
+  readonly lowHealthVignetteOpacity: number;
+  readonly lowHealthPulseOpacity: number;
+  readonly lowHealthPulseSec: number;
   readonly supplyColor: string;
   readonly weaponRackColor: string;
   readonly machineGunColor: string;
@@ -194,6 +197,8 @@ const PRESENTATION_NUMBER_KEYS = [
   'ammoOffsetXPx',
   'ammoOffsetYPx',
   'messageOffsetYPx',
+  'focusOffsetYPx',
+  'lowHealthOffsetYPx',
   'spectatorOffsetYPx',
   'allyPanelOffsetXPx',
   'allyPanelOffsetYPx',
@@ -212,10 +217,11 @@ const PRESENTATION_NUMBER_KEYS = [
   'interactionOffsetYPx',
   'inventoryOffsetYPx',
   'machineGunOffsetYPx',
-  'medkitProgressOffsetYPx',
-  'medkitProgressWidthPx',
-  'medkitProgressHeightPx',
-  'medkitGlowOpacity',
+  'medkitFlashOpacity',
+  'medkitFlashSec',
+  'lowHealthVignetteOpacity',
+  'lowHealthPulseOpacity',
+  'lowHealthPulseSec',
   'worldItemSizeM',
   'machineGunWidthM',
   'machineGunHeightM',
@@ -285,7 +291,7 @@ function isGameplayConfig(value: unknown): value is GameplayConfig {
     isFiniteNumber(arena.depthM) &&
     isFiniteNumber(arena.itemPickupRangeM) &&
     isFiniteNumber(arena.machineGunMountRangeM) &&
-    isFiniteNumber(medkit.carriedUseSec) &&
+    isFiniteNumber(medkit.carriedHeal) &&
     isFiniteNumber(match.durationSec) &&
     isFiniteNumber(match.deployPhaseSec)
   );

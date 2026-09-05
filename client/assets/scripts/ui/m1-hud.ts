@@ -50,10 +50,13 @@ export class M1Hud {
   private readonly healthLabel: Label;
   private readonly ammoLabel: Label;
   private readonly messageLabel: Label;
+  private readonly focusLabel: Label;
+  private readonly lowHealthLabel: Label;
   private readonly spectatorLabel: Label;
   private readonly hitLabel: Label;
   private readonly damageLabel: Label;
   private readonly vignetteOpacity: UIOpacity;
+  private readonly medkitFlashOpacity: UIOpacity;
   private readonly routeLabel: Label;
   private readonly calloutLabel: Label;
   private readonly matchLabel: Label;
@@ -61,9 +64,6 @@ export class M1Hud {
   private readonly interactionLabel: Label;
   private readonly inventoryLabel: Label;
   private readonly machineGunLabel: Label;
-  private readonly medkitLabel: Label;
-  private readonly medkitBar: Graphics;
-  private readonly medkitGlowOpacity: UIOpacity;
   private readonly gameplay: GameplayConfig;
   private readonly weapons: WeaponsConfig;
   private readonly allyLabels = new Map<number, Label>();
@@ -72,6 +72,8 @@ export class M1Hud {
   private readonly routeNames: Readonly<Record<RouteId, string>>;
   private weaponName = '步枪';
   private routeHighlightSequence = 0;
+  private lowHealthActive = false;
+  private medkitConfirmationPending = false;
   private calloutAudioContext: AudioContext | null = null;
 
   constructor(
@@ -112,12 +114,19 @@ export class M1Hud {
     );
     const helpLabel = this.createLabel(
       'Help',
-      'WASD 移动  左键射击  R 换弹  Q 换枪  G 手榴弹  H 血包  F 交互  Ctrl 蹲下',
+      '点击画面进入战斗 · WASD 移动 · 鼠标瞄准 · 左键射击 · Esc 释放鼠标\nR 换弹 · Q 切枪 · G 手榴弹 · H 立即使用血包 · F 交互/上下重机枪 · Ctrl 蹲下',
       presentation.hudFontSizePx,
       new Vec3(0, presentation.helpOffsetYPx, 0),
       '#DDE7EA',
     );
     this.fadeLabel(helpLabel, presentation.helpVisibleSec);
+    this.focusLabel = this.createLabel(
+      'CombatFocus',
+      '点击画面进入战斗\nWASD 移动 · 鼠标瞄准 · 左键射击',
+      presentation.hudFontSizePx,
+      new Vec3(0, presentation.focusOffsetYPx, 0),
+      '#C8F4FF',
+    );
     this.healthLabel = this.createLabel(
       'Health',
       '生命 --/--',
@@ -146,6 +155,13 @@ export class M1Hud {
       presentation.hudFontSizePx,
       new Vec3(0, presentation.messageOffsetYPx, 0),
       '#FFFFFF',
+    );
+    this.lowHealthLabel = this.createLabel(
+      'LowHealth',
+      '',
+      presentation.hudFontSizePx,
+      new Vec3(0, presentation.lowHealthOffsetYPx, 0),
+      '#FFB0A6',
     );
     this.spectatorLabel = this.createLabel(
       'Spectator',
@@ -228,18 +244,11 @@ export class M1Hud {
       new Vec3(0, presentation.machineGunOffsetYPx, 0),
       '#FFD56A',
     );
-    this.medkitLabel = this.createLabel(
-      'Medkit',
-      '',
-      presentation.hudFontSizePx,
-      new Vec3(0, presentation.medkitProgressOffsetYPx, 0),
+    this.vignetteOpacity = this.createDamageVignette();
+    this.medkitFlashOpacity = this.createEdgeFlash(
       presentation.medkitGlowColor,
     );
-    this.medkitBar = this.createMedkitBar();
-    this.medkitGlowOpacity = this.createMedkitGlow();
-
     this.createCrosshair();
-    this.vignetteOpacity = this.createDamageVignette();
   }
 
   renderConnection(status: ConnectionStatus): void {
@@ -264,10 +273,22 @@ export class M1Hud {
     }
   }
 
+  setCombatFocus(focused: boolean, message?: string): void {
+    this.focusLabel.string = focused
+      ? ''
+      : message ?? '点击画面进入战斗\nWASD 移动 · 鼠标瞄准 · 左键射击';
+  }
+
   updatePlayer(player: AllyState, weaponName: string): void {
     this.weaponName = weaponName;
     this.healthLabel.string = `生命 ${player.hp}/${player.maxHp}`;
     this.updateAmmo(player.weapon);
+    if (this.medkitConfirmationPending) {
+      this.medkitConfirmationPending = false;
+      this.messageLabel.string = `血包生效，生命 ${player.hp}/${player.maxHp}`;
+      this.fadeLabel(this.messageLabel, this.presentation.medkitFlashSec);
+    }
+    this.updateLowHealthWarning(player);
   }
 
   updateAmmo(weapon: WeaponState): void {
@@ -304,22 +325,9 @@ export class M1Hud {
     this.inventoryLabel.string = `${weapons.join(' / ')}  手榴弹×${player.grenadesRemaining}  血包×${player.medkitsRemaining}`;
   }
 
-  updateMedkit(player: AllyState, serverTimeMs: number): void {
-    const endsAtMs = player.medkitEndsAtMs;
-    if (endsAtMs === undefined || endsAtMs <= serverTimeMs) {
-      this.medkitLabel.string = '';
-      this.medkitGlowOpacity.opacity = 0;
-      this.drawMedkitProgress(0);
-      return;
-    }
-    const durationMs = this.gameplay.medkit.carriedUseSec * 1000;
-    const ratio = Math.min(
-      1,
-      Math.max(0, 1 - (endsAtMs - serverTimeMs) / durationMs),
-    );
-    this.medkitLabel.string = `正在使用血包 ${Math.round(ratio * 100)}%`;
-    this.medkitGlowOpacity.opacity = this.presentation.medkitGlowOpacity;
-    this.drawMedkitProgress(ratio);
+  showMovementConfirmed(): void {
+    this.messageLabel.string = '移动已生效';
+    this.fadeLabel(this.messageLabel, this.presentation.helpVisibleSec);
   }
 
   showWaveStart(waveIndex: number, totalWaves: number): void {
@@ -366,9 +374,15 @@ export class M1Hud {
   }
 
   showActionResult(payload: ActionResultPayload): void {
-    this.messageLabel.string = payload.accepted
-      ? `操作成功：${describeAction(payload.action)}`
-      : `操作失败：${describeAction(payload.action)} · ${payload.rejectReason}`;
+    if (payload.accepted) {
+      this.messageLabel.string = `操作成功：${describeAction(payload.action)}`;
+      if (payload.action === 'use_medkit') {
+        this.medkitConfirmationPending = true;
+        this.playMedkitFlash();
+      }
+      return;
+    }
+    this.messageLabel.string = `操作失败：${describeAction(payload.action)} · ${describeActionReject(payload.action, payload.rejectReason)}`;
   }
 
   showMatchEnd(payload: MatchEndPayload, playerId: string | null): void {
@@ -600,14 +614,81 @@ export class M1Hud {
     Tween.stopAllByTarget(this.vignetteOpacity);
     this.vignetteOpacity.opacity = 255;
     tween(this.vignetteOpacity)
-      .to(this.presentation.damageVignetteSec, { opacity: 0 })
+      .to(this.presentation.damageVignetteSec, {
+        opacity: this.lowHealthActive
+          ? this.presentation.lowHealthVignetteOpacity
+          : 0,
+      })
+      .call(() => {
+        if (this.lowHealthActive) {
+          this.startLowHealthPulse();
+        }
+      })
       .start();
   }
 
   destroy(): void {
+    Tween.stopAllByTarget(this.vignetteOpacity);
+    Tween.stopAllByTarget(this.medkitFlashOpacity);
     void this.calloutAudioContext?.close();
     this.calloutAudioContext = null;
     this.root.destroy();
+  }
+
+  private updateLowHealthWarning(player: AllyState): void {
+    const usableThreshold = player.maxHp - this.gameplay.medkit.carriedHeal;
+    const shouldWarn = player.hp > 0 && player.hp <= usableThreshold;
+    if (!shouldWarn) {
+      if (this.lowHealthActive) {
+        this.lowHealthActive = false;
+        this.lowHealthLabel.string = '';
+        Tween.stopAllByTarget(this.vignetteOpacity);
+        this.vignetteOpacity.opacity = 0;
+      }
+      return;
+    }
+
+    const wasActive = this.lowHealthActive;
+    this.lowHealthActive = true;
+    this.lowHealthLabel.string = player.medkitsRemaining > 0
+      ? '生命较低，按 H 使用血包'
+      : '生命危险，血包已用完';
+    if (!wasActive) {
+      this.startLowHealthPulse();
+    }
+  }
+
+  private startLowHealthPulse(): void {
+    if (!this.lowHealthActive) {
+      return;
+    }
+    Tween.stopAllByTarget(this.vignetteOpacity);
+    const halfPulseSec = this.presentation.lowHealthPulseSec / 2;
+    this.vignetteOpacity.opacity = this.presentation.lowHealthVignetteOpacity;
+    tween(this.vignetteOpacity)
+      .to(halfPulseSec, {
+        opacity: this.presentation.lowHealthPulseOpacity,
+      })
+      .to(halfPulseSec, {
+        opacity: this.presentation.lowHealthVignetteOpacity,
+      })
+      .repeatForever()
+      .start();
+  }
+
+  private playMedkitFlash(): void {
+    Tween.stopAllByTarget(this.vignetteOpacity);
+    this.vignetteOpacity.opacity = 0;
+    Tween.stopAllByTarget(this.medkitFlashOpacity);
+    this.medkitFlashOpacity.opacity = this.presentation.medkitFlashOpacity;
+    tween(this.medkitFlashOpacity)
+      .to(this.presentation.medkitFlashSec, { opacity: 0 })
+      .call(() => {
+        if (this.lowHealthActive) {
+          this.startLowHealthPulse();
+        }
+      })
+      .start();
   }
 
   private describeAllyState(state: AllyAiState | undefined): string {
@@ -690,60 +771,6 @@ export class M1Hud {
     graphics.stroke();
   }
 
-  private createMedkitBar(): Graphics {
-    const node = new Node('MedkitProgressBar');
-    this.setUiLayer(node);
-    node.setParent(this.root);
-    node.setPosition(
-      0,
-      this.presentation.medkitProgressOffsetYPx -
-        this.presentation.medkitProgressHeightPx,
-      0,
-    );
-    const graphics = node.addComponent(Graphics);
-    this.drawMedkitProgress(0, graphics);
-    return graphics;
-  }
-
-  private createMedkitGlow(): UIOpacity {
-    const node = new Node('MedkitGlow');
-    this.setUiLayer(node);
-    node.setParent(this.root);
-    const graphics = node.addComponent(Graphics);
-    graphics.fillColor = Color.fromHEX(
-      new Color(),
-      this.presentation.medkitGlowColor,
-    );
-    graphics.rect(
-      -this.presentation.designWidth / 2,
-      -this.presentation.designHeight / 2,
-      this.presentation.designWidth,
-      this.presentation.designHeight,
-    );
-    graphics.fill();
-    const opacity = node.addComponent(UIOpacity);
-    opacity.opacity = 0;
-    return opacity;
-  }
-
-  private drawMedkitProgress(ratio: number, graphics = this.medkitBar): void {
-    graphics.clear();
-    const width = this.presentation.medkitProgressWidthPx;
-    const height = this.presentation.medkitProgressHeightPx;
-    graphics.fillColor = Color.fromHEX(new Color(), '#25312A');
-    graphics.rect(-width / 2, -height / 2, width, height);
-    graphics.fill();
-    if (ratio <= 0) {
-      return;
-    }
-    graphics.fillColor = Color.fromHEX(
-      new Color(),
-      this.presentation.medkitGlowColor,
-    );
-    graphics.rect(-width / 2, -height / 2, width * ratio, height);
-    graphics.fill();
-  }
-
   private createReportLabel(
     parent: Node,
     text: string,
@@ -771,6 +798,25 @@ export class M1Hud {
     node.setParent(this.root);
     const graphics = node.addComponent(Graphics);
     graphics.strokeColor = Color.fromHEX(new Color(), '#B62929');
+    graphics.lineWidth = this.presentation.crosshairSizePx;
+    graphics.rect(
+      -this.presentation.designWidth / 2,
+      -this.presentation.designHeight / 2,
+      this.presentation.designWidth,
+      this.presentation.designHeight,
+    );
+    graphics.stroke();
+    const opacity = node.addComponent(UIOpacity);
+    opacity.opacity = 0;
+    return opacity;
+  }
+
+  private createEdgeFlash(colorHex: string): UIOpacity {
+    const node = new Node('EdgeFlash');
+    this.setUiLayer(node);
+    node.setParent(this.root);
+    const graphics = node.addComponent(Graphics);
+    graphics.strokeColor = Color.fromHEX(new Color(), colorHex);
     graphics.lineWidth = this.presentation.crosshairSizePx;
     graphics.rect(
       -this.presentation.designWidth / 2,
@@ -844,5 +890,26 @@ function describeAction(action: ActionResultPayload['action']): string {
       return '下重机枪';
     case 'throw_grenade':
       return '投掷手榴弹';
+  }
+}
+
+function describeActionReject(
+  action: ActionResultPayload['action'],
+  reason: Extract<ActionResultPayload, { readonly accepted: false }>['rejectReason'],
+): string {
+  if (action !== 'use_medkit') {
+    return reason;
+  }
+  switch (reason) {
+    case 'unavailable':
+      return '当前生命值无需使用血包';
+    case 'no_resource':
+      return '血包已用完';
+    case 'invalid_state':
+      return '当前状态无法使用血包';
+    case 'dead':
+      return '阵亡后无法使用血包';
+    default:
+      return reason;
   }
 }

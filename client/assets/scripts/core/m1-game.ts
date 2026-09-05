@@ -26,7 +26,7 @@ import type {
 import type { M1GameConfig } from '../config/game-config';
 import { AllyRenderer } from '../ally/ally-renderer';
 import { EnemyRenderer } from '../enemy/enemy-renderer';
-import { NetClient } from '../net/net-client';
+import { NetClient, type InputState } from '../net/net-client';
 import { FirstPersonController } from '../player/first-person-controller';
 import {
   M3WorldInteractions,
@@ -38,6 +38,9 @@ import { WeaponView } from '../weapon/weapon-view';
 interface M1DebugState {
   readonly connected: boolean;
   readonly playerAlive: boolean;
+  readonly pointerLocked: boolean;
+  readonly playerPosition: Vector3 | null;
+  readonly lastInputState: InputState | null;
   readonly lastDisconnectCode: number | null;
   readonly lastDisconnectReason: string | null;
   readonly snapshotTick: number;
@@ -90,11 +93,16 @@ export class M1Game {
   private readonly netClient: NetClient;
   private readonly worldInteractions: M3WorldInteractions;
   private readonly pendingShots = new Map<number, number>();
+  private readonly inputIntervalSec: number;
+  private inputAccumulatorSec = 0;
   private clientId: string | null = null;
   private playerPosition: Vector3 | null = null;
   private weaponState: WeaponState | null = null;
   private availableWeaponIds: readonly string[] = [];
   private previousHp: number | null = null;
+  private previousAuthoritativePosition: Vector3 | null = null;
+  private movementConfirmed = false;
+  private lastInputState: InputState | null = null;
   private connected = false;
   private lastDisconnectCode: number | null = null;
   private lastDisconnectReason: string | null = null;
@@ -133,6 +141,7 @@ export class M1Game {
 
   constructor(canvas: Node, config: M1GameConfig) {
     this.config = config;
+    this.inputIntervalSec = 1 / config.gameplay.server.tickRateHz;
     view.setDesignResolutionSize(
       config.presentation.designWidth,
       config.presentation.designHeight,
@@ -181,6 +190,10 @@ export class M1Game {
         onUseMedkit: () => this.useMedkit(),
         onThrowGrenade: () => this.throwGrenade(),
         onInteract: () => this.interact(),
+        onFocusChanged: (focused, message) => {
+          this.hud.setCombatFocus(focused, message);
+          this.publishDebugState();
+        },
       },
     );
     this.netClient = new NetClient({
@@ -242,6 +255,20 @@ export class M1Game {
 
   update(deltaTime: number): void {
     this.controller.update(deltaTime);
+    this.inputAccumulatorSec += deltaTime;
+    while (this.inputAccumulatorSec >= this.inputIntervalSec) {
+      this.inputAccumulatorSec -= this.inputIntervalSec;
+      if (
+        this.connected &&
+        this.playerAlive &&
+        !this.matchEnded &&
+        this.matchPhase !== 'ended'
+      ) {
+        const inputState = this.controller.getInputState();
+        this.lastInputState = inputState;
+        this.netClient.sendInput(inputState);
+      }
+    }
     this.enemyRenderer.update(deltaTime);
     this.allyRenderer.update(deltaTime);
     if (this.mountedMachineGun && this.controller.isFireHeld()) {
@@ -345,6 +372,16 @@ export class M1Game {
     }
     this.previousHp = player.hp;
     this.playerPosition = { ...player.position };
+    if (
+      !this.movementConfirmed &&
+      this.previousAuthoritativePosition &&
+      (this.previousAuthoritativePosition.x !== player.position.x ||
+        this.previousAuthoritativePosition.z !== player.position.z)
+    ) {
+      this.movementConfirmed = true;
+      this.hud.showMovementConfirmed();
+    }
+    this.previousAuthoritativePosition = { ...player.position };
     this.weaponState = { ...player.weapon };
     this.availableWeaponIds = player.availableWeaponIds.slice();
     this.medkitsRemaining = player.medkitsRemaining;
@@ -359,7 +396,6 @@ export class M1Game {
       player.weapon.weaponId;
     this.hud.updatePlayer(player, weaponName);
     this.hud.updateInventory(player);
-    this.hud.updateMedkit(player, message.payload.serverTimeMs);
     this.interactionTarget = this.worldInteractions.findInteraction(
       player.position,
       player.mountedMgId,
@@ -397,13 +433,6 @@ export class M1Game {
       this.hud.showReady(message.payload.enemies.length);
     }
 
-    if (
-      this.playerAlive &&
-      message.payload.match.phase !== 'ended' &&
-      !this.matchEnded
-    ) {
-      this.netClient.sendInput(this.controller.getInputState());
-    }
     this.publishDebugState();
   }
 
@@ -660,6 +689,11 @@ export class M1Game {
     return {
       connected: this.connected,
       playerAlive: this.playerAlive,
+      pointerLocked: this.controller.isPointerLocked(),
+      playerPosition: this.playerPosition
+        ? { ...this.playerPosition }
+        : null,
+      lastInputState: this.lastInputState,
       lastDisconnectCode: this.lastDisconnectCode,
       lastDisconnectReason: this.lastDisconnectReason,
       snapshotTick: this.snapshotTick,

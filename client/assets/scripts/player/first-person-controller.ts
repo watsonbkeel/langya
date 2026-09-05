@@ -25,6 +25,7 @@ export interface FirstPersonActions {
   readonly onUseMedkit: () => void;
   readonly onThrowGrenade: () => void;
   readonly onInteract: () => void;
+  readonly onFocusChanged: (focused: boolean, message?: string) => void;
 }
 
 interface MountedAimLimits {
@@ -87,6 +88,10 @@ export class FirstPersonController {
         'pointerlockchange',
         this.onPointerLockChange,
       );
+      document.addEventListener(
+        'pointerlockerror',
+        this.onPointerLockError,
+      );
     }
   }
 
@@ -138,6 +143,15 @@ export class FirstPersonController {
 
   isFireHeld(): boolean {
     return !this.spectatorMode && this.fireHeld;
+  }
+
+  isPointerLocked(): boolean {
+    const canvas = game.canvas;
+    return Boolean(
+      canvas &&
+        typeof document !== 'undefined' &&
+        document.pointerLockElement === canvas,
+    );
   }
 
   setSpectatorTarget(
@@ -209,6 +223,10 @@ export class FirstPersonController {
         'pointerlockchange',
         this.onPointerLockChange,
       );
+      document.removeEventListener(
+        'pointerlockerror',
+        this.onPointerLockError,
+      );
     }
     this.cameraNode.destroy();
   }
@@ -218,6 +236,9 @@ export class FirstPersonController {
       if (event.keyCode === KeyCode.KEY_Q) {
         this.actions.onSwitchWeapon();
       }
+      return;
+    }
+    if (!this.isPointerLocked()) {
       return;
     }
     const firstPress = !this.pressedKeys.has(event.keyCode);
@@ -294,17 +315,40 @@ export class FirstPersonController {
 
     const canvas = game.canvas;
     if (canvas && typeof document !== 'undefined') {
+      canvas.focus();
       const isLocked = document.pointerLockElement === canvas;
-      if (!isLocked && !this.pointerLockAttempted) {
-        this.pointerLockAttempted = true;
-        this.ignoreMouseUntilMs =
-          performance.now() +
-          this.presentation.pointerLockSettleSec * 1000;
-        void canvas.requestPointerLock().catch(() => {
-          // 内嵌浏览器可能禁用 Pointer Lock，下一次点击会走兼容开火路径。
-        });
+      if (!isLocked) {
+        if (!this.pointerLockAttempted) {
+          this.pointerLockAttempted = true;
+          this.ignoreMouseUntilMs =
+            performance.now() +
+            this.presentation.pointerLockSettleSec * 1000;
+          try {
+            const request = canvas.requestPointerLock();
+            void request?.catch(() => {
+              this.pointerLockAttempted = false;
+              this.actions.onFocusChanged(
+                false,
+                '浏览器未能锁定鼠标，请再次点击画面重试',
+              );
+            });
+          } catch {
+            this.pointerLockAttempted = false;
+            this.actions.onFocusChanged(
+              false,
+              '浏览器未能锁定鼠标，请再次点击画面重试',
+            );
+          }
+        }
+        this.actions.onFocusChanged(
+          false,
+          '点击画面进入战斗（需要锁定鼠标）',
+        );
         return;
       }
+    }
+    if (!this.isPointerLocked()) {
+      return;
     }
     this.fireHeld = true;
     this.actions.onFire();
@@ -320,5 +364,22 @@ export class FirstPersonController {
     this.pointerLockAttempted = false;
     this.ignoreMouseUntilMs =
       performance.now() + this.presentation.pointerLockSettleSec * 1000;
+    this.fireHeld = false;
+    if (this.isPointerLocked()) {
+      this.actions.onFocusChanged(true);
+    } else {
+      this.pressedKeys.clear();
+      this.actions.onFocusChanged(false, '鼠标已释放，点击画面继续');
+    }
+  };
+
+  private readonly onPointerLockError = (): void => {
+    this.pointerLockAttempted = false;
+    this.fireHeld = false;
+    this.pressedKeys.clear();
+    this.actions.onFocusChanged(
+      false,
+      '浏览器未能锁定鼠标，请再次点击画面重试',
+    );
   };
 }
