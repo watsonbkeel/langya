@@ -26,6 +26,48 @@
       <canvas id="GameCanvas" oncontextmenu="event.preventDefault()" tabindex="99"></canvas>
     </div>
   </div>
+  <script>
+    // 用页面 build 参数给动态资源加版本串，避免入口脚本与配置资产跨版本缓存。
+    (function () {
+      var build = new URLSearchParams(window.location.search).get('build');
+      if (!build) return;
+      var appendBuild = function (value) {
+        if (typeof value !== 'string') return value;
+        try {
+          var url = new URL(value, window.location.href);
+          if (url.origin !== window.location.origin) return value;
+          if (!/^\/(src|assets|cocos-js)\//.test(url.pathname)) return value;
+          url.searchParams.set('build', build);
+          return url.toString();
+        } catch (_) {
+          return value;
+        }
+      };
+      var originalOpen = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function (method, url) {
+        arguments[1] = appendBuild(url);
+        return originalOpen.apply(this, arguments);
+      };
+      var originalAppendChild = Node.prototype.appendChild;
+      Node.prototype.appendChild = function (node) {
+        if (node && node.tagName === 'SCRIPT' && node.src) {
+          node.src = appendBuild(node.src);
+        }
+        return originalAppendChild.call(this, node);
+      };
+      if (typeof window.fetch === 'function') {
+        var originalFetch = window.fetch;
+        window.fetch = function (input, init) {
+          if (typeof input === 'string') {
+            input = appendBuild(input);
+          } else if (input && input.url && typeof Request === 'function') {
+            input = new Request(appendBuild(input.url), input);
+          }
+          return originalFetch.call(this, input, init);
+        };
+      }
+    }());
+  </script>
   <%- include(cocosTemplate, {}) %>
 </body>
 </html>
