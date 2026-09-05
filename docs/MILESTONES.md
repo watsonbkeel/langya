@@ -471,6 +471,16 @@ Node.js 22.23.2 下配置校验、TypeScript 检查、98 项服务端测试和�
 补充边界测试明确验证 HP 等于 `maxHp - carriedHeal` 时允许使用、回血不超过
 `maxHp`，以及连续快速请求在血包耗尽后稳定返回 `no_resource`、剩余数量不为负。
 
+2026-09-05：拉取并校验 Mac 试玩修复提交 `99fc216`，发布
+`langya-web-mobile-m3-playtest-fix.tgz`，归档 SHA-256 为
+`f0273a06395bed60da258fb9c5b850ae3a7ac2973ead0614b6198edfc2179d3f`。
+静态包覆盖发布后，Cocos 配置副本与 `shared/config` 一致；未修改
+`client/**` 源码。Node.js 22.23.2 下配置校验、client check-config、
+TypeScript 检查、98 项服务端测试、生产构建、Nginx 校验及本机直连、
+本机 Nginx、Tailscale 直连、Tailscale Nginx 四路径 M0–M3 联调全部通过。
+现行权威服务保持为 PM2 `langyashan-server`，PID `3967390`，于
+`2026-09-05T14:29:54+08:00` 重载，状态 online。
+
 #### 交付
 
 2026-09-05 统一交付地址：`http://100.74.3.56:8080/?build=fc67c72`
