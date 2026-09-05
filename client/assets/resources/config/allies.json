@@ -1,0 +1,52 @@
+{
+  "_comment": "AI 队友数值。对应 PRD 2.5 / 5.6。核心原则：能帮忙但不能抢戏",
+  "seatCount": 5,
+  "heroNames": ["马宝玉", "葛振林", "宋学义", "胡德林", "胡福才"],
+  "playerDefaultSeat": 0,
+  "bot": {
+    "hp": 100,
+    "weapon": "liaoshi13",
+    "canSwitchWeapon": false,
+    "fireRate": 0.7,
+    "accuracy": 0.55,
+    "accuracyLongRange": 0.35,
+    "longRangeThresholdM": 120,
+    "reactionDelaySec": 0.6,
+    "medkitCount": 1,
+    "medkitAutoUseThreshold": 0.3,
+    "canUseHMG": false,
+    "canPickupSupply": false,
+    "canRespawn": false,
+    "eligibleForMVP": false,
+    "moveSpeed": 4.0,
+    "assets": {
+      "sprite": "chars/cn-soldier/idle"
+    }
+  },
+  "deployment": {
+    "mode": "route-guard",
+    "defaultAssignment": { "A": 1, "B": 2, "C": 1 },
+    "playerRouteDetectSec": 8,
+    "reassignCooldownSec": 5,
+    "comment": "队友分守三条路线，不跟随玩家。玩家长时间驻守某路线时队友自动调往其他路线"
+  },
+  "callout": {
+    "enabled": true,
+    "enemyThreshold": 5,
+    "cooldownSec": 8,
+    "templates": {
+      "routeThreat": "{name}：{route}上来了！",
+      "lowHealth": "{name}：我这边顶不住了！",
+      "holdingWell": "{name}：这边稳住了！",
+      "allyDown": "{name}……牺牲了。"
+    },
+    "comment": "喊话是单人模式看不住三路的信息补偿，配合 HUD 路线指示器闪烁"
+  },
+  "calibration": {
+    "targetKillRatio": 0.4,
+    "maxKillRatio": 0.5,
+    "minAvgSurvivalSec": 180,
+    "comment": "M2 阶段必须实测。4 名队友合计歼敌占比超过 0.5 时，按 命中率 > 射速 > 反应延迟 的顺序下调",
+    "tuningOrder": ["accuracy", "fireRate", "reactionDelaySec", "medkitCount"]
+  }
+}

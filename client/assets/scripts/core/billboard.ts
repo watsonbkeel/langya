@@ -1,0 +1,107 @@
+import {
+  Color,
+  Material,
+  Mesh,
+  Node,
+  MeshRenderer,
+  primitives,
+  resources,
+  SpriteFrame,
+  Texture2D,
+  utils,
+} from 'cc';
+
+export function loadTexture(
+  path: string,
+  onLoaded: (texture: Texture2D) => void,
+): void {
+  // PNG 在 Cocos 运行时以 ImageAsset 暴露，显式加载其 texture 子资源。
+  resources.load(`${path}/texture`, Texture2D, (error, texture) => {
+    if (error || !texture) {
+      return;
+    }
+    onLoaded(texture);
+  });
+}
+
+export function loadSpriteFrame(
+  path: string,
+  onLoaded: (frame: SpriteFrame) => void,
+): void {
+  loadTexture(path, (texture) => {
+    const frame = new SpriteFrame();
+    frame.texture = texture;
+    onLoaded(frame);
+  });
+}
+
+export function createBillboard(
+  parent: Node,
+  texture: Texture2D | null,
+  mesh: Mesh,
+  material: Material,
+): MeshRenderer {
+  const node = new Node('Billboard');
+  node.setParent(parent);
+  // 角色根节点同时承担碰撞盒尺寸，通常会被压成“半宽高”的长方体。
+  // 立绘本身是方形透明 PNG，因此在子节点上补回横向比例，避免远景
+  // 看起来像一条竖线；这只影响视觉，不改变根节点的命中盒。
+  node.setScale(2, 1, 1);
+  const renderer = node.addComponent(MeshRenderer);
+  renderer.mesh = mesh;
+  renderer.setSharedMaterial(material, 0);
+  if (texture) {
+    material.setProperty('mainTexture', texture);
+  }
+  return renderer;
+}
+
+export function createBillboardMesh(): Mesh {
+  return utils.createMesh(
+    primitives.quad({ includeNormal: true, includeUV: true }),
+  );
+}
+
+export function createBillboardMaterial(): Material {
+  const material = new Material();
+  material.initialize({
+    effectName: 'builtin-unlit',
+    defines: { USE_TEXTURE: true },
+  });
+  material.setProperty('mainColor', Color.WHITE);
+  const target = material.passes[0]?.blendState.targets[0];
+  if (target) {
+    // BlendFactor 在 Cocos 3.8 的运行时导出未包含在 `cc` 公共类型中，
+    // 这里使用引擎枚举的固定序号：SRC_ALPHA=2、ONE_MINUS_SRC_ALPHA=4。
+    target.blend = true;
+    target.blendSrc = 2 as typeof target.blendSrc;
+    target.blendDst = 4 as typeof target.blendDst;
+    target.blendSrcAlpha = 1 as typeof target.blendSrcAlpha;
+    target.blendDstAlpha = 4 as typeof target.blendDstAlpha;
+  }
+  return material;
+}
+
+export function faceBillboardToCamera(
+  node: Node,
+  cameraNode: Node | null,
+): void {
+  if (!cameraNode) {
+    return;
+  }
+
+  const cameraPosition = cameraNode.worldPosition;
+  const nodePosition = node.worldPosition;
+  const deltaX = cameraPosition.x - nodePosition.x;
+  const deltaZ = cameraPosition.z - nodePosition.z;
+  if (deltaX * deltaX + deltaZ * deltaZ < 0.0001) {
+    return;
+  }
+
+  // Billboard 只绕 Y 轴朝向摄像机，保持角色始终直立。
+  node.setRotationFromEuler(
+    0,
+    (Math.atan2(deltaX, deltaZ) * 180) / Math.PI,
+    0,
+  );
+}

@@ -47,6 +47,7 @@ MAPPING = {
     "zb26": "zb26",
     "bren": "bren",
     "type38": "type38",
+    "type96-lmg": "jp-lmg",
     "type92-hmg": "type92-hmg",
     "手榴弹": "grenade",          # 中文目录必须改英文名
 }

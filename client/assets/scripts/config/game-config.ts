@@ -38,6 +38,10 @@ export interface GameplayConfig {
 
 export interface WeaponPresentationConfig {
   readonly displayName: string;
+  readonly assets: {
+    readonly firstPerson?: string;
+    readonly icon?: string;
+  };
 }
 
 export interface WeaponsConfig {
@@ -47,6 +51,10 @@ export interface WeaponsConfig {
       string,
       {
         readonly displayName: string;
+        readonly assets: {
+          readonly firstPerson?: string;
+          readonly icon?: string;
+        };
         readonly fireRate: number;
         readonly yawLimitDeg: number;
         readonly pitchMinDeg: number;
@@ -66,6 +74,34 @@ export interface WavesConfig {
       }
     >
   >;
+}
+
+export interface AlliesAssetsConfig {
+  readonly bot: {
+    readonly assets: {
+      readonly sprite: string;
+    };
+  };
+}
+
+export interface EnemiesAssetsConfig {
+  readonly units: {
+    readonly rifleman: {
+      readonly assets: {
+        readonly sprite: string;
+      };
+    };
+    readonly machineGunner: {
+      readonly assets: {
+        readonly sprite: string;
+      };
+    };
+    readonly assault: {
+      readonly assets: {
+        readonly sprite: string;
+      };
+    };
+  };
 }
 
 export interface PresentationConfig {
@@ -168,6 +204,8 @@ export interface M1GameConfig {
   readonly gameplay: GameplayConfig;
   readonly weapons: WeaponsConfig;
   readonly waves: WavesConfig;
+  readonly allies: AlliesAssetsConfig;
+  readonly enemies: EnemiesAssetsConfig;
   readonly presentation: PresentationConfig;
 }
 
@@ -312,7 +350,8 @@ function isWeaponsConfig(value: unknown): value is WeaponsConfig {
     const weapon = value.player[weaponId];
     if (
       !isRecord(weapon) ||
-      typeof weapon.displayName !== 'string'
+      typeof weapon.displayName !== 'string' ||
+      !isRecord(weapon.assets)
     ) {
       return false;
     }
@@ -322,6 +361,7 @@ function isWeaponsConfig(value: unknown): value is WeaponsConfig {
     if (
       !isRecord(weapon) ||
       typeof weapon.displayName !== 'string' ||
+      !isRecord(weapon.assets) ||
       !isFiniteNumber(weapon.fireRate) ||
       !isFiniteNumber(weapon.yawLimitDeg) ||
       !isFiniteNumber(weapon.pitchMinDeg) ||
@@ -346,6 +386,25 @@ function isWavesConfig(value: unknown): value is WavesConfig {
   return routeIds.every((routeId) => {
     const route = routes[routeId];
     return isRecord(route) && typeof route.name === 'string';
+  });
+}
+
+function isAlliesAssetsConfig(value: unknown): value is AlliesAssetsConfig {
+  if (!isRecord(value) || !isRecord(value.bot) || !isRecord(value.bot.assets)) {
+    return false;
+  }
+  return typeof value.bot.assets.sprite === 'string';
+}
+
+function isEnemiesAssetsConfig(value: unknown): value is EnemiesAssetsConfig {
+  if (!isRecord(value) || !isRecord(value.units)) {
+    return false;
+  }
+  const units = value.units;
+  return ['rifleman', 'machineGunner', 'assault'].every((unitId) => {
+    const unit = units[unitId];
+    return isRecord(unit) && isRecord(unit.assets) &&
+      typeof unit.assets.sprite === 'string';
   });
 }
 
@@ -404,10 +463,12 @@ function loadJson(path: string): Promise<unknown> {
 }
 
 export async function loadM1GameConfig(): Promise<M1GameConfig> {
-  const [gameplay, weapons, waves, presentation] = await Promise.all([
+  const [gameplay, weapons, waves, allies, enemies, presentation] = await Promise.all([
     loadJson('config/gameplay'),
     loadJson('config/weapons'),
     loadJson('config/waves'),
+    loadJson('config/allies'),
+    loadJson('config/enemies'),
     loadJson('config/presentation'),
   ]);
 
@@ -420,10 +481,23 @@ export async function loadM1GameConfig(): Promise<M1GameConfig> {
   if (!isWavesConfig(waves)) {
     throw new Error('waves.json 缺少同屏敌人上限');
   }
+  if (!isAlliesAssetsConfig(allies)) {
+    throw new Error('allies.json 缺少角色素材路径');
+  }
+  if (!isEnemiesAssetsConfig(enemies)) {
+    throw new Error('enemies.json 缺少角色素材路径');
+  }
   const normalizedPresentation = normalizePresentationConfig(presentation);
   if (!normalizedPresentation) {
     throw new Error('presentation.json 格式无效');
   }
 
-  return { gameplay, weapons, waves, presentation: normalizedPresentation };
+  return {
+    gameplay,
+    weapons,
+    waves,
+    allies,
+    enemies,
+    presentation: normalizedPresentation,
+  };
 }

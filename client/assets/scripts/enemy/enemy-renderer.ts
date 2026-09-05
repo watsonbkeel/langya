@@ -5,6 +5,7 @@ import {
   MeshRenderer,
   Node,
   primitives,
+  Texture2D,
   tween,
   Tween,
   utils,
@@ -19,6 +20,13 @@ import type {
   GameplayConfig,
   PresentationConfig,
 } from '../config/game-config';
+import {
+  createBillboard,
+  createBillboardMaterial,
+  createBillboardMesh,
+  faceBillboardToCamera,
+  loadTexture,
+} from '../core/billboard';
 
 export class EnemyRenderer {
   private readonly worldRoot: Node;
@@ -27,8 +35,13 @@ export class EnemyRenderer {
   private readonly engageMaterial: Material;
   private readonly hitMaterial: Material;
   private readonly warningMaterial: Material;
+  private readonly billboardMesh: Mesh;
+  private readonly billboardMaterial: Material;
   private readonly gameplay: GameplayConfig;
   private readonly presentation: PresentationConfig;
+  private readonly enemySpritePath: string;
+  private enemyTexture: Texture2D | null = null;
+  private cameraNode: Node | null = null;
   private readonly pool: Node[] = [];
   private readonly activeEnemies = new Map<string, Node>();
   private readonly enemyStates = new Map<string, EnemyAiState>();
@@ -42,9 +55,11 @@ export class EnemyRenderer {
     gameplay: GameplayConfig,
     presentation: PresentationConfig,
     poolSize: number,
+    enemySpritePath: string,
   ) {
     this.gameplay = gameplay;
     this.presentation = presentation;
+    this.enemySpritePath = enemySpritePath;
     this.worldRoot = new Node('M1World');
     this.worldRoot.setParent(sceneRoot);
     this.boxMesh = utils.createMesh(
@@ -58,6 +73,21 @@ export class EnemyRenderer {
     this.warningMaterial = this.createMaterial(
       presentation.fireWarningColor,
     );
+    this.billboardMesh = createBillboardMesh();
+    this.billboardMaterial = createBillboardMaterial();
+    loadTexture(this.enemySpritePath, (texture) => {
+      if (!this.worldRoot.isValid) {
+        return;
+      }
+      this.enemyTexture = texture;
+      this.billboardMaterial.setProperty('mainTexture', texture);
+      for (const node of this.activeEnemies.values()) {
+        const placeholder = node.getComponent(MeshRenderer);
+        if (placeholder) {
+          placeholder.enabled = false;
+        }
+      }
+    });
     this.createGround();
 
     for (let index = 0; index < poolSize; index += 1) {
@@ -119,6 +149,10 @@ export class EnemyRenderer {
       -this.presentation.entityPositionSmoothing * deltaTime,
     );
     for (const [enemyId, node] of this.activeEnemies) {
+      faceBillboardToCamera(
+        node.getChildByName('Billboard') ?? node,
+        this.cameraNode,
+      );
       const targetPosition = this.targetPositions.get(enemyId);
       const targetScale = this.targetScales.get(enemyId);
       if (!targetPosition || !targetScale) {
@@ -178,6 +212,10 @@ export class EnemyRenderer {
     return count;
   }
 
+  setCameraNode(cameraNode: Node): void {
+    this.cameraNode = cameraNode;
+  }
+
   destroy(): void {
     this.activeEnemies.clear();
     this.enemyStates.clear();
@@ -189,6 +227,8 @@ export class EnemyRenderer {
     this.engageMaterial.destroy();
     this.hitMaterial.destroy();
     this.warningMaterial.destroy();
+    this.billboardMesh.destroy();
+    this.billboardMaterial.destroy();
   }
 
   private createGround(): void {
@@ -214,6 +254,13 @@ export class EnemyRenderer {
     const renderer = node.addComponent(MeshRenderer);
     renderer.mesh = this.boxMesh;
     renderer.setSharedMaterial(this.enemyMaterial, 0);
+    createBillboard(
+      node,
+      this.enemyTexture,
+      this.billboardMesh,
+      this.billboardMaterial,
+    );
+    renderer.enabled = this.enemyTexture === null;
 
     const warning = new Node('FireWarning');
     warning.setParent(node);
@@ -239,6 +286,10 @@ export class EnemyRenderer {
     Tween.stopAllByTarget(node);
     node.name = `Enemy:${enemyId}`;
     node.active = true;
+    const placeholder = node.getComponent(MeshRenderer);
+    if (placeholder) {
+      placeholder.enabled = this.enemyTexture === null;
+    }
     node
       .getComponent(MeshRenderer)
       ?.setSharedMaterial(this.enemyMaterial, 0);

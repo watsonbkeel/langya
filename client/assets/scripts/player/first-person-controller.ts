@@ -154,6 +154,10 @@ export class FirstPersonController {
     );
   }
 
+  getCameraNode(): Node {
+    return this.cameraNode;
+  }
+
   setSpectatorTarget(
     position: Vector3,
     aimYaw: number,

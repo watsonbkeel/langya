@@ -1,0 +1,64 @@
+{
+  "_comment": "日军单位数值。对应 PRD 5.3。敌方无血包、无治疗、无复活",
+  "sharedRules": {
+    "hasMedkit": false,
+    "canHeal": false,
+    "canRespawn": false,
+    "fireWarningSec": 0.35,
+    "maxEngageRangeM": 180,
+    "damageFalloffStartM": 120,
+    "damageFalloffMultiplier": 0.6,
+    "targetSwitchOnHitChance": 0.6,
+    "comment": "fireWarningSec 是枪口焰到实际伤害的延迟，给玩家反应窗口"
+  },
+  "units": {
+    "rifleman": {
+      "displayName": "步枪兵",
+      "hp": 100,
+      "weapon": "type38",
+      "moveSpeed": 3.2,
+      "behavior": "bounding-advance",
+      "advanceSec": 2.0,
+      "engageSec": 1.5,
+      "usesCover": true,
+      "assets": {
+        "sprite": "chars/jp-soldier/idle"
+      }
+    },
+    "machineGunner": {
+      "displayName": "轻机枪手",
+      "hp": 120,
+      "weapon": "jp-lmg",
+      "moveSpeed": 2.4,
+      "behavior": "suppress",
+      "setupSec": 1.2,
+      "usesCover": true,
+      "preferStaticPosition": true,
+      "assets": {
+        "sprite": "chars/jp-soldier/idle"
+      }
+    },
+    "assault": {
+      "displayName": "突击兵",
+      "hp": 80,
+      "weapon": "type38",
+      "moveSpeed": 4.5,
+      "behavior": "charge",
+      "engageRangeM": 40,
+      "usesCover": false,
+      "assets": {
+        "sprite": "chars/jp-soldier/idle"
+      }
+    }
+  },
+  "pathing": {
+    "mode": "waypoint",
+    "randomOffsetX": 4.0,
+    "randomOffsetZ": 2.0,
+    "comment": "使用预设路径点而非实时寻路。随机偏移避免排队行军"
+  },
+  "performance": {
+    "aiUpdateGroups": 4,
+    "comment": "AI 分 4 组轮转决策，每个实体实际 5Hz。移动插值仍每 tick 执行"
+  }
+}

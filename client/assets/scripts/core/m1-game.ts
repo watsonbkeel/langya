@@ -161,17 +161,24 @@ export class M1Game {
       config.gameplay,
       config.weapons,
     );
-    this.weaponView = new WeaponView(canvas, config.presentation);
+    this.weaponView = new WeaponView(
+      canvas,
+      config.presentation,
+      config.weapons,
+      config.gameplay.player.defaultLoadout.primary,
+    );
     this.enemyRenderer = new EnemyRenderer(
       sceneRoot,
       config.gameplay,
       config.presentation,
       config.waves.maxAliveEnemies,
+      config.enemies.units.rifleman.assets.sprite,
     );
     this.allyRenderer = new AllyRenderer(
       sceneRoot,
       config.gameplay,
       config.presentation,
+      config.allies.bot.assets.sprite,
     );
     this.worldInteractions = new M3WorldInteractions(
       sceneRoot,
@@ -196,6 +203,8 @@ export class M1Game {
         },
       },
     );
+    this.enemyRenderer.setCameraNode(this.controller.getCameraNode());
+    this.allyRenderer.setCameraNode(this.controller.getCameraNode());
     this.netClient = new NetClient({
       onStatus: (status) => {
         this.connected = status.kind === 'connected';
@@ -381,6 +390,7 @@ export class M1Game {
     }
     this.previousAuthoritativePosition = { ...player.position };
     this.weaponState = { ...player.weapon };
+    this.weaponView.setWeapon(player.weapon.weaponId);
     this.availableWeaponIds = player.availableWeaponIds.slice();
     this.medkitsRemaining = player.medkitsRemaining;
     this.grenadesRemaining = player.grenadesRemaining;

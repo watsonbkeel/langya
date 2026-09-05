@@ -5,7 +5,13 @@ import { fileURLToPath } from 'node:url';
 const clientRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const repositoryRoot = dirname(clientRoot);
 const outputDirectory = join(clientRoot, 'assets', 'resources', 'config');
-const filenames = ['gameplay.json', 'weapons.json', 'waves.json'];
+const filenames = [
+  'gameplay.json',
+  'weapons.json',
+  'waves.json',
+  'allies.json',
+  'enemies.json',
+];
 const checkOnly = process.argv.includes('--check');
 
 await mkdir(outputDirectory, { recursive: true });

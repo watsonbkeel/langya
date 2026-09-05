@@ -3,25 +3,42 @@ import {
   Graphics,
   Layers,
   Node,
+  Sprite,
   tween,
   Tween,
   UIOpacity,
   Vec3,
 } from 'cc';
 
-import type { PresentationConfig } from '../config/game-config';
+import type {
+  PresentationConfig,
+  WeaponsConfig,
+} from '../config/game-config';
+import { loadSpriteFrame } from '../core/billboard';
 
 export class WeaponView {
   private readonly root: Node;
   private readonly bolt: Node;
+  private readonly weaponSpriteNode: Node;
+  private readonly weaponSprite: Sprite;
+  private readonly placeholderGraphics: Graphics;
   private readonly muzzleOpacity: UIOpacity;
   private readonly presentation: PresentationConfig;
+  private readonly weapons: WeaponsConfig;
   private readonly basePosition: Vec3;
   private readonly boltBasePosition: Vec3;
+  private currentWeaponId: string | null = null;
+  private loadGeneration = 0;
   private audioContext: AudioContext | null = null;
 
-  constructor(canvas: Node, presentation: PresentationConfig) {
+  constructor(
+    canvas: Node,
+    presentation: PresentationConfig,
+    weapons: WeaponsConfig,
+    defaultWeaponId: string,
+  ) {
     this.presentation = presentation;
+    this.weapons = weapons;
     this.root = new Node('RiflePlaceholder');
     this.root.layer = Layers.Enum.UI_2D;
     this.basePosition = new Vec3(
@@ -32,10 +49,45 @@ export class WeaponView {
     this.root.setPosition(this.basePosition);
     this.root.setParent(canvas);
 
-    this.drawRifle();
+    this.placeholderGraphics = this.drawRifle();
+    this.weaponSpriteNode = new Node('WeaponSprite');
+    this.weaponSpriteNode.layer = Layers.Enum.UI_2D;
+    this.weaponSpriteNode.setParent(this.root);
+    this.weaponSprite = this.weaponSpriteNode.addComponent(Sprite);
+    this.weaponSpriteNode.active = false;
     this.bolt = this.createBolt();
     this.boltBasePosition = this.bolt.position.clone();
     this.muzzleOpacity = this.createMuzzleFlash();
+    this.setWeapon(defaultWeaponId);
+  }
+
+  setWeapon(weaponId: string): void {
+    if (this.currentWeaponId === weaponId && this.weaponSprite.spriteFrame) {
+      return;
+    }
+    this.currentWeaponId = weaponId;
+    const weapon = this.weapons.player[weaponId] ?? this.weapons.emplacement[weaponId];
+    const spritePath = weapon?.assets.firstPerson;
+    const generation = ++this.loadGeneration;
+    if (!spritePath) {
+      this.weaponSpriteNode.active = false;
+      this.placeholderGraphics.enabled = true;
+      return;
+    }
+    loadSpriteFrame(spritePath, (frame) => {
+      if (!this.root.isValid || generation !== this.loadGeneration) {
+        return;
+      }
+      this.weaponSprite.spriteFrame = frame;
+      this.weaponSpriteNode.active = true;
+      this.placeholderGraphics.enabled = false;
+      const sourceWidth = Math.max(1, frame.rect.width);
+      const targetWidth =
+        this.presentation.weaponLengthPx +
+        this.presentation.weaponBarrelLengthPx;
+      const scale = targetWidth / sourceWidth;
+      this.weaponSpriteNode.setScale(scale, scale, 1);
+    });
   }
 
   playFire(): void {
@@ -101,7 +153,7 @@ export class WeaponView {
     this.root.destroy();
   }
 
-  private drawRifle(): void {
+  private drawRifle(): Graphics {
     const graphics = this.root.addComponent(Graphics);
     graphics.fillColor = Color.fromHEX(new Color(), '#6B7A45');
     graphics.rect(
@@ -121,6 +173,7 @@ export class WeaponView {
       this.presentation.weaponHeightPx / 2,
     );
     graphics.fill();
+    return graphics;
   }
 
   private createBolt(): Node {

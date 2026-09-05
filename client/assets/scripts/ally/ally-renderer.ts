@@ -5,6 +5,7 @@ import {
   MeshRenderer,
   Node,
   primitives,
+  Texture2D,
   utils,
   Vec3,
 } from 'cc';
@@ -17,6 +18,13 @@ import type {
   GameplayConfig,
   PresentationConfig,
 } from '../config/game-config';
+import {
+  createBillboard,
+  createBillboardMaterial,
+  createBillboardMesh,
+  faceBillboardToCamera,
+  loadTexture,
+} from '../core/billboard';
 
 export class AllyRenderer {
   private readonly root: Node;
@@ -24,8 +32,13 @@ export class AllyRenderer {
   private readonly allyMaterial: Material;
   private readonly engageMaterial: Material;
   private readonly damagedMaterial: Material;
+  private readonly billboardMesh: Mesh;
+  private readonly billboardMaterial: Material;
   private readonly gameplay: GameplayConfig;
   private readonly presentation: PresentationConfig;
+  private readonly allySpritePath: string;
+  private allyTexture: Texture2D | null = null;
+  private cameraNode: Node | null = null;
   private readonly nodes = new Map<string, Node>();
   private readonly states = new Map<string, AllyAiState>();
   private readonly targetPositions = new Map<string, Vec3>();
@@ -37,9 +50,11 @@ export class AllyRenderer {
     sceneRoot: Node,
     gameplay: GameplayConfig,
     presentation: PresentationConfig,
+    allySpritePath: string,
   ) {
     this.gameplay = gameplay;
     this.presentation = presentation;
+    this.allySpritePath = allySpritePath;
     this.root = new Node('M2Allies');
     this.root.setParent(sceneRoot);
     this.mesh = utils.createMesh(
@@ -52,6 +67,21 @@ export class AllyRenderer {
     this.damagedMaterial = this.createMaterial(
       presentation.fireWarningColor,
     );
+    this.billboardMesh = createBillboardMesh();
+    this.billboardMaterial = createBillboardMaterial();
+    loadTexture(this.allySpritePath, (texture) => {
+      if (!this.root.isValid) {
+        return;
+      }
+      this.allyTexture = texture;
+      this.billboardMaterial.setProperty('mainTexture', texture);
+      for (const node of this.nodes.values()) {
+        const placeholder = node.getComponent(MeshRenderer);
+        if (placeholder) {
+          placeholder.enabled = false;
+        }
+      }
+    });
   }
 
   sync(
@@ -114,6 +144,10 @@ export class AllyRenderer {
       -this.presentation.entityPositionSmoothing * deltaTime,
     );
     for (const [allyId, node] of this.nodes) {
+      faceBillboardToCamera(
+        node.getChildByName('Billboard') ?? node,
+        this.cameraNode,
+      );
       const targetPosition = this.targetPositions.get(allyId);
       const targetScale = this.targetScales.get(allyId);
       if (!targetPosition || !targetScale) {
@@ -140,6 +174,10 @@ export class AllyRenderer {
     return this.nodes.size;
   }
 
+  setCameraNode(cameraNode: Node): void {
+    this.cameraNode = cameraNode;
+  }
+
   destroy(): void {
     this.nodes.clear();
     this.states.clear();
@@ -149,6 +187,8 @@ export class AllyRenderer {
     this.allyMaterial.destroy();
     this.engageMaterial.destroy();
     this.damagedMaterial.destroy();
+    this.billboardMesh.destroy();
+    this.billboardMaterial.destroy();
   }
 
   private createNode(allyId: string): Node {
@@ -157,6 +197,13 @@ export class AllyRenderer {
     const renderer = node.addComponent(MeshRenderer);
     renderer.mesh = this.mesh;
     renderer.setSharedMaterial(this.allyMaterial, 0);
+    createBillboard(
+      node,
+      this.allyTexture,
+      this.billboardMesh,
+      this.billboardMaterial,
+    );
+    renderer.enabled = this.allyTexture === null;
     return node;
   }
 
