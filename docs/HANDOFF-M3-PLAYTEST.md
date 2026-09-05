@@ -1,6 +1,6 @@
 # M3 真人试玩修复交接文档
 
-更新时间：2026-09-05（Mac 侧）
+更新时间：2026-09-05（Mac 侧，缓存兼容修复后）
 
 ## 1. 交接目标
 
@@ -8,7 +8,7 @@
 
 正式交付地址：
 
-- [http://100.74.3.56:8080/?build=09ef588](http://100.74.3.56:8080/?build=09ef588)
+- [http://100.74.3.56:8080/?build=a64efba](http://100.74.3.56:8080/?build=a64efba)
 - 服务器是 Debian 的 Tailscale 地址，不是本机 `127.0.0.1`，也不是 `2-nb`。
 
 ## 2. 当前 Git 状态
@@ -16,20 +16,22 @@
 Mac 工作目录：仓库根 `/Users/watson/Documents/微云盘/AI+小程序培训课件/长训营/狼牙山`。
 
 - 当前分支：`main`
-- 当前 HEAD：`09ef588 fix(mac): 优化操作焦点与低血量提示`
-- `origin/main` 当前可见也为 `09ef588`
+- 当前 HEAD：`a64efba fix(mac): 给试玩资源统一添加版本查询串`
+- `origin/main` 当前可见也为 `a64efba`
 - 工作树：仅有用户原有未跟踪目录 `NewProject/`，**不要添加、删除或修改**
 - 最近相关提交：
   - `99fc216`：真人操作与立即血包反馈
   - `d6602f8`：Debian 血包改为立即生效
   - `5abdce7`：Debian M3 试玩修复部署记录
   - `09ef588`：客户端焦点、Pointer Lock、低血量提示等修复
+  - `b8734a4`：展示配置兼容旧缓存字段
+  - `a64efba`：按页面 `build` 参数给动态资源统一加版本查询串
 
-Debian 侧另报告过 Nginx 缓存修复提交 `2452ee8`；Mac 当前 `git log` 尚未看到该提交。新对话开始时先执行 `git pull --rebase origin main`，确认两端是否已同步，**不要猜测或强推**。
+Debian 侧的 Nginx 缓存修复提交 `2452ee8` 已进入当前 `origin/main`。新对话开始时仍先执行 `git pull --rebase origin main`，确认两端是否已同步，**不要猜测或强推**。
 
 ## 3. 已完成的客户端修复
 
-主要代码在 `client/`，已推送到 `09ef588`：
+主要代码在 `client/`，基础试玩修复已推送到 `09ef588`，后续缓存兼容修复见当前 HEAD：
 
 - `input_state` 按 `shared/config/gameplay.json` 的 `server.tickRateHz` 使用独立累加器发送。
 - 从 `onWorldSnapshot` 移除重复输入发送。
@@ -42,6 +44,8 @@ Debian 侧另报告过 Nginx 缓存修复提交 `2452ee8`；Mac 当前 `git log`
 - 血包拒绝原因中文化。
 - 增加“移动已生效”提示，以及调试位置/输入/Pointer Lock 状态。
 - 结算页隐藏战斗 HUD 与武器占位。
+- 构建模板会把页面 `build` 参数追加到 Cocos 动态脚本、XHR 和 fetch 资源，
+  让入口脚本、bundle、settings 与配置 JSON 使用同一版本，避免跨版本缓存黑屏。
 
 客户端不做命中、伤害、回血、死亡、计分或胜负判定，均以服务端消息为准。
 
@@ -57,23 +61,29 @@ Debian 已完成并部署：
 
 此前 M3 完整单局曾实测：300 秒坚守成功、四波、投放 200/200、5 席战报、FPS 60、Draw Call 30、控制台 warning/error 0。当前交接针对后续真人操作与正式 IP 资源加载问题，不重复宣称新的完整验收结果。
 
-## 5. 当前阻塞与证据
+## 5. 资源初始化问题与最新证据
 
-在 Chrome 使用正式地址时仍可能出现：
+旧缓存导致的初始化错误已定位并修复。根因是 `09ef588` 新增
+`helpFontSizePx` 强校验，而旧 presentation 资产没有该字段；同时浏览器曾把
+旧入口脚本与新资源混用。
+
+兼容修复与版本查询串部署后，Chrome 使用正式地址
+`http://100.74.3.56:8080/?build=a64efba` 已实际初始化成功：
+
+- Cocos `Init Base / Infrastructure / SubSystem / Project`、`LoadScene`、`Activate` 全部出现；
+- 画面显示标题、部署期倒计时、4 名队友、三路线威胁、生命/弹药 HUD；
+- 控制台 warning/error 为 0；
+- 页面资源盘点确认 `src/settings.json`、`assets/main/index.js`、四份配置 JSON
+  均带同一个 `?build=a64efba` 查询串；
+- Debian `/var/www/langyashan` 的 `index.html` 与主 JS 已更新，Nginx 配置校验通过。
+
+若仍用旧链接出现：
 
 ```text
 [M1] 客户端初始化失败 Error: presentation.json 格式无效
 ```
 
-表现为黑屏，`data-langyashan-m3` 为空。
-
-已确认：
-
-- `curl` 获取的远端 `assets/main/index.js` 与本地构建主 JS SHA 一致。
-- 远端 presentation JSON 含有 `helpFontSizePx`、`focusOffsetYPx`、`medkitFlashSec`、`lowHealthPulseSec` 等新字段。
-- 远端 `src/settings.json` 与本地构建内容/哈希一致。
-- 使用新 origin `2-nb:8080` 可正常加载新客户端并显示新进入战斗提示，但该地址不能作为最终交付地址。
-- 因此重点怀疑正式 IP 旧 origin 的 Chrome 缓存、Service Worker 或资源映射仍未刷新；必须在 `100.74.3.56` 上复核。
+仍建议改用上面的新 `build` 参数链接；不需要切换到 `2-nb`，也不需要修改服务器代码。
 
 ## 6. 新对话开始时的第一步
 
@@ -89,7 +99,7 @@ git status --short --branch
 然后只用正式地址打开并排查实际加载资源：
 
 ```text
-http://100.74.3.56:8080/?build=09ef588
+http://100.74.3.56:8080/?build=a64efba
 ```
 
 重点查看 Chrome DevTools 的 Network/Application：
@@ -130,4 +140,3 @@ http://100.74.3.56:8080/?build=09ef588
 ## 9. 完成后的回写要求
 
 只有在正式 Tailscale 地址实际加载成功并完成验收后，才更新 `docs/MILESTONES.md` 的 Mac M3 试玩修复记录并提交。最终报告必须说明：做了什么、实际执行的验证、是否偏离 PRD、遗留开放问题和下一步。若资源初始化仍失败，应报告证据与阻塞原因，不得写“已完成”。
-

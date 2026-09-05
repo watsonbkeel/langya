@@ -428,6 +428,19 @@ Debian 提交 `3df1288` 将可替代的 `world_snapshot` 改为仅在
 判定为“坚守成功”及 MVP。结算页显示五席总战绩、四波分波战绩和“向英雄
 致敬”，`scoreboardEntries=5`。
 
+2026-09-05：针对正式 Tailscale 地址上入口脚本与旧 presentation 资源缓存
+错配导致的黑屏，Mac 提交 `b8734a4` 增加缺失 `helpFontSizePx` 时回退到
+`hudFontSizePx` 的兼容归一化，提交 `a64efba` 在构建模板中按页面 `build`
+参数给 Cocos 动态脚本、XHR 与 fetch 统一追加版本查询串。新 web-mobile
+构建已发布到 Debian `/var/www/langyashan`；正式地址
+`http://100.74.3.56:8080/?build=a64efba` 实际加载并显示部署期、队友、三路
+威胁、生命与弹药 HUD，控制台 warning/error 为 0，资源盘点确认
+`settings.json`、`assets/main/index.js` 与四份配置 JSON 使用同一版本串。
+在 Debian 上运行 `node tools/check-m3-ws.js ws://127.0.0.1:8080/ws`，固定
+五席、4 波 / 200 人、两座重机枪、移动、上下枪及权威开火扣弹链路全部通过。
+浏览器自动化环境首次点击收到预期的 Pointer Lock 失败提示，完整人工输入
+验收仍以 watson 在正式 Chrome 会话中的实际操作为准；未进入 M4。
+
 PC 浏览器战斗与结算阶段均实测 60 FPS；结算截图时 Draw Call 30、Frame
 time 0.77 ms，浏览器控制台 warning / error 均为 0。空投事件累计 13 次，
 补给标记、血包柔光/进度、枪架拾取与多武器弹药变化均正常。九二式重机枪
