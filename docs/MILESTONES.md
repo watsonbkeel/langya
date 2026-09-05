@@ -528,15 +528,15 @@ M3 双方清单与真实整局验收均已完成，状态收口为 ✅。按项�
 ### 任务清单
 
 **💻 Mac**
-- [ ] 军服素材抠图去背 → 透明 PNG（跑 `tools/asset-pipeline/process-chars.py`）
-- [ ] 武器素材裁切缩放 → 第一人称视图 + 图标（跑 `process-weapons.py`）
-- [ ] **目视检查抠图**：有没有把角色挖出洞、有没有残留灰底
-- [ ] Billboard 角色面片（只绕 Y 轴旋转，不做全朝向）
+- [x] 军服素材抠图去背 → 透明 PNG（跑 `tools/asset-pipeline/process-chars.py`）
+- [x] 武器素材裁切缩放 → 第一人称视图 + 图标（跑 `process-weapons.py`）
+- [x] **目视检查抠图**：角色透明边缘与主体完整，无明显灰底残留
+- [x] Billboard 角色面片（只绕 Y 轴旋转，不做全朝向）
 - [ ] 3D 地形（高度图网格）+ 掩体
 - [ ] 三条进攻路线在地形上可辨识
 - [ ] 音效：枪声、命中、脚步、喊话
 - [ ] 资源总体积 < 25 MB，首屏 < 8 秒
-- [ ] `tools/asset-pipeline/verify-output.py` 校验通过
+- [x] `tools/asset-pipeline/verify-output.py` 校验通过
 
 **🖥️ Debian（并行做，不碰客户端）**
 - [ ] 服务端性能剖析，确认 44 个 AI 实体下 CPU < 20%
@@ -550,7 +550,17 @@ M3 双方清单与真实整局验收均已完成，状态收口为 ✅。按项�
 ### 完成记录
 
 #### 💻 Mac
-> 填写：素材加工产出清单、抠图阈值用了多少、资源体积、实测帧率
+2026-09-05：完成 M4 素材管线首批接入。使用默认阈值 30 运行
+`process-chars.py` 与 `process-weapons.py`，产出中国军队 / 日军角色
+`idle`、`side`、`portrait` 贴图，以及玩家武器第一人称图和 HUD 图标。
+用户新增的 `武器素材/type96-lmg/` 按历史设计接入，输出为
+`weapons/fp/jp-lmg.png` 与 `weapons/icons/jp-lmg.png`，供日军轻机枪
+兵种使用；原始素材目录未修改。`verify-output.py` 检查 16 个声明素材路径，
+RGBA 与尺寸均通过，资源总体积约 2.05 MB。客户端类型检查、配置同步检查和
+Cocos Creator 3.8.7 Web-Mobile 构建通过；构建包已同步 Debian，正式页面
+`http://100.74.3.56:8080/?build=m4-type96-v9` 初始化成功，控制台
+warning/error 为 0。已加入 Billboard 宽高比修正，避免立绘继承碰撞盒缩放后
+横向过窄。地形 / 掩体、路线视觉区分、音效和完整帧率 / 首屏验收仍待继续。
 
 #### 🖥️ Debian
 > 填写：性能剖析结果、补了哪些测试
