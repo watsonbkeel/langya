@@ -16,6 +16,24 @@ import type {
 } from '../config/game-config';
 import { loadSpriteFrame } from '../core/billboard';
 
+interface WeaponComposition {
+  readonly tiltDeg: number;
+  readonly widthFactor: number;
+}
+
+// 仅用于屏幕空间构图，不参与武器数值或服务器判定。
+const WEAPON_COMPOSITIONS: Readonly<Record<string, WeaponComposition>> = {
+  liaoshi13: { tiltDeg: -16, widthFactor: 1 },
+  'lee-enfield': { tiltDeg: -17, widthFactor: 1.08 },
+  zb26: { tiltDeg: -13, widthFactor: 1.05 },
+  bren: { tiltDeg: -13, widthFactor: 1.03 },
+  grenade: { tiltDeg: -24, widthFactor: 0.62 },
+  'type92-hmg': { tiltDeg: -10, widthFactor: 1.18 },
+};
+const RELOAD_TILT_DELTA_DEG = 3;
+const WEAPON_ANCHOR_X_BIAS_PX = -210;
+const WEAPON_ANCHOR_Y_BIAS_PX = 18;
+
 export class WeaponView {
   private readonly root: Node;
   private readonly bolt: Node;
@@ -28,6 +46,7 @@ export class WeaponView {
   private readonly basePosition: Vec3;
   private readonly boltBasePosition: Vec3;
   private currentWeaponId: string | null = null;
+  private currentTiltDeg = -16;
   private loadGeneration = 0;
   private audioContext: AudioContext | null = null;
 
@@ -42,11 +61,12 @@ export class WeaponView {
     this.root = new Node('RiflePlaceholder');
     this.root.layer = Layers.Enum.UI_2D;
     this.basePosition = new Vec3(
-      presentation.weaponOffsetXPx,
-      presentation.weaponOffsetYPx,
+      presentation.weaponOffsetXPx + WEAPON_ANCHOR_X_BIAS_PX,
+      presentation.weaponOffsetYPx + WEAPON_ANCHOR_Y_BIAS_PX,
       0,
     );
     this.root.setPosition(this.basePosition);
+    this.root.setRotationFromEuler(0, 0, this.currentTiltDeg);
     this.root.setParent(canvas);
 
     this.placeholderGraphics = this.drawRifle();
@@ -66,6 +86,9 @@ export class WeaponView {
       return;
     }
     this.currentWeaponId = weaponId;
+    const composition = WEAPON_COMPOSITIONS[weaponId] ?? WEAPON_COMPOSITIONS.liaoshi13;
+    this.currentTiltDeg = composition.tiltDeg;
+    this.root.setRotationFromEuler(0, 0, this.currentTiltDeg);
     const weapon = this.weapons.player[weaponId] ?? this.weapons.emplacement[weaponId];
     const spritePath = weapon?.assets.firstPerson;
     const generation = ++this.loadGeneration;
@@ -85,7 +108,7 @@ export class WeaponView {
       const targetWidth =
         this.presentation.weaponLengthPx +
         this.presentation.weaponBarrelLengthPx;
-      const scale = targetWidth / sourceWidth;
+      const scale = (targetWidth * composition.widthFactor) / sourceWidth;
       this.weaponSpriteNode.setScale(scale, scale, 1);
     });
   }
@@ -132,13 +155,17 @@ export class WeaponView {
 
   playReload(): void {
     Tween.stopAllByTarget(this.root);
-    this.root.setRotationFromEuler(0, 0, 0);
+    this.root.setRotationFromEuler(0, 0, this.currentTiltDeg);
     tween(this.root)
       .to(this.presentation.boltCycleSec, {
-        eulerAngles: new Vec3(0, 0, -this.presentation.weaponRecoilPx),
+        eulerAngles: new Vec3(
+          0,
+          0,
+          this.currentTiltDeg - RELOAD_TILT_DELTA_DEG,
+        ),
       })
       .to(this.presentation.boltCycleSec, {
-        eulerAngles: new Vec3(),
+        eulerAngles: new Vec3(0, 0, this.currentTiltDeg),
       })
       .start();
   }

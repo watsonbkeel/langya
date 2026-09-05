@@ -741,6 +741,10 @@ export class M1Hud {
     const node = new Node('Crosshair');
     this.setUiLayer(node);
     node.setParent(this.root);
+    // 准心是屏幕空间 UI，固定在设计分辨率中心，不继承世界旋转。
+    node.setPosition(0, 0, 0);
+    node.setRotationFromEuler(0, 0, 0);
+    node.setScale(1, 1, 1);
     const graphics = node.addComponent(Graphics);
     const gap = this.presentation.crosshairGapPx;
     const size = this.presentation.crosshairSizePx;

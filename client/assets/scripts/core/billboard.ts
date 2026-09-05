@@ -35,6 +35,12 @@ export function loadSpriteFrame(
   });
 }
 
+export function combatSpritePath(path: string): string {
+  // 当前素材批次的 idle 是 T-Pose，side 是自然站立的战斗占位姿态。
+  // 这里仅做表现层路径选择；run/fire 贴图待美术素材补齐后再接入。
+  return path.endsWith('/idle') ? path.replace(/\/idle$/, '/side') : path;
+}
+
 export function createBillboard(
   parent: Node,
   texture: Texture2D | null,
@@ -43,6 +49,8 @@ export function createBillboard(
 ): MeshRenderer {
   const node = new Node('Billboard');
   node.setParent(parent);
+  // 父节点原点是脚底，四边形中心需上移到角色腰部中心。
+  node.setPosition(0, 0.5, 0);
   // 角色根节点同时承担碰撞盒尺寸，通常会被压成“半宽高”的长方体。
   // 立绘本身是方形透明 PNG，因此在子节点上补回横向比例，避免远景
   // 看起来像一条竖线；这只影响视觉，不改变根节点的命中盒。
@@ -57,9 +65,12 @@ export function createBillboard(
 }
 
 export function createBillboardMesh(): Mesh {
-  return utils.createMesh(
-    primitives.quad({ includeNormal: true, includeUV: true }),
-  );
+  // 不直接依赖 primitives.quad 的默认 UV 方向：Cocos 的纹理原点与
+  // 概念图导出方向不同，显式把 V 轴翻回“底部=0、顶部=1”，保证头脚
+  // 姿态不会随材质或平台改变。
+  const geometry = primitives.quad({ includeNormal: true, includeUV: true });
+  geometry.uvs = [0, 1, 0, 0, 1, 0, 1, 1];
+  return utils.createMesh(geometry);
 }
 
 export function createBillboardMaterial(): Material {
@@ -73,6 +84,24 @@ export function createBillboardMaterial(): Material {
   if (target) {
     // BlendFactor 在 Cocos 3.8 的运行时导出未包含在 `cc` 公共类型中，
     // 这里使用引擎枚举的固定序号：SRC_ALPHA=2、ONE_MINUS_SRC_ALPHA=4。
+    target.blend = true;
+    target.blendSrc = 2 as typeof target.blendSrc;
+    target.blendDst = 4 as typeof target.blendDst;
+    target.blendSrcAlpha = 1 as typeof target.blendSrcAlpha;
+    target.blendDstAlpha = 4 as typeof target.blendDstAlpha;
+  }
+  return material;
+}
+
+export function createSoftShadowMaterial(): Material {
+  const material = new Material();
+  material.initialize({
+    effectName: 'builtin-unlit',
+    defines: { USE_COLOR: true },
+  });
+  material.setProperty('mainColor', new Color(18, 24, 20, 92));
+  const target = material.passes[0]?.blendState.targets[0];
+  if (target) {
     target.blend = true;
     target.blendSrc = 2 as typeof target.blendSrc;
     target.blendDst = 4 as typeof target.blendDst;

@@ -22,6 +22,8 @@ import {
   createBillboard,
   createBillboardMaterial,
   createBillboardMesh,
+  combatSpritePath,
+  createSoftShadowMaterial,
   faceBillboardToCamera,
   loadTexture,
 } from '../core/billboard';
@@ -34,6 +36,7 @@ export class AllyRenderer {
   private readonly damagedMaterial: Material;
   private readonly billboardMesh: Mesh;
   private readonly billboardMaterial: Material;
+  private readonly shadowMaterial: Material;
   private readonly gameplay: GameplayConfig;
   private readonly presentation: PresentationConfig;
   private readonly allySpritePath: string;
@@ -54,7 +57,7 @@ export class AllyRenderer {
   ) {
     this.gameplay = gameplay;
     this.presentation = presentation;
-    this.allySpritePath = allySpritePath;
+    this.allySpritePath = combatSpritePath(allySpritePath);
     this.root = new Node('M2Allies');
     this.root.setParent(sceneRoot);
     this.mesh = utils.createMesh(
@@ -69,6 +72,7 @@ export class AllyRenderer {
     );
     this.billboardMesh = createBillboardMesh();
     this.billboardMaterial = createBillboardMaterial();
+    this.shadowMaterial = createSoftShadowMaterial();
     loadTexture(this.allySpritePath, (texture) => {
       if (!this.root.isValid) {
         return;
@@ -76,7 +80,7 @@ export class AllyRenderer {
       this.allyTexture = texture;
       this.billboardMaterial.setProperty('mainTexture', texture);
       for (const node of this.nodes.values()) {
-        const placeholder = node.getComponent(MeshRenderer);
+        const placeholder = this.getPlaceholderRenderer(node);
         if (placeholder) {
           placeholder.enabled = false;
         }
@@ -122,7 +126,7 @@ export class AllyRenderer {
 
   flashDamaged(allyId: string): void {
     const node = this.nodes.get(allyId);
-    const renderer = node?.getComponent(MeshRenderer);
+    const renderer = node ? this.getPlaceholderRenderer(node) : undefined;
     if (!node || !renderer) {
       return;
     }
@@ -189,12 +193,16 @@ export class AllyRenderer {
     this.damagedMaterial.destroy();
     this.billboardMesh.destroy();
     this.billboardMaterial.destroy();
+    this.shadowMaterial.destroy();
   }
 
   private createNode(allyId: string): Node {
     const node = new Node(`Ally:${allyId}`);
     node.setParent(this.root);
-    const renderer = node.addComponent(MeshRenderer);
+    const hitbox = new Node('Hitbox');
+    hitbox.setParent(node);
+    hitbox.setPosition(0, 0.5, 0);
+    const renderer = hitbox.addComponent(MeshRenderer);
     renderer.mesh = this.mesh;
     renderer.setSharedMaterial(this.allyMaterial, 0);
     createBillboard(
@@ -204,6 +212,15 @@ export class AllyRenderer {
       this.billboardMaterial,
     );
     renderer.enabled = this.allyTexture === null;
+
+    const shadow = new Node('GroundShadow');
+    shadow.setParent(node);
+    shadow.setPosition(0, 0.005, 0);
+    // 根节点 Y 缩放是角色身高，阴影保持薄片避免变成黑色立方体。
+    shadow.setScale(1.25, 0.02, 0.75);
+    const shadowRenderer = shadow.addComponent(MeshRenderer);
+    shadowRenderer.mesh = this.mesh;
+    shadowRenderer.setSharedMaterial(this.shadowMaterial, 0);
     return node;
   }
 
@@ -230,11 +247,8 @@ export class AllyRenderer {
       position = new Vec3();
       this.targetPositions.set(ally.id, position);
     }
-    position.set(
-      ally.position.x,
-      ally.position.y + height / 2,
-      ally.position.z,
-    );
+    // 根节点原点固定在脚底，碰撞盒与立绘均在本地上移半个身高。
+    position.set(ally.position.x, ally.position.y, ally.position.z);
     let scale = this.targetScales.get(ally.id);
     if (!scale) {
       scale = new Vec3();
@@ -247,8 +261,7 @@ export class AllyRenderer {
     }
 
     if (ally.aiState && this.states.get(ally.id) !== ally.aiState) {
-      node
-        .getComponent(MeshRenderer)
+      this.getPlaceholderRenderer(node)
         ?.setSharedMaterial(
           ally.aiState === 'engage'
             ? this.engageMaterial
@@ -257,5 +270,9 @@ export class AllyRenderer {
         );
       this.states.set(ally.id, ally.aiState);
     }
+  }
+
+  private getPlaceholderRenderer(node: Node): MeshRenderer | null {
+    return node.getChildByName('Hitbox')?.getComponent(MeshRenderer) ?? null;
   }
 }

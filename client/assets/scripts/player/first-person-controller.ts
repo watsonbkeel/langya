@@ -35,6 +35,8 @@ interface MountedAimLimits {
   readonly pitchMaxDeg: number;
 }
 
+const MAX_MOUSE_DELTA_PX = 120;
+
 export class FirstPersonController {
   private readonly cameraNode: Node;
   private readonly gameplay: GameplayConfig;
@@ -169,7 +171,7 @@ export class FirstPersonController {
     this.targetPosition.set(position.x, position.y, position.z);
     this.aimYaw = aimYaw;
     this.aimPitch = aimPitch;
-    this.cameraNode.setRotationFromEuler(aimPitch, aimYaw, 0);
+    this.applyAimRotation();
     if (!this.hasPosition) {
       this.renderedPosition.set(this.targetPosition);
       this.cameraNode.setPosition(this.renderedPosition);
@@ -189,11 +191,7 @@ export class FirstPersonController {
         limits.pitchMaxDeg,
         Math.max(limits.pitchMinDeg, this.aimPitch),
       );
-      this.cameraNode.setRotationFromEuler(
-        this.aimPitch,
-        this.aimYaw,
-        0,
-      );
+      this.applyAimRotation();
     }
   }
 
@@ -282,9 +280,20 @@ export class FirstPersonController {
     if (performance.now() < this.ignoreMouseUntilMs) {
       return;
     }
-    this.aimYaw -= event.getDeltaX() * this.presentation.mouseSensitivityDeg;
-    this.aimPitch -=
-      event.getDeltaY() * this.presentation.mouseSensitivityDeg;
+    // Pointer Lock 每个事件只消费一次 delta，并限制异常大跳变，避免
+    // 重新锁定鼠标时出现视角过冲、翻转或眩晕。
+    const deltaX = Math.max(
+      -MAX_MOUSE_DELTA_PX,
+      Math.min(MAX_MOUSE_DELTA_PX, event.getDeltaX()),
+    );
+    const deltaY = Math.max(
+      -MAX_MOUSE_DELTA_PX,
+      Math.min(MAX_MOUSE_DELTA_PX, event.getDeltaY()),
+    );
+    this.aimYaw -= deltaX * this.presentation.mouseSensitivityDeg;
+    // Cocos 相机与协议统一使用“正 pitch 向上”，因此鼠标上移
+    // (deltaY<0) 会增加 pitch，方向符合直觉。
+    this.aimPitch -= deltaY * this.presentation.mouseSensitivityDeg;
     const pitchMin =
       this.mountedAimLimits?.pitchMinDeg ??
       this.gameplay.player.aimPitchMinDeg;
@@ -306,7 +315,7 @@ export class FirstPersonController {
         ),
       );
     }
-    this.cameraNode.setRotationFromEuler(this.aimPitch, this.aimYaw, 0);
+    this.applyAimRotation();
   }
 
   private onMouseDown(event: EventMouse): void {
@@ -386,4 +395,9 @@ export class FirstPersonController {
       '浏览器未能锁定鼠标，请再次点击画面重试',
     );
   };
+
+  private applyAimRotation(): void {
+    // 始终显式清零 roll；只允许 yaw/pitch 两个自由度。
+    this.cameraNode.setRotationFromEuler(this.aimPitch, this.aimYaw, 0);
+  }
 }

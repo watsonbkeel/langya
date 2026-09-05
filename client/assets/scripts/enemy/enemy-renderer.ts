@@ -24,6 +24,8 @@ import {
   createBillboard,
   createBillboardMaterial,
   createBillboardMesh,
+  combatSpritePath,
+  createSoftShadowMaterial,
   faceBillboardToCamera,
   loadTexture,
 } from '../core/billboard';
@@ -37,6 +39,7 @@ export class EnemyRenderer {
   private readonly warningMaterial: Material;
   private readonly billboardMesh: Mesh;
   private readonly billboardMaterial: Material;
+  private readonly shadowMaterial: Material;
   private readonly gameplay: GameplayConfig;
   private readonly presentation: PresentationConfig;
   private readonly enemySpritePath: string;
@@ -59,7 +62,7 @@ export class EnemyRenderer {
   ) {
     this.gameplay = gameplay;
     this.presentation = presentation;
-    this.enemySpritePath = enemySpritePath;
+    this.enemySpritePath = combatSpritePath(enemySpritePath);
     this.worldRoot = new Node('M1World');
     this.worldRoot.setParent(sceneRoot);
     this.boxMesh = utils.createMesh(
@@ -75,6 +78,7 @@ export class EnemyRenderer {
     );
     this.billboardMesh = createBillboardMesh();
     this.billboardMaterial = createBillboardMaterial();
+    this.shadowMaterial = createSoftShadowMaterial();
     loadTexture(this.enemySpritePath, (texture) => {
       if (!this.worldRoot.isValid) {
         return;
@@ -82,7 +86,7 @@ export class EnemyRenderer {
       this.enemyTexture = texture;
       this.billboardMaterial.setProperty('mainTexture', texture);
       for (const node of this.activeEnemies.values()) {
-        const placeholder = node.getComponent(MeshRenderer);
+        const placeholder = this.getPlaceholderRenderer(node);
         if (placeholder) {
           placeholder.enabled = false;
         }
@@ -126,7 +130,7 @@ export class EnemyRenderer {
 
   flash(enemyId: string): void {
     const node = this.activeEnemies.get(enemyId);
-    const renderer = node?.getComponent(MeshRenderer);
+    const renderer = node ? this.getPlaceholderRenderer(node) : undefined;
     if (!node || !renderer) {
       return;
     }
@@ -229,6 +233,7 @@ export class EnemyRenderer {
     this.warningMaterial.destroy();
     this.billboardMesh.destroy();
     this.billboardMaterial.destroy();
+    this.shadowMaterial.destroy();
   }
 
   private createGround(): void {
@@ -251,7 +256,10 @@ export class EnemyRenderer {
   private createEnemyNode(): Node {
     const node = new Node('EnemyPlaceholder');
     node.setParent(this.worldRoot);
-    const renderer = node.addComponent(MeshRenderer);
+    const hitbox = new Node('Hitbox');
+    hitbox.setParent(node);
+    hitbox.setPosition(0, 0.5, 0);
+    const renderer = hitbox.addComponent(MeshRenderer);
     renderer.mesh = this.boxMesh;
     renderer.setSharedMaterial(this.enemyMaterial, 0);
     createBillboard(
@@ -261,6 +269,15 @@ export class EnemyRenderer {
       this.billboardMaterial,
     );
     renderer.enabled = this.enemyTexture === null;
+
+    const shadow = new Node('GroundShadow');
+    shadow.setParent(node);
+    shadow.setPosition(0, 0.005, 0);
+    // 根节点 Y 缩放是角色身高，阴影必须保持薄片而不能变成黑色立方体。
+    shadow.setScale(1.25, 0.02, 0.75);
+    const shadowRenderer = shadow.addComponent(MeshRenderer);
+    shadowRenderer.mesh = this.boxMesh;
+    shadowRenderer.setSharedMaterial(this.shadowMaterial, 0);
 
     const warning = new Node('FireWarning');
     warning.setParent(node);
@@ -284,15 +301,14 @@ export class EnemyRenderer {
   private acquire(enemyId: string): Node {
     const node = this.pool.pop() ?? this.createEnemyNode();
     Tween.stopAllByTarget(node);
+    this.resetVisualState(node);
     node.name = `Enemy:${enemyId}`;
     node.active = true;
-    const placeholder = node.getComponent(MeshRenderer);
+    const placeholder = this.getPlaceholderRenderer(node);
     if (placeholder) {
       placeholder.enabled = this.enemyTexture === null;
     }
-    node
-      .getComponent(MeshRenderer)
-      ?.setSharedMaterial(this.enemyMaterial, 0);
+    placeholder?.setSharedMaterial(this.enemyMaterial, 0);
     return node;
   }
 
@@ -304,6 +320,7 @@ export class EnemyRenderer {
     if (warning) {
       warning.active = false;
     }
+    this.resetVisualState(node);
     this.pool.push(node);
   }
 
@@ -325,11 +342,8 @@ export class EnemyRenderer {
       targetPosition = new Vec3();
       this.targetPositions.set(enemy.id, targetPosition);
     }
-    targetPosition.set(
-      enemy.position.x,
-      enemy.position.y + height / 2,
-      enemy.position.z,
-    );
+    // 根节点原点固定在脚底，碰撞盒和立绘子节点都在本地上移半个身高。
+    targetPosition.set(enemy.position.x, enemy.position.y, enemy.position.z);
     let targetScale = this.targetScales.get(enemy.id);
     if (!targetScale) {
       targetScale = new Vec3();
@@ -346,8 +360,7 @@ export class EnemyRenderer {
     }
 
     if (this.enemyStates.get(enemy.id) !== enemy.aiState) {
-      node
-        .getComponent(MeshRenderer)
+      this.getPlaceholderRenderer(node)
         ?.setSharedMaterial(
           enemy.aiState === 'engage'
             ? this.engageMaterial
@@ -360,7 +373,7 @@ export class EnemyRenderer {
     const warning = node.getChildByName('FireWarning');
     if (warning) {
       const diameter = enemyHitboxRadiusM * 2;
-      warning.setPosition(0, 0, -0.6);
+      warning.setPosition(0, 0.5, -0.6);
       warning.setScale(
         this.presentation.fireWarningSizeM / diameter,
         this.presentation.fireWarningSizeM / height,
@@ -370,5 +383,28 @@ export class EnemyRenderer {
         enemy.fireWarningEndsAtMs !== undefined &&
         enemy.fireWarningEndsAtMs > serverTimeMs;
     }
+  }
+
+  private getPlaceholderRenderer(node: Node): MeshRenderer | null {
+    return node.getChildByName('Hitbox')?.getComponent(MeshRenderer) ?? null;
+  }
+
+  private resetVisualState(node: Node): void {
+    node.setPosition(0, 0, 0);
+    node.setRotationFromEuler(0, 0, 0);
+    node.setScale(1, 1, 1);
+    const billboard = node.getChildByName('Billboard');
+    billboard?.setPosition(0, 0.5, 0);
+    billboard?.setRotationFromEuler(0, 0, 0);
+    billboard?.setScale(2, 1, 1);
+    const hitbox = node.getChildByName('Hitbox');
+    hitbox?.setPosition(0, 0.5, 0);
+    hitbox?.setRotationFromEuler(0, 0, 0);
+    hitbox?.setScale(1, 1, 1);
+    node.getChildByName('FireWarning')?.setPosition(0, 0.5, -0.6);
+    const shadow = node.getChildByName('GroundShadow');
+    shadow?.setPosition(0, 0.005, 0);
+    shadow?.setRotationFromEuler(0, 0, 0);
+    shadow?.setScale(1.25, 0.02, 0.75);
   }
 }
