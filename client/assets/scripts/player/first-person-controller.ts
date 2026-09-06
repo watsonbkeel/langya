@@ -187,14 +187,23 @@ export class FirstPersonController {
   }
 
   setMountedAimLimits(limits: MountedAimLimits | null): void {
+    const previous = this.mountedAimLimits;
     this.mountedAimLimits = limits;
-    if (limits) {
+    if (limits && mountedLimitsChanged(previous, limits)) {
       this.aimYaw = limits.baseYaw;
       this.aimPitch = Math.min(
         limits.pitchMaxDeg,
         Math.max(limits.pitchMinDeg, this.aimPitch),
       );
       this.applyAimRotation();
+    } else if (limits) {
+      // 世界快照以 20Hz 重复携带枪位状态；同一枪位期间不能把玩家已经
+      // 转动的视角重置回 baseYaw，只需把当前角度收回服务端允许的射界。
+      this.aimYaw = clampYawToMountedLimits(this.aimYaw, limits);
+      this.aimPitch = Math.min(
+        limits.pitchMaxDeg,
+        Math.max(limits.pitchMinDeg, this.aimPitch),
+      );
     }
   }
 
@@ -320,14 +329,9 @@ export class FirstPersonController {
       Math.max(pitchMin, this.aimPitch),
     );
     if (this.mountedAimLimits) {
-      this.aimYaw = Math.min(
-        this.mountedAimLimits.baseYaw +
-          this.mountedAimLimits.yawLimitDeg,
-        Math.max(
-          this.mountedAimLimits.baseYaw -
-            this.mountedAimLimits.yawLimitDeg,
-          this.aimYaw,
-        ),
+      this.aimYaw = clampYawToMountedLimits(
+        this.aimYaw,
+        this.mountedAimLimits,
       );
     }
     this.applyAimRotation();
@@ -448,4 +452,38 @@ export class FirstPersonController {
     // 始终显式清零 roll；只允许 yaw/pitch 两个自由度。
     this.cameraNode.setRotationFromEuler(this.aimPitch, this.aimYaw, 0);
   }
+}
+
+function mountedLimitsChanged(
+  previous: MountedAimLimits | null,
+  next: MountedAimLimits,
+): boolean {
+  return (
+    previous === null ||
+    previous.baseYaw !== next.baseYaw ||
+    previous.yawLimitDeg !== next.yawLimitDeg ||
+    previous.pitchMinDeg !== next.pitchMinDeg ||
+    previous.pitchMaxDeg !== next.pitchMaxDeg
+  );
+}
+
+function clampYawToMountedLimits(
+  aimYaw: number,
+  limits: MountedAimLimits,
+): number {
+  const delta = shortestAngleDelta(limits.baseYaw, aimYaw);
+  const clampedDelta = Math.max(
+    -limits.yawLimitDeg,
+    Math.min(limits.yawLimitDeg, delta),
+  );
+  return normalizeDegrees(limits.baseYaw + clampedDelta);
+}
+
+function shortestAngleDelta(baseYaw: number, aimYaw: number): number {
+  return normalizeDegrees(aimYaw - baseYaw);
+}
+
+function normalizeDegrees(value: number): number {
+  const normalized = ((value + 180) % 360 + 360) % 360 - 180;
+  return normalized === -180 ? 180 : normalized;
 }
