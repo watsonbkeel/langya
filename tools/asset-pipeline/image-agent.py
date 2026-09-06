@@ -2,7 +2,7 @@
 """异步美术素材 Agent：提交、轮询并及时下载 og-image2-low 结果。
 
 密钥只从 BKEEL_IMAGE_API_KEY 环境变量读取，绝不写入 manifest、日志或仓库。
-每个 manifest 项对应一张图片；默认并发 5，超过 50 张必须显式确认。
+每个 manifest 项对应一张图片；默认并发 5，超过 100 张必须显式确认。
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ except ImportError:  # pragma: no cover - Debian 可直接使用系统证书
 
 DEFAULT_BASE_URL = "https://token.bkeel.com/v1"
 DEFAULT_MODEL = "og-image2-low"
-MAX_BATCH = 50
+MAX_BATCH = 100
 MAX_CONCURRENCY = 5
 POLL_INTERVAL_SEC = 8
 POLL_TIMEOUT_SEC = 20 * 60
@@ -127,9 +127,9 @@ def main() -> int:
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--max-concurrency", type=int, default=MAX_CONCURRENCY)
     parser.add_argument(
-        "--allow-over-50",
+        "--allow-over-100",
         action="store_true",
-        help="仅在用户明确确认超过 50 张后使用",
+        help="仅在用户明确确认超过 100 张后使用",
     )
     args = parser.parse_args()
     api_key = os.environ.get("BKEEL_IMAGE_API_KEY")
@@ -145,8 +145,8 @@ def main() -> int:
         items = json.loads(raw)
     if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
         raise SystemExit("manifest 必须是 JSON 对象数组或 JSONL")
-    if len(items) > MAX_BATCH and not args.allow_over_50:
-        raise SystemExit("本批超过 50 张，先向 watson 确认后再使用 --allow-over-50")
+    if len(items) > MAX_BATCH and not args.allow_over_100:
+        raise SystemExit("本批超过 100 张，先向 watson 确认后再使用 --allow-over-100")
     if not items:
         raise SystemExit("manifest 为空")
 

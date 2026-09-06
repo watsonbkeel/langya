@@ -529,7 +529,7 @@ M3 双方清单与真实整局验收均已完成，状态收口为 ✅。按项�
 
 **💻 Mac**
 - [x] 军服素材抠图去背 → 透明 PNG（跑 `tools/asset-pipeline/process-chars.py`）
-- [x] 素材 Agent：异步提交 / 轮询 / 及时下载（默认模型 `og-image2-low`，并发上限 5）
+- [x] 素材 Agent：异步提交 / 轮询 / 及时下载（默认模型 `og-image2-low`，并发上限 5，单批上限 100）
 - [x] 角色状态素材：中方与日军 `idle` / `run` / `fire` 三态 PNG
 - [x] 武器素材裁切缩放 → 第一人称视图 + 图标（跑 `process-weapons.py`）
 - [x] **目视检查抠图**：角色透明边缘与主体完整，无明显灰底残留
@@ -570,7 +570,8 @@ warning/error 为 0。补充修复了显式垂直 UV、脚底原点、碰撞盒 
 
 2026-09-06：素材 Agent 已统一使用用户确认的 `og-image2-low` 模型名，
 通过 `tools/asset-pipeline/image-agent.py` 支持异步任务轮询、临时下载地址及时
-落盘和最多 5 路并发；本批生成 6 张状态图，远低于 50 张确认阈值。角色渲染器
+落盘和最多 5 路并发，单批上限调整为 100 张；本批生成 6 张状态图，远低于额度
+阈值。角色渲染器
 按服务端 AI 状态切换 `idle` / `run` / `fire`，对象池回收会重置贴图、旋转、缩放
 和脚底位置。正式页面 `?build=m4-visual-v17` 读取到 `connected: true`、
 `fps: 60`、`warning/error: 0`，Canvas 初始化完成；截图接口在本轮浏览器会话中
