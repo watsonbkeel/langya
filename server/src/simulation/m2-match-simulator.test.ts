@@ -68,4 +68,22 @@ describe('M2 match simulator', () => {
       true,
     );
   });
+
+  it("允许延迟投放时在时限后补齐同屏上限排队的敌人", () => {
+    const result = simulateM2Match(config, 724);
+    const matchDurationTicks =
+      config.gameplay.match.durationSec *
+      config.gameplay.server.tickRateHz;
+
+    assert.equal(config.gameplay.match.allowOvertimeSpawn, true);
+    assert.equal(result.enemiesSpawned, config.waves.totalEnemies);
+    assert.equal(result.maxAliveEnemies <= config.waves.maxAliveEnemies, true);
+    assert.equal(result.ticks > matchDurationTicks, true);
+    assert.equal(
+      result.ticks <=
+        matchDurationTicks +
+          config.waves.totalEnemies * config.gameplay.server.tickRateHz,
+      true,
+    );
+  });
 });

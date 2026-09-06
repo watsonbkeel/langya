@@ -39,7 +39,12 @@ export function simulateM2Match(
   );
   const tickDurationSec = 1 / tickRateHz;
   const tickDurationMs = tickDurationSec * 1000;
-  const totalTicks = config.waves.matchDurationSec * tickRateHz;
+  const matchDurationTicks =
+    config.gameplay.match.durationSec * tickRateHz;
+  const maxOvertimeTicks = config.gameplay.match.allowOvertimeSpawn
+    ? config.waves.totalEnemies * tickRateHz
+    : 0;
+  const maxTicks = matchDurationTicks + maxOvertimeTicks;
   const playerWeapon = findPlayerWeaponConfig(
     config,
     config.gameplay.player.defaultLoadout.primary,
@@ -50,6 +55,7 @@ export function simulateM2Match(
   let clientTick = 0;
   let maxAliveEnemies = 0;
   let moveDirection = 1;
+  let finalTick = 0;
   const routes = createRouteLayouts(
     config.waves.routes,
     config.gameplay.arena,
@@ -80,7 +86,7 @@ export function simulateM2Match(
   const cpuStartedAt = process.cpuUsage();
   const wallStartedAt = performance.now();
 
-  for (let tick = 0; tick < totalTicks; tick += 1) {
+  for (let tick = 0; tick < maxTicks; tick += 1) {
     const nowMs = (tick + 1) * tickDurationMs;
 
     while (
@@ -123,6 +129,16 @@ export function simulateM2Match(
     maxAliveEnemies = Math.max(maxAliveEnemies, battle.aliveEnemyCount);
     battle.resupplyPlayerAmmo(nowMs);
     battle.usePlayerMedkit();
+    finalTick = tick + 1;
+
+    // 同屏上限可能让最后几名敌人排队到 5 分钟后；校准器须与正式对局一样继续投放。
+    if (
+      finalTick >= matchDurationTicks &&
+      (!config.gameplay.match.allowOvertimeSpawn ||
+        nextSpawnIndex === spawnPlan.length)
+    ) {
+      break;
+    }
 
     if (
       battle.playerHp <= 0 ||
@@ -189,8 +205,8 @@ export function simulateM2Match(
     playerSurvived: battle.playerHp > 0,
     cpuMs,
     cpuPercentSingleCore:
-      (cpuMs / (config.waves.matchDurationSec * 1000)) * 100,
+      (cpuMs / (finalTick * tickDurationMs)) * 100,
     wallMs,
-    ticks: totalTicks,
+    ticks: finalTick,
   };
 }
