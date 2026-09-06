@@ -1,4 +1,5 @@
 import {
+  Button,
   Color,
   Graphics,
   Label,
@@ -7,6 +8,7 @@ import {
   tween,
   Tween,
   UIOpacity,
+  UITransform,
   Vec3,
 } from 'cc';
 
@@ -71,6 +73,7 @@ export class M1Hud {
   private readonly flashingAllies = new Set<string>();
   private readonly temporaryLabelTimers = new Map<Label, ReturnType<typeof setTimeout>>();
   private readonly routeNames: Readonly<Record<RouteId, string>>;
+  private restartHandler: (() => void) | null = null;
   private weaponName = '步枪';
   private routeHighlightSequence = 0;
   private lowHealthActive = false;
@@ -394,6 +397,10 @@ export class M1Hud {
     this.spectatorLabel.string = '';
   }
 
+  setRestartHandler(handler: () => void): void {
+    this.restartHandler = handler;
+  }
+
   showActionResult(payload: ActionResultPayload): void {
     if (payload.accepted) {
       this.messageLabel.string = `操作成功：${describeAction(payload.action)}`;
@@ -474,6 +481,7 @@ export class M1Hud {
       -this.presentation.designHeight / 2 + this.presentation.titleFontSizePx,
       '#F4E8C1',
     );
+    this.createRestartButton(report);
   }
 
   updateAllies(allies: readonly AllyState[]): void {
@@ -819,6 +827,49 @@ export class M1Hud {
     label.verticalAlign = Label.VerticalAlign.CENTER;
     label.overflow = Label.Overflow.NONE;
     label.color = Color.fromHEX(new Color(), colorHex);
+  }
+
+  private createRestartButton(parent: Node): void {
+    const width = this.presentation.reportLineFontSizePx * 8;
+    const height = this.presentation.reportLineFontSizePx * 2.2;
+    const node = new Node('RestartMatchButton');
+    this.setUiLayer(node);
+    node.setParent(parent);
+    node.setPosition(
+      0,
+      -this.presentation.designHeight / 2 +
+        this.presentation.reportLineFontSizePx * 3,
+      0,
+    );
+    node.addComponent(UITransform).setContentSize(width, height);
+
+    const background = node.addComponent(Graphics);
+    background.fillColor = Color.fromHEX(new Color(), '#D9B86C');
+    background.rect(-width / 2, -height / 2, width, height);
+    background.fill();
+
+    const button = node.addComponent(Button);
+    button.transition = Button.Transition.SCALE;
+    node.on(
+      Button.EventType.CLICK,
+      () => {
+        this.restartHandler?.();
+      },
+      this,
+    );
+
+    const label = new Node('RestartMatchLabel');
+    this.setUiLayer(label);
+    label.setParent(node);
+    const labelTransform = label.addComponent(UITransform);
+    labelTransform.setContentSize(width, height);
+    const text = label.addComponent(Label);
+    text.string = '重新开始新的一局';
+    text.fontSize = this.presentation.reportLineFontSizePx;
+    text.lineHeight = this.presentation.reportLineFontSizePx;
+    text.horizontalAlign = Label.HorizontalAlign.CENTER;
+    text.verticalAlign = Label.VerticalAlign.CENTER;
+    text.color = Color.fromHEX(new Color(), '#183040');
   }
 
   private createDamageVignette(): UIOpacity {

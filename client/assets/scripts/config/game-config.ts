@@ -71,6 +71,7 @@ export interface WavesConfig {
       RouteId,
       {
         readonly name: string;
+        readonly lengthM: number;
       }
     >
   >;
@@ -385,7 +386,11 @@ function isWavesConfig(value: unknown): value is WavesConfig {
   const routeIds: readonly RouteId[] = ['A', 'B', 'C'];
   return routeIds.every((routeId) => {
     const route = routes[routeId];
-    return isRecord(route) && typeof route.name === 'string';
+    return (
+      isRecord(route) &&
+      typeof route.name === 'string' &&
+      isFiniteNumber(route.lengthM)
+    );
   });
 }
 

@@ -605,6 +605,13 @@ Bullet / Spine / Box2D。三个全新 Playwright 浏览器上下文的首个权�
 红线已有当前构建证据；M4 仍等待 Watson 完成真实 Pointer Lock 与关键视觉手感
 确认后才能收口。
 
+2026-09-06：继续补强 M4 表现层。Mac 端默认对 `invertMouseY` 做平台级补偿，保留
+查询参数覆盖，便于 Windows / 其他浏览器后续复核；同时重新生成并回填中方
+`idle` / `run` / `fire` 三态 PNG，并新增 `scene/mountain-backdrop` 与
+`scene/supply-crate` 两张场景图，用于增强队友和山地远景层次。另将波次调度改为
+“当前波清空后可提前投放下一波”，避免清场后空窗过长；结算页按钮已明确写为
+“重新开始新的一局”。
+
 #### 🖥️ Debian
 
 2026-09-06：Debian 提交 `a626646` 补齐手榴弹范围内已阵亡目标的 combat 边界

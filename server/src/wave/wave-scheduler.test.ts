@@ -106,6 +106,42 @@ describe('WaveScheduler', () => {
     );
   });
 
+  it('清空当前波后会提前投放下一波并同步波次状态', () => {
+    const scheduler = createScheduler();
+    const firstWaveStartMs = config.waves.waves[0]!.startSec * 1000;
+    const secondWaveStartMs = config.waves.waves[1]!.startSec * 1000;
+
+    let firstWaveUpdate = scheduler.update(firstWaveStartMs, 0);
+    assert.equal(firstWaveUpdate.waveStarts.length, 1);
+    assert.equal(firstWaveUpdate.waveStarts[0]?.waveIndex, 1);
+    while (
+      scheduler.getProgress(firstWaveStartMs).spawnedEnemies <
+      config.waves.waves[0]!.enemyCount
+    ) {
+      firstWaveUpdate = scheduler.update(firstWaveStartMs, 0);
+    }
+    assert.equal(
+      scheduler.getProgress(firstWaveStartMs).currentWaveIndex,
+      1,
+    );
+
+    const earlySecondWaveUpdate = scheduler.update(
+      secondWaveStartMs - 1000,
+      0,
+    );
+    assert.equal(earlySecondWaveUpdate.waveStarts.length, 1);
+    assert.equal(earlySecondWaveUpdate.waveStarts[0]?.waveIndex, 2);
+    assert.equal(earlySecondWaveUpdate.enemiesToSpawn.length > 0, true);
+    assert.equal(
+      scheduler.getProgress(secondWaveStartMs - 1000).currentWaveIndex,
+      2,
+    );
+    assert.equal(
+      scheduler.getProgress(secondWaveStartMs - 1000).phase,
+      'wave',
+    );
+  });
+
   it('波次事件只发送一次', () => {
     const scheduler = createScheduler();
     const firstWaveStartMs = config.waves.waves[0]!.startSec * 1000;

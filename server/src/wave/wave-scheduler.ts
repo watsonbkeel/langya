@@ -52,6 +52,7 @@ export class WaveScheduler<
   private readonly maxAliveEnemies: number;
   private nextSpawnIndex = 0;
   private nextWaveStartIndex = 0;
+  private currentWaveIndex = 0;
 
   constructor(
     config: WaveSchedulerConfig<TEnemyType, TRouteId>,
@@ -70,7 +71,20 @@ export class WaveScheduler<
     elapsedMs: number,
     aliveEnemyCount: number,
   ): WaveSchedulerUpdate<TEnemyType, TRouteId> {
-    const waveStarts = this.collectWaveStarts(elapsedMs);
+    const forcedWaveIndex = this.findForcedWaveIndex(
+      elapsedMs,
+      aliveEnemyCount,
+    );
+    const waveStarts = this.collectWaveStarts(
+      elapsedMs,
+      forcedWaveIndex,
+    );
+    if (waveStarts.length > 0) {
+      this.currentWaveIndex = Math.max(
+        this.currentWaveIndex,
+        waveStarts[waveStarts.length - 1]!.waveIndex,
+      );
+    }
     const availableSlots = Math.max(
       0,
       this.maxAliveEnemies - aliveEnemyCount,
@@ -83,7 +97,11 @@ export class WaveScheduler<
       this.nextSpawnIndex < this.plan.length
     ) {
       const planned = this.plan[this.nextSpawnIndex];
-      if (!planned || planned.spawnAtMs > elapsedMs) {
+      if (
+        !planned ||
+        (planned.spawnAtMs > elapsedMs &&
+          planned.waveIndex !== forcedWaveIndex)
+      ) {
         break;
       }
       enemiesToSpawn.push(planned);
@@ -94,22 +112,38 @@ export class WaveScheduler<
   }
 
   getProgress(elapsedMs: number): WaveProgress {
+    const timeBasedCurrentWaveIndex = this.findCurrentWaveIndex(elapsedMs);
+    const currentWaveIndex = Math.max(
+      timeBasedCurrentWaveIndex,
+      this.currentWaveIndex,
+    );
+    const timeBasedPhase = this.findPhase(elapsedMs);
+    const phase =
+      currentWaveIndex > timeBasedCurrentWaveIndex &&
+      timeBasedPhase !== 'ended'
+        ? 'wave'
+        : timeBasedPhase;
+
     return {
-      phase: this.findPhase(elapsedMs),
-      currentWaveIndex: this.findCurrentWaveIndex(elapsedMs),
+      phase,
+      currentWaveIndex,
       spawnedEnemies: this.nextSpawnIndex,
       pendingEnemies: this.plan.length - this.nextSpawnIndex,
       totalEnemies: this.plan.length,
     };
   }
 
-  private collectWaveStarts(elapsedMs: number): readonly WaveStart[] {
+  private collectWaveStarts(
+    elapsedMs: number,
+    forcedWaveIndex: number | null,
+  ): readonly WaveStart[] {
     const starts: WaveStart[] = [];
     while (this.nextWaveStartIndex < this.waves.length) {
       const wave = this.waves[this.nextWaveStartIndex];
       if (
         !wave ||
-        wave.startSec * MILLISECONDS_PER_SECOND > elapsedMs
+        (wave.startSec * MILLISECONDS_PER_SECOND > elapsedMs &&
+          wave.index !== forcedWaveIndex)
       ) {
         break;
       }
@@ -121,6 +155,29 @@ export class WaveScheduler<
       this.nextWaveStartIndex += 1;
     }
     return starts;
+  }
+
+  private findForcedWaveIndex(
+    elapsedMs: number,
+    aliveEnemyCount: number,
+  ): number | null {
+    if (aliveEnemyCount > 0 || this.nextSpawnIndex === 0) {
+      return null;
+    }
+
+    const firstWave = this.waves[0];
+    if (
+      !firstWave ||
+      elapsedMs < firstWave.startSec * MILLISECONDS_PER_SECOND
+    ) {
+      return null;
+    }
+
+    const nextPlanned = this.plan[this.nextSpawnIndex];
+    if (!nextPlanned || nextPlanned.spawnAtMs <= elapsedMs) {
+      return null;
+    }
+    return nextPlanned.waveIndex;
   }
 
   private findPhase(elapsedMs: number): WavePhase {

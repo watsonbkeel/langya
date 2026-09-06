@@ -8,8 +8,24 @@ import {
   utils,
 } from 'cc';
 
-import type { GameplayConfig, PresentationConfig } from '../config/game-config';
 import type { RouteId } from '../../../../shared/protocol';
+import type {
+  GameplayConfig,
+  PresentationConfig,
+  WavesConfig,
+} from '../config/game-config';
+import {
+  createBillboard,
+  createBillboardMaterial,
+  createBillboardMesh,
+  faceBillboardToCamera,
+  loadTexture,
+} from '../core/billboard';
+
+const GROUND_UV_REPEAT = 8;
+const TERRAIN_BACKDROP_HEIGHT_M = 16;
+const COVER_HEIGHT_M = 1.4;
+const MACHINE_GUN_NEST_HEIGHT_M = 2.15;
 
 /**
  * M4 纯客户端场景装饰。
@@ -18,47 +34,84 @@ import type { RouteId } from '../../../../shared/protocol';
 export class M4SceneDecorations {
   private readonly root: Node;
   private readonly boxMesh: Mesh;
-  private readonly groundMaterial: Material;
-  private readonly slopeMaterial: Material;
-  private readonly stoneMaterial: Material;
+  private readonly billboardMesh: Mesh;
+  private readonly groundMesh: Mesh;
   private readonly routeMaterials: Readonly<Record<RouteId, Material>>;
+  private readonly terrainBackdropMaterial: Material;
+  private readonly groundTextureMaterial: Material;
+  private readonly machineGunNestMaterial: Material;
+  private readonly coverMaterial: Material;
+  private readonly crateMaterial: Material;
   private readonly gameplay: GameplayConfig;
-  private readonly presentation: PresentationConfig;
+  private readonly waves: WavesConfig;
+  private readonly maxRouteLengthM: number;
+  private cameraNode: Node | null = null;
+  private readonly billboardRoots: Node[] = [];
+  private groundRenderer: MeshRenderer | null = null;
 
   constructor(
     sceneRoot: Node,
     gameplay: GameplayConfig,
-    presentation: PresentationConfig,
+    waves: WavesConfig,
+    _presentation: PresentationConfig,
   ) {
     this.gameplay = gameplay;
-    this.presentation = presentation;
+    this.waves = waves;
+    this.maxRouteLengthM = Math.max(
+      waves.routes.A.lengthM,
+      waves.routes.B.lengthM,
+      waves.routes.C.lengthM,
+    );
     this.root = new Node('M4SceneDecorations');
     this.root.setParent(sceneRoot);
     this.boxMesh = utils.createMesh(
       primitives.box({ width: 1, height: 1, length: 1 }),
     );
-    this.groundMaterial = this.createMaterial(presentation.groundColor);
-    this.slopeMaterial = this.createMaterial('#53624A');
-    this.stoneMaterial = this.createMaterial('#6B6B5B');
+    this.billboardMesh = createBillboardMesh();
+    this.groundMesh = createGroundMesh(GROUND_UV_REPEAT);
     this.routeMaterials = {
-      A: this.createMaterial('#C69A62'),
-      B: this.createMaterial('#8EB2A2'),
-      C: this.createMaterial('#9C8FC4'),
+      A: this.createColorMaterial('#8E734F'),
+      B: this.createColorMaterial('#667B70'),
+      C: this.createColorMaterial('#726A82'),
     };
+    this.terrainBackdropMaterial = createBillboardMaterial();
+    this.groundTextureMaterial = this.createTextureMaterial();
+    this.machineGunNestMaterial = createBillboardMaterial();
+    this.coverMaterial = createBillboardMaterial();
+    this.crateMaterial = createBillboardMaterial();
 
-    this.createTerrainSteps();
+    this.createTexturedGround();
+    this.createTerrainBackdrop();
     this.createRouteMarkers();
-    this.createRouteSigns();
     this.createCoverLine();
-    this.createMachineGunBases();
+    this.createMachineGunNests();
+    this.createSupplyCrates();
+    this.loadSceneTextures();
+  }
+
+  setCameraNode(cameraNode: Node): void {
+    this.cameraNode = cameraNode;
+  }
+
+  update(): void {
+    for (const node of this.billboardRoots) {
+      faceBillboardToCamera(
+        node.getChildByName('Billboard') ?? node,
+        this.cameraNode,
+      );
+    }
   }
 
   destroy(): void {
     this.root.destroy();
     this.boxMesh.destroy();
-    this.groundMaterial.destroy();
-    this.slopeMaterial.destroy();
-    this.stoneMaterial.destroy();
+    this.billboardMesh.destroy();
+    this.groundMesh.destroy();
+    this.terrainBackdropMaterial.destroy();
+    this.groundTextureMaterial.destroy();
+    this.machineGunNestMaterial.destroy();
+    this.coverMaterial.destroy();
+    this.crateMaterial.destroy();
     for (const material of [
       this.routeMaterials.A,
       this.routeMaterials.B,
@@ -68,60 +121,31 @@ export class M4SceneDecorations {
     }
   }
 
-  private createTerrainSteps(): void {
+  private createTexturedGround(): void {
+    const ground = new Node('RockyGround');
+    ground.setParent(this.root);
+    ground.setPosition(0, 0.012, -this.maxRouteLengthM / 2);
+    ground.setScale(
+      this.gameplay.arena.widthM * 1.35,
+      1,
+      this.maxRouteLengthM + this.gameplay.arena.depthM,
+    );
+    this.groundRenderer = ground.addComponent(MeshRenderer);
+    this.groundRenderer.mesh = this.groundMesh;
+    this.groundRenderer.setSharedMaterial(this.groundTextureMaterial, 0);
+    this.groundRenderer.enabled = false;
+  }
+
+  private createTerrainBackdrop(): void {
     const width = this.gameplay.arena.widthM;
-    const depth = this.gameplay.arena.depthM;
-    // 三段低模坡地让镜头能看到山脚→中段→山顶的高低差。
-    this.createBlock(
-      'FootHill',
+    this.createBillboardProp(
+      'TerrainBackdrop',
+      this.terrainBackdropMaterial,
       0,
-      -1.25,
-      -depth * 0.82,
-      width * 1.55,
-      2.5,
-      depth * 0.45,
-      this.slopeMaterial,
-    );
-    this.createBlock(
-      'MidHill',
-      0,
-      -0.55,
-      -depth * 0.53,
-      width * 1.28,
-      1.1,
-      depth * 0.42,
-      this.slopeMaterial,
-    );
-    this.createBlock(
-      'TopRidge',
-      0,
-      -0.17,
-      -depth * 0.18,
-      width * 1.12,
-      0.34,
-      depth * 0.3,
-      this.groundMaterial,
-    );
-    // 两侧山脊只做视觉边界，不占用三条服务器路线。
-    this.createBlock(
-      'WestBank',
-      -width * 0.58,
-      0.6,
-      -depth * 0.58,
-      width / 18,
-      1.2,
-      depth * 0.8,
-      this.slopeMaterial,
-    );
-    this.createBlock(
-      'EastBank',
-      width * 0.58,
-      0.42,
-      -depth * 0.72,
-      width / 18,
-      0.84,
-      depth * 0.62,
-      this.slopeMaterial,
+      TERRAIN_BACKDROP_HEIGHT_M / 2 - 0.8,
+      -this.maxRouteLengthM - this.gameplay.arena.depthM / 2,
+      width * 2.5,
+      TERRAIN_BACKDROP_HEIGHT_M,
     );
   }
 
@@ -135,19 +159,18 @@ export class M4SceneDecorations {
       C: laneSpacing,
     };
     const routeDepths: Readonly<Record<RouteId, number>> = {
-      A: depth * 0.7,
-      B: depth * 0.95,
-      C: depth * 1.2,
+      A: this.waves.routes.A.lengthM,
+      B: this.waves.routes.B.lengthM,
+      C: this.waves.routes.C.lengthM,
     };
     for (const routeId of ['A', 'B', 'C'] as const) {
-      const markerWidth = width / 18;
       this.createBlock(
         `Route:${routeId}`,
         routeXs[routeId],
-        0.028,
+        0.024,
         -routeDepths[routeId] / 2,
-        markerWidth,
-        0.04,
+        width / 42,
+        0.025,
         routeDepths[routeId],
         this.routeMaterials[routeId],
       );
@@ -157,9 +180,7 @@ export class M4SceneDecorations {
   private createCoverLine(): void {
     const width = this.gameplay.arena.widthM;
     const depth = this.gameplay.arena.depthM;
-    const coverWidth = width / 9;
-    const coverHeight = 0.65;
-    const coverDepth = 0.9;
+    const coverWidth = width / 7.5;
     const positions: readonly [number, number][] = [
       [-width * 0.38, -depth * 0.16],
       [-width * 0.17, -depth * 0.28],
@@ -169,70 +190,132 @@ export class M4SceneDecorations {
       [width * 0.34, -depth * 0.48],
     ];
     positions.forEach(([x, z], index) => {
-      this.createBlock(
+      this.createBillboardProp(
         `StoneCover:${index}`,
+        this.coverMaterial,
         x,
-        coverHeight / 2,
+        COVER_HEIGHT_M / 2,
         z,
         coverWidth,
-        coverHeight,
-        coverDepth,
-        this.stoneMaterial,
+        COVER_HEIGHT_M,
       );
     });
   }
 
-  private createRouteSigns(): void {
+  private createMachineGunNests(): void {
     const width = this.gameplay.arena.widthM;
     const depth = this.gameplay.arena.depthM;
-    const laneSpacing = width / 3;
-    const routeXs: Readonly<Record<RouteId, number>> = {
-      A: -laneSpacing,
-      B: 0,
-      C: laneSpacing,
-    };
-    for (const routeId of ['A', 'B', 'C'] as const) {
-      const x = routeXs[routeId];
-      const z = -depth * 0.44;
-      this.createBlock(
-        `RouteSignPost:${routeId}`,
+    for (const [index, x] of [-width / 3, width / 3].entries()) {
+      this.createBillboardProp(
+        `MachineGunNest:${index}`,
+        this.machineGunNestMaterial,
         x,
-        0.6,
-        z,
-        0.18,
-        1.2,
-        0.18,
-        this.routeMaterials[routeId],
-      );
-      this.createBlock(
-        `RouteSignCap:${routeId}`,
-        x,
-        1.18,
-        z,
-        0.55,
-        0.12,
-        0.22,
-        this.routeMaterials[routeId],
+        MACHINE_GUN_NEST_HEIGHT_M / 2,
+        -depth * 0.1,
+        width / 7,
+        MACHINE_GUN_NEST_HEIGHT_M,
       );
     }
   }
 
-  private createMachineGunBases(): void {
+  private createSupplyCrates(): void {
     const width = this.gameplay.arena.widthM;
     const depth = this.gameplay.arena.depthM;
-    const baseWidth = width / 10;
-    for (const [index, x] of [-width / 3, width / 3].entries()) {
-      this.createBlock(
-        `MachineGunBase:${index}`,
+    const positions: readonly [number, number][] = [
+      [-width * 0.22, -depth * 0.2],
+      [0, -depth * 0.24],
+      [width * 0.22, -depth * 0.2],
+    ];
+    positions.forEach(([x, z], index) => {
+      this.createBillboardProp(
+        `SupplyCrate:${index}`,
+        this.crateMaterial,
         x,
-        0.18,
-        -depth * 0.12,
-        baseWidth,
-        0.36,
-        depth / 14,
-        this.stoneMaterial,
+        0.55,
+        z,
+        2.25,
+        1.55,
       );
-    }
+    });
+  }
+
+  private loadSceneTextures(): void {
+    this.loadBillboardTexture(
+      'scene/terrain-backdrop',
+      this.terrainBackdropMaterial,
+      (name) => name === 'TerrainBackdrop',
+    );
+    loadTexture('scene/rocky-ground', (texture) => {
+      if (!this.root.isValid || !this.groundRenderer) {
+        return;
+      }
+      this.groundTextureMaterial.setProperty('mainTexture', texture);
+      this.groundRenderer.enabled = true;
+    });
+    this.loadBillboardTexture(
+      'scene/mg-emplacement',
+      this.machineGunNestMaterial,
+      (name) => name.startsWith('MachineGunNest:'),
+    );
+    this.loadBillboardTexture(
+      'scene/stone-barricade',
+      this.coverMaterial,
+      (name) => name.startsWith('StoneCover:'),
+    );
+    this.loadBillboardTexture(
+      'scene/supply-crate',
+      this.crateMaterial,
+      (name) => name.startsWith('SupplyCrate:'),
+    );
+  }
+
+  private loadBillboardTexture(
+    path: string,
+    material: Material,
+    matches: (name: string) => boolean,
+  ): void {
+    loadTexture(path, (texture) => {
+      if (!this.root.isValid) {
+        return;
+      }
+      material.setProperty('mainTexture', texture);
+      for (const node of this.billboardRoots) {
+        if (!matches(node.name)) {
+          continue;
+        }
+        const renderer = node
+          .getChildByName('Billboard')
+          ?.getComponent(MeshRenderer);
+        if (renderer) {
+          renderer.enabled = true;
+        }
+      }
+    });
+  }
+
+  private createBillboardProp(
+    name: string,
+    material: Material,
+    x: number,
+    y: number,
+    z: number,
+    width: number,
+    height: number,
+  ): Node {
+    const node = new Node(name);
+    node.setParent(this.root);
+    node.setPosition(x, y, z);
+    node.setScale(width, height, 1);
+    const renderer = createBillboard(
+      node,
+      null,
+      this.billboardMesh,
+      material,
+      { centerY: 0, widthScale: 1 },
+    );
+    renderer.enabled = false;
+    this.billboardRoots.push(node);
+    return node;
   }
 
   private createBlock(
@@ -255,7 +338,7 @@ export class M4SceneDecorations {
     return node;
   }
 
-  private createMaterial(colorHex: string): Material {
+  private createColorMaterial(colorHex: string): Material {
     const material = new Material();
     material.initialize({
       effectName: 'builtin-unlit',
@@ -264,4 +347,40 @@ export class M4SceneDecorations {
     material.setProperty('mainColor', Color.fromHEX(new Color(), colorHex));
     return material;
   }
+
+  private createTextureMaterial(): Material {
+    const material = new Material();
+    material.initialize({
+      effectName: 'builtin-unlit',
+      defines: { USE_TEXTURE: true },
+    });
+    material.setProperty('mainColor', Color.WHITE);
+    return material;
+  }
+}
+
+function createGroundMesh(uvRepeat: number): Mesh {
+  return utils.createMesh({
+    positions: [
+      -0.5, 0, -0.5,
+      -0.5, 0, 0.5,
+      0.5, 0, 0.5,
+      0.5, 0, -0.5,
+    ],
+    normals: [
+      0, 1, 0,
+      0, 1, 0,
+      0, 1, 0,
+      0, 1, 0,
+    ],
+    uvs: [
+      0, 0,
+      0, uvRepeat,
+      uvRepeat, uvRepeat,
+      uvRepeat, 0,
+    ],
+    indices: [0, 1, 3, 3, 1, 2],
+    minPos: { x: -0.5, y: 0, z: -0.5 },
+    maxPos: { x: 0.5, y: 0, z: 0.5 },
+  });
 }

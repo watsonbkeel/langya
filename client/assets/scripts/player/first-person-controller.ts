@@ -59,6 +59,7 @@ export class FirstPersonController {
   private readonly preventContextMenu = (event: Event): void => {
     event.preventDefault();
   };
+  private readonly invertMouseYAxis = detectMouseYAxisInversion();
 
   constructor(
     sceneRoot: Node,
@@ -315,9 +316,10 @@ export class FirstPersonController {
       Math.min(MAX_MOUSE_DELTA_PX, event.getDeltaY()),
     );
     this.aimYaw -= deltaX * this.presentation.mouseSensitivityDeg;
-    // Cocos 相机与协议统一使用“正 pitch 向上”，因此鼠标上移
-    // (deltaY<0) 会增加 pitch，方向符合直觉。
-    this.aimPitch -= deltaY * this.presentation.mouseSensitivityDeg;
+    // 运行时默认兼容 macOS 上常见的上下反向问题，同时保留 URL 级别的
+    // 明确覆盖能力，避免不同浏览器/平台的 Pointer Lock 行为不一致。
+    const pitchDelta = this.invertMouseYAxis ? -deltaY : deltaY;
+    this.aimPitch += pitchDelta * this.presentation.mouseSensitivityDeg;
     const pitchMin =
       this.mountedAimLimits?.pitchMinDeg ??
       this.gameplay.player.aimPitchMinDeg;
@@ -486,4 +488,23 @@ function shortestAngleDelta(baseYaw: number, aimYaw: number): number {
 function normalizeDegrees(value: number): number {
   const normalized = ((value + 180) % 360 + 360) % 360 - 180;
   return normalized === -180 ? 180 : normalized;
+}
+
+function detectMouseYAxisInversion(): boolean {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  const search = new URLSearchParams(window.location.search);
+  const explicit = search.get('invertMouseY');
+  if (explicit === '1' || explicit === 'true') {
+    return true;
+  }
+  if (explicit === '0' || explicit === 'false') {
+    return false;
+  }
+
+  const platform =
+    `${navigator.userAgent} ${navigator.platform}`.toLowerCase();
+  return platform.includes('mac');
 }

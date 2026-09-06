@@ -4,8 +4,6 @@ import {
   Mesh,
   MeshRenderer,
   Node,
-  primitives,
-  utils,
 } from 'cc';
 
 import type {
@@ -18,6 +16,13 @@ import type {
   PresentationConfig,
   WeaponsConfig,
 } from '../config/game-config';
+import {
+  createBillboard,
+  createBillboardMaterial,
+  createBillboardMesh,
+  faceBillboardToCamera,
+  loadTexture,
+} from '../core/billboard';
 
 export type InteractionTarget =
   | {
@@ -41,7 +46,7 @@ export type InteractionTarget =
 
 export class M3WorldInteractions {
   private readonly root: Node;
-  private readonly mesh: Mesh;
+  private readonly billboardMesh: Mesh;
   private readonly supplyMaterial: Material;
   private readonly rackMaterial: Material;
   private readonly machineGunMaterial: Material;
@@ -51,6 +56,10 @@ export class M3WorldInteractions {
   private readonly weapons: WeaponsConfig;
   private readonly itemNodes = new Map<string, Node>();
   private readonly machineGunNodes = new Map<string, Node>();
+  private cameraNode: Node | null = null;
+  private supplyReady = false;
+  private rackReady = false;
+  private machineGunReady = false;
   private items: readonly ItemState[] = [];
   private machineGuns: readonly MachineGunState[] = [];
 
@@ -65,17 +74,35 @@ export class M3WorldInteractions {
     this.weapons = weapons;
     this.root = new Node('M3Interactions');
     this.root.setParent(sceneRoot);
-    this.mesh = utils.createMesh(
-      primitives.box({ width: 1, height: 1, length: 1 }),
+    this.billboardMesh = createBillboardMesh();
+    this.supplyMaterial = createBillboardMaterial();
+    this.rackMaterial = createBillboardMaterial();
+    this.machineGunMaterial = createBillboardMaterial();
+    this.hotMachineGunMaterial = createBillboardMaterial();
+    this.hotMachineGunMaterial.setProperty(
+      'mainColor',
+      Color.fromHEX(new Color(), presentation.machineGunHotColor),
     );
-    this.supplyMaterial = this.createMaterial(presentation.supplyColor);
-    this.rackMaterial = this.createMaterial(presentation.weaponRackColor);
-    this.machineGunMaterial = this.createMaterial(
-      presentation.machineGunColor,
-    );
-    this.hotMachineGunMaterial = this.createMaterial(
-      presentation.machineGunHotColor,
-    );
+    this.loadVisualAssets();
+  }
+
+  setCameraNode(cameraNode: Node): void {
+    this.cameraNode = cameraNode;
+  }
+
+  update(): void {
+    for (const node of this.itemNodes.values()) {
+      faceBillboardToCamera(
+        node.getChildByName('Billboard') ?? node,
+        this.cameraNode,
+      );
+    }
+    for (const node of this.machineGunNodes.values()) {
+      faceBillboardToCamera(
+        node.getChildByName('Billboard') ?? node,
+        this.cameraNode,
+      );
+    }
   }
 
   sync(
@@ -156,10 +183,42 @@ export class M3WorldInteractions {
     this.itemNodes.clear();
     this.machineGunNodes.clear();
     this.root.destroy();
+    this.billboardMesh.destroy();
     this.supplyMaterial.destroy();
     this.rackMaterial.destroy();
     this.machineGunMaterial.destroy();
     this.hotMachineGunMaterial.destroy();
+  }
+
+  private loadVisualAssets(): void {
+    loadTexture('scene/supply-crate', (texture) => {
+      if (!this.root.isValid) {
+        return;
+      }
+      this.supplyMaterial.setProperty('mainTexture', texture);
+      this.supplyReady = true;
+      this.refreshItemRenderers();
+    });
+    loadTexture('scene/weapon-rack', (texture) => {
+      if (!this.root.isValid) {
+        return;
+      }
+      this.rackMaterial.setProperty('mainTexture', texture);
+      this.rackReady = true;
+      this.refreshItemRenderers();
+    });
+    loadTexture('weapons/fp/type92-hmg', (texture) => {
+      if (!this.root.isValid) {
+        return;
+      }
+      this.machineGunMaterial.setProperty('mainTexture', texture);
+      this.hotMachineGunMaterial.setProperty('mainTexture', texture);
+      this.machineGunReady = true;
+      for (const [gunId, node] of this.machineGunNodes) {
+        const state = this.machineGuns.find((gun) => gun.id === gunId);
+        this.applyMachineGunVisual(node, state?.isOverheated ?? false);
+      }
+    });
   }
 
   private syncItems(items: readonly ItemState[]): void {
@@ -171,20 +230,26 @@ export class M3WorldInteractions {
       visibleIds.add(item.id);
       let node = this.itemNodes.get(item.id);
       if (!node) {
-        node = this.createNode(`Item:${item.id}`);
+        node = this.createBillboardNode(`Item:${item.id}`);
         this.itemNodes.set(item.id, node);
       }
-      const size = this.presentation.worldItemSizeM;
-      node.setPosition(item.position.x, item.position.y + size / 2, item.position.z);
-      node.setScale(size, size, size);
-      node
-        .getComponent(MeshRenderer)
-        ?.setSharedMaterial(
-          item.kind === 'airdrop_medkit'
-            ? this.supplyMaterial
-            : this.rackMaterial,
-          0,
-        );
+      const isSupply = item.kind === 'airdrop_medkit';
+      const width = this.presentation.worldItemSizeM * (isSupply ? 2 : 3.2);
+      const height = this.presentation.worldItemSizeM * (isSupply ? 1.5 : 3);
+      node.setPosition(
+        item.position.x,
+        item.position.y + height / 2,
+        item.position.z,
+      );
+      node.setScale(width, height, 1);
+      const renderer = this.getBillboardRenderer(node);
+      renderer?.setSharedMaterial(
+        isSupply ? this.supplyMaterial : this.rackMaterial,
+        0,
+      );
+      if (renderer) {
+        renderer.enabled = isSupply ? this.supplyReady : this.rackReady;
+      }
     }
     for (const [itemId, node] of this.itemNodes) {
       if (!visibleIds.has(itemId)) {
@@ -200,24 +265,18 @@ export class M3WorldInteractions {
       visibleIds.add(gun.id);
       let node = this.machineGunNodes.get(gun.id);
       if (!node) {
-        node = this.createNode(`MachineGun:${gun.id}`);
+        node = this.createBillboardNode(`MachineGun:${gun.id}`);
         this.machineGunNodes.set(gun.id, node);
       }
-      node.setPosition(gun.position.x, gun.position.y, gun.position.z);
-      node.setRotationFromEuler(0, gun.baseYaw, 0);
-      node.setScale(
-        this.presentation.machineGunWidthM,
-        this.presentation.machineGunHeightM,
-        this.presentation.machineGunLengthM,
+      const width = this.presentation.machineGunLengthM * 1.5;
+      const height = this.presentation.machineGunHeightM * 1.7;
+      node.setPosition(
+        gun.position.x,
+        gun.position.y + height / 2,
+        gun.position.z,
       );
-      node
-        .getComponent(MeshRenderer)
-        ?.setSharedMaterial(
-          gun.isOverheated
-            ? this.hotMachineGunMaterial
-            : this.machineGunMaterial,
-          0,
-        );
+      node.setScale(width, height, 1);
+      this.applyMachineGunVisual(node, gun.isOverheated);
     }
     for (const [gunId, node] of this.machineGunNodes) {
       if (!visibleIds.has(gunId)) {
@@ -227,22 +286,50 @@ export class M3WorldInteractions {
     }
   }
 
-  private createNode(name: string): Node {
+  private refreshItemRenderers(): void {
+    for (const item of this.items) {
+      const node = this.itemNodes.get(item.id);
+      const renderer = node ? this.getBillboardRenderer(node) : null;
+      if (!renderer) {
+        continue;
+      }
+      const isSupply = item.kind === 'airdrop_medkit';
+      renderer.setSharedMaterial(
+        isSupply ? this.supplyMaterial : this.rackMaterial,
+        0,
+      );
+      renderer.enabled = isSupply ? this.supplyReady : this.rackReady;
+    }
+  }
+
+  private applyMachineGunVisual(node: Node, overheated: boolean): void {
+    const renderer = this.getBillboardRenderer(node);
+    if (!renderer) {
+      return;
+    }
+    renderer.setSharedMaterial(
+      overheated ? this.hotMachineGunMaterial : this.machineGunMaterial,
+      0,
+    );
+    renderer.enabled = this.machineGunReady;
+  }
+
+  private createBillboardNode(name: string): Node {
     const node = new Node(name);
     node.setParent(this.root);
-    const renderer = node.addComponent(MeshRenderer);
-    renderer.mesh = this.mesh;
+    const renderer = createBillboard(
+      node,
+      null,
+      this.billboardMesh,
+      this.supplyMaterial,
+      { centerY: 0, widthScale: 1 },
+    );
+    renderer.enabled = false;
     return node;
   }
 
-  private createMaterial(colorHex: string): Material {
-    const material = new Material();
-    material.initialize({
-      effectName: 'builtin-unlit',
-      defines: { USE_COLOR: true },
-    });
-    material.setProperty('mainColor', Color.fromHEX(new Color(), colorHex));
-    return material;
+  private getBillboardRenderer(node: Node): MeshRenderer | null {
+    return node.getChildByName('Billboard')?.getComponent(MeshRenderer) ?? null;
   }
 
   private weaponName(weaponId: string): string {

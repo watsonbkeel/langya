@@ -167,6 +167,12 @@ export class M1Game {
       config.gameplay,
       config.weapons,
     );
+    this.hud.setRestartHandler(() => {
+      // 结算页只负责重新进入一局；新局仍由服务器创建并裁决。
+      if (typeof window !== 'undefined') {
+        window.location.reload();
+      }
+    });
     this.weaponView = new WeaponView(
       canvas,
       config.presentation,
@@ -195,6 +201,7 @@ export class M1Game {
     this.sceneDecorations = new M4SceneDecorations(
       sceneRoot,
       config.gameplay,
+      config.waves,
       config.presentation,
     );
     this.controller = new FirstPersonController(
@@ -216,6 +223,8 @@ export class M1Game {
     );
     this.enemyRenderer.setCameraNode(this.controller.getCameraNode());
     this.allyRenderer.setCameraNode(this.controller.getCameraNode());
+    this.worldInteractions.setCameraNode(this.controller.getCameraNode());
+    this.sceneDecorations.setCameraNode(this.controller.getCameraNode());
     this.netClient = new NetClient({
       onStatus: (status) => {
         this.connected = status.kind === 'connected';
@@ -299,6 +308,8 @@ export class M1Game {
     }
     this.enemyRenderer.update(deltaTime);
     this.allyRenderer.update(deltaTime);
+    this.worldInteractions.update();
+    this.sceneDecorations.update();
     if (this.mountedMachineGun && this.controller.isFireHeld()) {
       const config =
         this.config.weapons.emplacement[this.mountedMachineGun.weaponId];

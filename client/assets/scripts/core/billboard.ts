@@ -46,15 +46,18 @@ export function createBillboard(
   texture: Texture2D | null,
   mesh: Mesh,
   material: Material,
+  options: {
+    readonly centerY?: number;
+    readonly widthScale?: number;
+  } = {},
 ): MeshRenderer {
   const node = new Node('Billboard');
   node.setParent(parent);
-  // 父节点原点是脚底，四边形中心需上移到角色腰部中心。
-  node.setPosition(0, 0.5, 0);
-  // 角色根节点同时承担碰撞盒尺寸，通常会被压成“半宽高”的长方体。
-  // 立绘本身是方形透明 PNG，因此在子节点上补回横向比例，避免远景
-  // 看起来像一条竖线；这只影响视觉，不改变根节点的命中盒。
-  node.setScale(2, 1, 1);
+  // 角色默认以脚底为根节点，因此中心上移 0.5；场景道具可显式传 0。
+  node.setPosition(0, options.centerY ?? 0.5, 0);
+  // 角色命中盒较窄，需要默认补回横向比例；场景道具使用 widthScale=1，
+  // 避免把整张场景图横向拉伸成条纹。
+  node.setScale(options.widthScale ?? 2, 1, 1);
   const renderer = node.addComponent(MeshRenderer);
   renderer.mesh = mesh;
   renderer.setSharedMaterial(material, 0);
