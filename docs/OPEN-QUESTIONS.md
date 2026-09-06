@@ -57,6 +57,7 @@
 | 5 | debian | 2026-09-04 | 在 `gameplay.json` 增加 `combat.defenderCoverExposureMultiplier = 0.15` 和 `server.maxSingleMatchCpuPercent = 20` | M2 实测发现敌方命中率已按 PRD 固定，但防守位石垒遮挡没有数值真源，导致 4 名队友平均仅存活 75.29 秒；10 局只读扫描中 0.15 可使平均生存约 192.68 秒并保持队友击杀占比约 25.31%。CPU 20% 是既有验收红线，也需由配置供校准器判定 | 服务端敌方命中结算、M2 校准器；客户端可忽略这两个服务端裁决字段 | 双方已确认，Debian 已实现 |
 | 6 | debian | 2026-09-04 | M3 增量增加 `switch_weapon` / `use_medkit` / `pickup` / `mount_mg` / `unmount_mg` / `throw_grenade` 上行消息，增加 `action_result` / `match_start` / `wave_start` / `supply_drop` / `match_end` 下行消息；`ItemState` 扩为补给与武器架联合，并给世界快照增加比赛进度和重机枪状态 | 完成 5 分钟四波单局、武器切换、血包、空投、重机枪、计分和战报必须由服务器裁决，同时给 Mac 提供完整表现数据 | 服务端消息解析、M3 战斗会话、波次/物品/重机枪/计分/战报；Mac HUD、交互、空投、重机枪和战报页 | 双方已确认，Debian 已实现 |
 | 7 | debian | 2026-09-04 | 在 `gameplay.json` 增加 `arena.itemPickupRangeM = 2.0`、`arena.machineGunMountRangeM = 2.0` | PRD 规定拾取与靠近枪位交互，但未给出服务端距离容差；该数值不能硬编码。2 米可覆盖第一人称交互误差且不会跨越阵地远程拾取或占枪 | 服务端拾取和重机枪占用校验；Mac 可用相同距离显示交互提示 | 双方已确认，Debian 已实现 |
+| 8 | mac 主 Agent | 2026-09-06 | M5 增量增加创建 / 加入 / 快速匹配 / 准备 / 开局 / 重连消息、房间动作结果、稳定真人身份、重连凭证、真人开火表现和可协商的量化差量快照；保留旧 `join` 的单人开局语义 | 当前服务端是一条 WebSocket 各自创建一场单人战斗，断线即停止该局；客户端连接后也会立即发送旧 `join`。M5 必须先建立“一房间一权威战斗、多连接映射到稳定玩家身份”的共享契约 | `shared/protocol.ts`、服务端房间 / 连接 / 战斗广播 / 计分 / 测试、客户端网络层 / 大厅 / 席位 / 多人表现 / 重连 | **待 Watson 与 Debian / Mac 双端确认；确认前不得修改 `shared/**`** |
 
 <!-- 示例：
 | 1 | debian | 2026-09-05 | snapshot 增加 allyRoute 字段 | 客户端要显示队友在哪条路线 | 客户端队友面板 | 待确认 |
@@ -224,6 +225,117 @@
 - 同一重机枪同时最多一个占用者；AI 的上枪请求永远拒绝。挂载期间服务器锁定
   玩家移动，并按枪位角度制 `baseYaw` 校验水平射界、按武器配置校验俯仰和
   过热；`heatRatio` 始终限制在 `[0, 1]`。
+
+### 提案 8：M5 多人房间、重连与快照兼容协议草案
+
+#### 只读审计结论
+
+- 当前 `GameWebSocketServer` 把 `battle`、`waveScheduler` 和 `GameLoop` 挂在
+  单个连接会话上；每个旧 `join` 都创建 `${playerId}:solo`，连接关闭就停止该局。
+- 当前客户端 WebSocket 打开后立即发送旧 `join`，没有大厅、房间码、稳定玩家
+  身份或重连入口。
+- `AllyState` 已包含其他友军的坐标、朝向、蹲姿和武器状态，`ScoreTracker`
+  也能按多个 `occupantId` 计分；可复用这些结构，但战斗实例必须提升为房间级。
+- 当前快照只有全量 JSON `world_snapshot`，没有量化格式、基线 tick、关键帧请求
+  或能力协商；不能直接把既有消息改成差量格式。
+
+#### 兼容原则
+
+1. 保留 `PROTOCOL_VERSION = 1`、现有信封和旧 `join`；旧 `join` 继续表示立即创建
+   并开始单人房间，确保 M0–M4 客户端仍能工作。
+2. M5 只增量增加消息。多人入口在创建 / 加入成功前不启动战斗循环；活动房间
+   禁止中途加入。
+3. 创建 / 加入 / 重连携带 `capabilities: readonly ClientCapability[]`；初始能力至少
+   包含 `snapshot_q16_delta_v1`。双方未共同声明该能力时继续发送既有全量
+   `world_snapshot`，不得静默换编码。
+4. WebSocket 只代表当前连接，不代表玩家身份。`playerId` 和房间均由服务器生成；
+   客户端后续战斗消息不携带可冒充的玩家 ID。
+
+#### 新增客户端消息
+
+| 消息 | payload 字段 | 固定语义 |
+|---|---|---|
+| `create_room` | `playerName`, `protocolVersion`, `capabilities` | 创建等待房间，创建者为房主 |
+| `join_room` | `roomCode`, `playerName`, `protocolVersion`, `capabilities` | 仅可加入 `forming` 房间，真人顶替一个 AI 席位 |
+| `quick_match` | `playerName`, `protocolVersion`, `capabilities` | 加入可用等待房；没有则创建 |
+| `player_ready` | `ready`, `clientTick` | 只改变自己的准备状态 |
+| `start_match` | `clientTick` | 仅房主可发；不必满员，空位保留 AI |
+| `reconnect_room` | `roomCode`, `reconnectToken`, `protocolVersion`, `capabilities` | 只接受运行时保存的未过期凭证，成功后回原席位并轮换凭证 |
+| `request_snapshot_keyframe` | `lastAppliedTick` | 差量基线缺失时请求下一帧完整关键帧 |
+
+`roomCode` 统一转大写并严格限制长度 / 字符集；`playerName` 限长、去首尾空白并
+拒绝控制字符。具体长度写入服务端运行配置，不把业务数值散落在解析器中。
+
+#### 新增服务端消息与状态
+
+| 消息 / 类型 | payload 或新增字段 |
+|---|---|
+| `room_joined` | `roomId`, `roomCode`, `playerId`, `seatIndex`, `isHost`, `reconnectToken`, `reconnectWindowSec`, `snapshotEncoding` |
+| `room_error` | `requestType`, `reason`, `message`；`reason` 为 `invalid_name / invalid_room_code / room_not_found / room_full / room_locked / already_in_room / not_in_room / not_host / not_ready / reconnect_rejected / unsupported_capability / invalid_state` |
+| `RoomSeatState` | 增加 `connected`, `ready`, `reconnectExpiresAtMs?`；`isBot` 仍表示当前席位是否由 AI 占据 |
+| `RoomStatePayload` | 增加 `roomCode`, `hostPlayerId?`；仍保证恰好 5 席并按 `seatIndex` 排序 |
+| `ally_fired` | `occupantId`, `weaponId`, `originPos`, `dirVec`, `serverTick`；只用于其他真人的枪口 / 后坐表现，不代表命中 |
+| `world_snapshot_delta` | `encoding: 'q16-delta-v1'`, `tick`, `baseTick?`, `keyframe`, `serverTimeMs`, `changedAllies`, `removedAllyIds`, `changedEnemies`, `removedEnemyIds`, `changedItems`, `removedItemIds`, `match?`, `machineGuns?` |
+| `ScoreboardEntry` | 增加 `controllerKind: 'human' \| 'bot' \| 'ai_takeover'`, `humanKills`, `aiTakeoverKills`, `mvpEligible`；既有 `kills` 保持为席位总数，兼容旧战报 |
+
+位置量化类型使用 int16 三元组，量化原点与比例来自双方已同步的地图 / 表现配置；
+每个差量包必须声明 `baseTick`。客户端只在已应用该基线时合并，否则丢弃差量并
+发送 `request_snapshot_keyframe`。服务端定期发送关键帧，且在重连、请求恢复或
+发生背压丢帧后强制发送关键帧。战斗事件、动作结果与 `match_end` 始终是关键消息，
+不得因差量或视野裁剪丢弃。
+
+#### 房间与重连固定语义
+
+- 服务端维护 `rooms: Map<roomId, RoomRuntime>` 与连接到稳定 `playerId` 的映射；
+  一个房间只有一个权威 `battle / waveScheduler / GameLoop`，向房内全部连接广播。
+- 等待房始终 5 席。真人加入时只顶替 AI；真人离开等待房后恢复 AI。战斗开始后
+  锁房，不允许新玩家加入。
+- 重连凭证必须使用密码学安全随机数，仅保存在服务器内存和该玩家客户端本地；
+  不进入日志、URL、`room_state`、SQLite、Git 或公开错误信息。成功重连后立即
+  轮换旧凭证，重复、跨房、已过期或已有活动连接的凭证全部以统一的
+  `reconnect_rejected` 拒绝，避免泄露凭证状态。
+- 活动对局断线后原真人席位保留 60 秒并停止接收旧输入；60 秒内重连回原席位并
+  收到最新权威关键帧，超时后该席位永久转 AI 接管。房主掉线不终止已开始对局。
+- 计分绑定稳定 `playerId` 而不是 socket ID。重连前后成绩连续；永久 AI 接管前后
+  分别累计 `humanKills` / `aiTakeoverKills`，`kills` 为两者之和。接管后的席位设置
+  `mvpEligible = false`，不得让离线真人凭 AI 后续成绩参与 MVP。`match_end` 仍以
+  全房唯一战报广播，并保留“仅存活真人参评”的既有规则。
+
+#### 反作弊边界
+
+- 服务端只从连接会话推导玩家身份和房间；忽略 / 拒绝客户端伪造的玩家、席位、
+  命中、伤害、击杀、HP、弹药、计分或胜负字段。
+- 继续执行严格递增 `clientTick`、射速、换弹、移动速度、地图边界、射击原点、
+  单位方向、视距、武器所有权与重机枪占用校验；房间动作另做频率限制。
+- 非法 JSON / 二进制 / 未知消息使用既有协议关闭码；合法但被拒绝的房间动作返回
+  `room_error`，不泄露房间是否存在以外的凭证细节。
+
+#### 迁移顺序
+
+1. Watson 与 Debian / Mac 确认本提案。
+2. 主 Agent 独占修改 `shared/protocol.ts`，只增加消息 / 类型，并补协议编译测试；
+   提交推送后两端拉到同一 commit。
+3. Debian 先把连接、等待房、房间级战斗运行时和 2 连接集成测试落地，保留旧
+   `join` 单人路径。
+4. Mac 再实现显式连接、大厅 / 房间 UI 和 `room_joined / room_error` 解析；不做
+   本地房间或战斗判定。
+5. 正确性通过后再分两次增加重连，以及 `q16-delta-v1` / 视野裁剪；不得与房间
+   MVP 一次混做。
+
+#### 最小测试矩阵
+
+| # | 场景 | 必须证明 |
+|---|---|---|
+| 1 | 旧 `join` 单人回归 | 仍为 1 真人 + 4 AI，M0–M4 消息兼容 |
+| 2 | 创建 + 第二真人加入 | 两连接共享同一 `roomId` / tick，恒定 5 席且只少 1 AI |
+| 3 | 房间拒绝路径 | 无效码、满房、活动房、非房主开局均返回稳定错误原因 |
+| 4 | 五席不变量 | 1–5 真人时席位唯一、顺序稳定、AI 数恰为 `5 - 真人数` |
+| 5 | 权威身份 | A 连接不能操纵 B；伪造 origin / 方向 / 射速 / 移速被拒绝且不改状态 |
+| 6 | 断线与重连 | 60 秒内回原席、成绩连续、旧 token 失效、重复 / 跨房 token 被拒绝 |
+| 7 | 重连超时 | 60 秒后 AI 接管且对局继续，迟到 token 被拒绝 |
+| 8 | 多人计分 | 各真人击杀归属正确；阵亡 / 离线真人和 AI 不参与 MVP |
+| 9 | 快照恢复 | 丢失 `baseTick` 会请求关键帧；重连 / 背压后首帧可独立恢复 |
+| 10 | 三真人完整局 | 200 人、五席战报、MVP、无鬼影；不能用模拟握手代替人工整局 |
 
 ## 执行期间新增（Codex 追加区）
 
