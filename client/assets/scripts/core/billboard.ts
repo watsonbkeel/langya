@@ -36,9 +36,9 @@ export function loadSpriteFrame(
 }
 
 export function combatSpritePath(path: string): string {
-  // 当前素材批次的 idle 是 T-Pose，side 是自然站立的战斗占位姿态。
-  // 这里仅做表现层路径选择；run/fire 贴图待美术素材补齐后再接入。
-  return path.endsWith('/idle') ? path.replace(/\/idle$/, '/side') : path;
+  // 生成素材 Agent 已提供自然站立 idle；保留配置路径作为状态基准，
+  // run/fire 由渲染器按 AI 状态切换，不再把 T-Pose 或 side 当最终姿态。
+  return path;
 }
 
 export function createBillboard(

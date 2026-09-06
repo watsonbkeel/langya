@@ -33,7 +33,7 @@ MAX_TOTAL_MB = 25
 
 # 路径前缀 -> 期望尺寸（None = 只校验上限）
 SPEC = {
-    "chars/": {"suffix": {"idle": (512, 512), "side": (512, 512), "portrait": (128, 128)}},
+    "chars/": {"suffix": {"idle": (512, 512), "side": (512, 512), "run": (512, 512), "fire": (512, 512), "portrait": (128, 128)}},
     "weapons/icons/": {"exact": (128, 64)},
     "weapons/fp/": {"max_width": 1024},
 }

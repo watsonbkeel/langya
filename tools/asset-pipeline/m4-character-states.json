@@ -1,0 +1,22 @@
+[
+  {
+    "name": "jp-soldier-run-ai",
+    "prompt": "Use case: historical-scene. Asset type: 2.5D game character sprite. Primary request: a World War II era Japanese infantry soldier running uphill in a natural combat movement pose, both arms naturally bent while safely carrying a Type 38 rifle, full body from helmet to boots, feet aligned on a clear ground contact line. Style/medium: realistic historical concept art matching a clean game asset cutout. Composition/framing: centered full-body portrait with generous margin. Lighting/mood: neutral studio light. Color palette: muted khaki and olive. Constraints: transparent background, no text, no watermark, no blood, no gore, no hate symbols, no extra people. Avoid: T-pose, arms stretched sideways, floating feet, cropped limbs, modern equipment."
+  },
+  {
+    "name": "jp-soldier-fire-ai",
+    "prompt": "Use case: historical-scene. Asset type: 2.5D game character sprite. Primary request: a World War II era Japanese light machine gunner in a stable standing firing pose, both hands holding a Type 96 light machine gun, elbows naturally bent, feet planted on the ground, full body from helmet to boots. Style/medium: realistic historical concept art matching a clean game asset cutout. Composition/framing: centered full-body portrait with generous margin. Lighting/mood: neutral studio light. Color palette: muted khaki and olive. Constraints: transparent background, no text, no watermark, no muzzle flash, no blood, no gore, no hate symbols, no extra people. Avoid: T-pose, arms stretched sideways, floating feet, cropped limbs, modern equipment."
+  },
+  {
+    "name": "cn-soldier-idle-ai",
+    "prompt": "Use case: historical-scene. Asset type: 2.5D game character sprite. Primary request: a Chinese Nationalist Army soldier in a natural standing combat idle pose, both hands holding a Zhongzheng rifle across the torso, arms relaxed and bent, full body from M35 steel helmet to cloth shoes, feet aligned on a clear ground contact line. Style/medium: realistic historical concept art matching a clean game asset cutout. Composition/framing: centered full-body portrait with generous margin. Lighting/mood: neutral studio light. Color palette: cool yellow-green and canvas khaki. Constraints: transparent background, no text, no watermark, no blood, no gore, no hate symbols, no extra people. Avoid: T-pose, arms stretched sideways, floating feet, cropped limbs, modern equipment."
+  },
+  {
+    "name": "cn-soldier-run-ai",
+    "prompt": "Use case: historical-scene. Asset type: 2.5D game character sprite. Primary request: a Chinese Nationalist Army soldier running along a mountain defense position in a natural movement pose, both hands safely carrying a Zhongzheng rifle, arms and legs naturally bent, full body from M35 steel helmet to cloth shoes, feet planted on a clear ground contact line. Style/medium: realistic historical concept art matching a clean game asset cutout. Composition/framing: centered full-body portrait with generous margin. Lighting/mood: neutral studio light. Color palette: cool yellow-green and canvas khaki. Constraints: transparent background, no text, no watermark, no blood, no gore, no hate symbols, no extra people. Avoid: T-pose, arms stretched sideways, floating feet, cropped limbs, modern equipment."
+  },
+  {
+    "name": "cn-soldier-fire-ai",
+    "prompt": "Use case: historical-scene. Asset type: 2.5D game character sprite. Primary request: a Chinese Nationalist Army soldier in a stable standing firing pose, both hands holding a Zhongzheng rifle aimed forward, elbows naturally bent, feet planted on the ground, full body from M35 steel helmet to cloth shoes. Style/medium: realistic historical concept art matching a clean game asset cutout. Composition/framing: centered full-body portrait with generous margin. Lighting/mood: neutral studio light. Color palette: cool yellow-green and canvas khaki. Constraints: transparent background, no text, no watermark, no muzzle flash, no blood, no gore, no hate symbols, no extra people. Avoid: T-pose, arms stretched sideways, floating feet, cropped limbs, modern equipment."
+  }
+]

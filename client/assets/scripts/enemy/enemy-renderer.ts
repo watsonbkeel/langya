@@ -38,12 +38,13 @@ export class EnemyRenderer {
   private readonly hitMaterial: Material;
   private readonly warningMaterial: Material;
   private readonly billboardMesh: Mesh;
-  private readonly billboardMaterial: Material;
+  private readonly billboardMaterials: Readonly<Record<'idle' | 'run' | 'fire', Material>>;
   private readonly shadowMaterial: Material;
   private readonly gameplay: GameplayConfig;
   private readonly presentation: PresentationConfig;
-  private readonly enemySpritePath: string;
-  private enemyTexture: Texture2D | null = null;
+  private readonly spritePaths: Readonly<Record<'idle' | 'run' | 'fire', string>>;
+  private readonly textures = new Map<'idle' | 'run' | 'fire', Texture2D>();
+  private idleTextureLoaded = false;
   private cameraNode: Node | null = null;
   private readonly pool: Node[] = [];
   private readonly activeEnemies = new Map<string, Node>();
@@ -62,7 +63,12 @@ export class EnemyRenderer {
   ) {
     this.gameplay = gameplay;
     this.presentation = presentation;
-    this.enemySpritePath = combatSpritePath(enemySpritePath);
+    const baseSpritePath = combatSpritePath(enemySpritePath);
+    this.spritePaths = {
+      idle: baseSpritePath,
+      run: baseSpritePath.replace(/\/idle$/, '/run'),
+      fire: baseSpritePath.replace(/\/idle$/, '/fire'),
+    };
     this.worldRoot = new Node('M1World');
     this.worldRoot.setParent(sceneRoot);
     this.boxMesh = utils.createMesh(
@@ -77,20 +83,35 @@ export class EnemyRenderer {
       presentation.fireWarningColor,
     );
     this.billboardMesh = createBillboardMesh();
-    this.billboardMaterial = createBillboardMaterial();
+    this.billboardMaterials = {
+      idle: createBillboardMaterial(),
+      run: createBillboardMaterial(),
+      fire: createBillboardMaterial(),
+    };
     this.shadowMaterial = createSoftShadowMaterial();
-    loadTexture(this.enemySpritePath, (texture) => {
-      if (!this.worldRoot.isValid) {
-        return;
-      }
-      this.enemyTexture = texture;
-      this.billboardMaterial.setProperty('mainTexture', texture);
-      for (const node of this.activeEnemies.values()) {
-        const placeholder = this.getPlaceholderRenderer(node);
-        if (placeholder) {
-          placeholder.enabled = false;
+    (['idle', 'run', 'fire'] as const).forEach((state) => {
+      loadTexture(this.spritePaths[state], (texture) => {
+        if (!this.worldRoot.isValid) {
+          return;
         }
-      }
+        this.textures.set(state, texture);
+        this.billboardMaterials[state].setProperty('mainTexture', texture);
+        for (const [enemyId, node] of this.activeEnemies) {
+          this.updateBillboardState(
+            node,
+            this.enemyStates.get(enemyId) ?? 'advance',
+          );
+        }
+        if (state === 'idle') {
+          this.idleTextureLoaded = true;
+          for (const node of this.activeEnemies.values()) {
+            const placeholder = this.getPlaceholderRenderer(node);
+            if (placeholder) {
+              placeholder.enabled = false;
+            }
+          }
+        }
+      });
     });
     this.createGround();
 
@@ -232,7 +253,9 @@ export class EnemyRenderer {
     this.hitMaterial.destroy();
     this.warningMaterial.destroy();
     this.billboardMesh.destroy();
-    this.billboardMaterial.destroy();
+    this.billboardMaterials.idle.destroy();
+    this.billboardMaterials.run.destroy();
+    this.billboardMaterials.fire.destroy();
     this.shadowMaterial.destroy();
   }
 
@@ -264,11 +287,11 @@ export class EnemyRenderer {
     renderer.setSharedMaterial(this.enemyMaterial, 0);
     createBillboard(
       node,
-      this.enemyTexture,
+      null,
       this.billboardMesh,
-      this.billboardMaterial,
+      this.billboardMaterials.idle,
     );
-    renderer.enabled = this.enemyTexture === null;
+    renderer.enabled = !this.idleTextureLoaded;
 
     const shadow = new Node('GroundShadow');
     shadow.setParent(node);
@@ -306,7 +329,7 @@ export class EnemyRenderer {
     node.active = true;
     const placeholder = this.getPlaceholderRenderer(node);
     if (placeholder) {
-      placeholder.enabled = this.enemyTexture === null;
+      placeholder.enabled = !this.idleTextureLoaded;
     }
     placeholder?.setSharedMaterial(this.enemyMaterial, 0);
     return node;
@@ -368,6 +391,7 @@ export class EnemyRenderer {
           0,
         );
       this.enemyStates.set(enemy.id, enemy.aiState);
+      this.updateBillboardState(node, enemy.aiState);
     }
 
     const warning = node.getChildByName('FireWarning');
@@ -389,11 +413,30 @@ export class EnemyRenderer {
     return node.getChildByName('Hitbox')?.getComponent(MeshRenderer) ?? null;
   }
 
+  private getBillboardRenderer(node: Node): MeshRenderer | null {
+    return node.getChildByName('Billboard')?.getComponent(MeshRenderer) ?? null;
+  }
+
+  private updateBillboardState(
+    node: Node,
+    state: EnemyAiState,
+  ): void {
+    const spriteState = state === 'engage' ? 'fire' : state === 'advance' ? 'run' : 'idle';
+    const material = this.textures.has(spriteState)
+      ? this.billboardMaterials[spriteState]
+      : this.billboardMaterials.idle;
+    this.getBillboardRenderer(node)?.setSharedMaterial(material, 0);
+  }
+
   private resetVisualState(node: Node): void {
     node.setPosition(0, 0, 0);
     node.setRotationFromEuler(0, 0, 0);
     node.setScale(1, 1, 1);
     const billboard = node.getChildByName('Billboard');
+    this.getBillboardRenderer(node)?.setSharedMaterial(
+      this.billboardMaterials.idle,
+      0,
+    );
     billboard?.setPosition(0, 0.5, 0);
     billboard?.setRotationFromEuler(0, 0, 0);
     billboard?.setScale(2, 1, 1);

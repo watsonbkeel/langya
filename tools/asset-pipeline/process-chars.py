@@ -18,6 +18,9 @@
     chars/cn-soldier/portrait.png  128x128
     chars/jp-soldier/*             同上
 
+    run.png / fire.png 由 image-agent.py 下载后交给 clean-generated.py 清理，
+    与 idle.png 使用相同的 512x512 RGBA 规格。
+
 脚本必须幂等：重复运行结果一致。
 """
 

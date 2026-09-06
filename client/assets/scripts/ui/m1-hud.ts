@@ -454,7 +454,7 @@ export class M1Hud {
       report,
       '向英雄致敬',
       this.presentation.titleFontSizePx,
-      this.presentation.helpOffsetYPx,
+      -this.presentation.designHeight / 2 + this.presentation.titleFontSizePx,
       '#F4E8C1',
     );
   }
