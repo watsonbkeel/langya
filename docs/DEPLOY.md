@@ -74,6 +74,21 @@ systemd 服务名为 `pm2-root.service`，PM2 应用名为 `langyashan-server`�
 
 ### 更新部署
 
+Mac 先使用项目已锁定的精简引擎模块配置构建客户端；不要省略
+`engineModulesConfigKey=defaultConfig`，否则 Cocos CLI 会重新启用未使用的
+Physics / Spine 等模块，显著增加首屏请求和体积：
+
+```bash
+/Applications/Cocos/Creator/3.8.7/CocosCreator.app/Contents/MacOS/CocosCreator \
+  --project ./client \
+  --build "platform=web-mobile;debug=false;engineModulesConfigKey=defaultConfig"
+```
+
+Mac CLI 在日志出现 `Build Task (web-mobile) Finished` 后仍可能返回 36；必须同时
+检查完成日志与 `client/build/web-mobile/index.html`，不能只按该退出码误判失败。
+
+Debian 收到构建产物后执行：
+
 ```bash
 cd /root/langya/langya
 git pull --rebase origin main
