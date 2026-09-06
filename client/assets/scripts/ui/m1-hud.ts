@@ -69,6 +69,7 @@ export class M1Hud {
   private readonly allyLabels = new Map<number, Label>();
   private readonly allyIds = new Map<string, Label>();
   private readonly flashingAllies = new Set<string>();
+  private readonly temporaryLabelTimers = new Map<Label, ReturnType<typeof setTimeout>>();
   private readonly routeNames: Readonly<Record<RouteId, string>>;
   private weaponName = '步枪';
   private routeHighlightSequence = 0;
@@ -126,6 +127,11 @@ export class M1Hud {
       presentation.hudFontSizePx,
       new Vec3(0, presentation.focusOffsetYPx, 0),
       '#C8F4FF',
+    );
+    this.showTemporaryLabel(
+      this.focusLabel,
+      this.focusLabel.string,
+      presentation.helpVisibleSec,
     );
     this.healthLabel = this.createLabel(
       'Health',
@@ -274,9 +280,16 @@ export class M1Hud {
   }
 
   setCombatFocus(focused: boolean, message?: string): void {
-    this.focusLabel.string = focused
-      ? ''
-      : message ?? '点击画面进入战斗\nWASD 移动 · 鼠标瞄准 · 左键射击';
+    if (focused) {
+      this.clearTemporaryLabel(this.focusLabel);
+      this.focusLabel.string = '';
+      return;
+    }
+    this.showTemporaryLabel(
+      this.focusLabel,
+      message ?? '点击画面进入战斗\nWASD 移动 · 鼠标瞄准 · 左键射击',
+      this.presentation.helpVisibleSec,
+    );
   }
 
   updatePlayer(player: AllyState, weaponName: string): void {
@@ -297,9 +310,13 @@ export class M1Hud {
   }
 
   showReady(enemyCount: number): void {
-    this.messageLabel.string = enemyCount > 0
-      ? `坚守阵地！剩余敌军 ${enemyCount}`
-      : '尽快选择防守位置';
+    this.showTemporaryLabel(
+      this.messageLabel,
+      enemyCount > 0
+        ? `坚守阵地！剩余敌军 ${enemyCount}`
+        : '尽快选择防守位置',
+      this.presentation.helpVisibleSec,
+    );
   }
 
   updateMatch(match: MatchProgressState, serverTimeMs: number): void {
@@ -632,6 +649,10 @@ export class M1Hud {
   }
 
   destroy(): void {
+    for (const timer of this.temporaryLabelTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.temporaryLabelTimers.clear();
     Tween.stopAllByTarget(this.vignetteOpacity);
     Tween.stopAllByTarget(this.medkitFlashOpacity);
     void this.calloutAudioContext?.close();
@@ -869,6 +890,30 @@ export class M1Hud {
     Tween.stopAllByTarget(opacity);
     opacity.opacity = 255;
     tween(opacity).delay(duration).to(duration, { opacity: 0 }).start();
+  }
+
+  /**
+   * 中心提示不能常驻遮住准星。计时器只清除自己创建的文本，避免覆盖
+   * 期间到达的换弹、击杀等后续反馈。
+   */
+  private showTemporaryLabel(label: Label, text: string, durationSec: number): void {
+    this.clearTemporaryLabel(label);
+    label.string = text;
+    const timer = setTimeout(() => {
+      this.temporaryLabelTimers.delete(label);
+      if (label.isValid && label.string === text) {
+        label.string = '';
+      }
+    }, durationSec * 1000);
+    this.temporaryLabelTimers.set(label, timer);
+  }
+
+  private clearTemporaryLabel(label: Label): void {
+    const timer = this.temporaryLabelTimers.get(label);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      this.temporaryLabelTimers.delete(label);
+    }
   }
 
   private setUiLayer(node: Node): void {
