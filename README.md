@@ -147,7 +147,7 @@ cd ../client && npm ci
 cd server && npm run dev
 
 # 构建客户端
-CocosCreator --project ./client --build "platform=web-mobile;debug=true;engineModulesConfigKey=defaultConfig"
+CocosCreator --project ./client --build "platform=web-mobile;debug=true;engineModulesConfigKey=defaultConfig;useSplashScreen=false;experimentalEraseModules=true"
 ```
 
 ### 部署
@@ -159,7 +159,7 @@ pm2 start dist/index.js --name langyashan-server
 pm2 save && pm2 startup
 
 # 客户端
-CocosCreator --project ./client --build "platform=web-mobile;debug=false;engineModulesConfigKey=defaultConfig"
+CocosCreator --project ./client --build "platform=web-mobile;debug=false;engineModulesConfigKey=defaultConfig;useSplashScreen=false;experimentalEraseModules=true"
 rsync -a --delete client/build/web-mobile/ /var/www/langyashan/
 ```
 

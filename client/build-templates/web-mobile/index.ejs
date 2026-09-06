@@ -19,6 +19,8 @@
   <meta name="x5-page-mode" content="app">
   <meta name="theme-color" content="#183040">
   <link rel="stylesheet" type="text/css" href="<%= cssUrl %>">
+  <link rel="preload" href="index.js" as="script">
+  <link rel="preload" href="application.js" as="script">
 </head>
 <body>
   <div id="GameDiv" cc_exact_fit_screen="true">
@@ -43,6 +45,23 @@
           return value;
         }
       };
+      // 提前并行请求启动链上的脚本，减少 Tailscale 高 RTT 下的串行等待。
+      [
+        'cocos-js/cc.js',
+        'src/chunks/bundle.js',
+        'assets/internal/index.js',
+        'assets/resources/index.js',
+        'assets/main/index.js'
+      ].forEach(function (href) {
+        var link = document.createElement('link');
+        link.rel = 'preload';
+        link.as = 'script';
+        if (href.indexOf('assets/') === 0) {
+          link.crossOrigin = 'anonymous';
+        }
+        link.href = appendBuild(href);
+        document.head.appendChild(link);
+      });
       var originalOpen = XMLHttpRequest.prototype.open;
       XMLHttpRequest.prototype.open = function (method, url) {
         arguments[1] = appendBuild(url);

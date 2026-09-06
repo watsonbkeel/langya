@@ -81,7 +81,7 @@ Physics / Spine 等模块，显著增加首屏请求和体积：
 ```bash
 /Applications/Cocos/Creator/3.8.7/CocosCreator.app/Contents/MacOS/CocosCreator \
   --project ./client \
-  --build "platform=web-mobile;debug=false;engineModulesConfigKey=defaultConfig"
+  --build "platform=web-mobile;debug=false;engineModulesConfigKey=defaultConfig;useSplashScreen=false;experimentalEraseModules=true"
 ```
 
 Mac CLI 在日志出现 `Build Task (web-mobile) Finished` 后仍可能返回 36；必须同时
