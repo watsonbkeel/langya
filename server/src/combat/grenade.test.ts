@@ -76,4 +76,21 @@ describe('grenade combat', () => {
       },
     ]);
   });
+
+  it('忽略范围内已经阵亡的目标', () => {
+    const hits = resolveGrenadeBlast(
+      { x: 0, y: 0, z: 0 },
+      [
+        {
+          id: 'defeated-enemy',
+          position: { x: 0, y: 0, z: 0 },
+          hp: 1,
+          alive: false,
+        },
+      ],
+      grenade,
+    );
+
+    assert.deepEqual(hits, []);
+  });
 });
