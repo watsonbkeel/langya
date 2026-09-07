@@ -118,7 +118,7 @@ export class M1Hud {
     );
     const helpLabel = this.createLabel(
       'Help',
-      '点击画面进入战斗 · WASD 移动 · 鼠标瞄准 · 左键射击 · Esc 释放鼠标\nR 换弹 · Q 切枪 · G 手榴弹 · H 立即使用血包 · F 交互/上下重机枪 · Ctrl 蹲下',
+      'WASD 移动 · 鼠标瞄准 · 左键射击 · R 换弹 · H 血包 · F 机枪',
       presentation.helpFontSizePx,
       new Vec3(0, presentation.helpOffsetYPx, 0),
       '#DDE7EA',
@@ -126,7 +126,7 @@ export class M1Hud {
     this.fadeLabel(helpLabel, presentation.helpVisibleSec);
     this.focusLabel = this.createLabel(
       'CombatFocus',
-      '点击画面进入战斗\nWASD 移动 · 鼠标瞄准 · 左键射击',
+      '点击画面开始 · WASD 移动 · 鼠标瞄准',
       presentation.hudFontSizePx,
       new Vec3(0, presentation.focusOffsetYPx, 0),
       '#C8F4FF',
@@ -290,7 +290,7 @@ export class M1Hud {
     }
     this.showTemporaryLabel(
       this.focusLabel,
-      message ?? '点击画面进入战斗\nWASD 移动 · 鼠标瞄准 · 左键射击',
+      message ?? '点击画面开始 · WASD 移动 · 鼠标瞄准',
       this.presentation.helpVisibleSec,
     );
   }
