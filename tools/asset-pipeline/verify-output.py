@@ -51,6 +51,11 @@ def collect_declared_assets():
                 for v in node["assets"].values():
                     if isinstance(v, str):
                         paths.add(v)
+            if "heroSprites" in node and isinstance(node["heroSprites"], dict):
+                for base_path in node["heroSprites"].values():
+                    if isinstance(base_path, str):
+                        for state in ("idle", "run", "fire"):
+                            paths.add(f"{base_path}/{state}")
             for v in node.values():
                 walk(v)
         elif isinstance(node, list):

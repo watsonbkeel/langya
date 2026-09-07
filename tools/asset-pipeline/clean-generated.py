@@ -6,6 +6,7 @@
 """
 
 from pathlib import Path
+import re
 import sys
 
 from PIL import Image
@@ -46,6 +47,22 @@ def main() -> int:
     }
     for source in sorted(source_root.glob("*.png")):
         stem = source.stem
+        hero_match = re.fullmatch(r"hero-seat-(\d+)-(idle|run|fire)-ai", stem)
+        if hero_match:
+            seat_index, state = hero_match.groups()
+            destination = (
+                workspace
+                / "client"
+                / "assets"
+                / "resources"
+                / "chars"
+                / "heroes"
+                / f"seat-{seat_index}"
+                / f"{state}.png"
+            )
+            clean_checkerboard(source, destination)
+            print(f"→ {source.name} -> {destination.relative_to(workspace)}")
+            continue
         if "-ai" not in stem:
             continue
         faction, state, _ = stem.rsplit("-", 2)
