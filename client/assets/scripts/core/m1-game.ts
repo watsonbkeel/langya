@@ -191,6 +191,7 @@ export class M1Game {
       config.gameplay,
       config.presentation,
       config.allies.bot.assets.sprite,
+      config.allies.bot.heroSprites,
     );
     this.worldInteractions = new M3WorldInteractions(
       sceneRoot,

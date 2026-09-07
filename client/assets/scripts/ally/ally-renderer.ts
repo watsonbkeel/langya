@@ -40,10 +40,13 @@ export class AllyRenderer {
   private readonly gameplay: GameplayConfig;
   private readonly presentation: PresentationConfig;
   private readonly spritePaths: Readonly<Record<'idle' | 'run' | 'fire', string>>;
+  private readonly heroSpritePaths: Readonly<Record<string, string>>;
+  private readonly heroMaterials = new Map<string, Readonly<Record<'idle' | 'run' | 'fire', Material>>>();
   private readonly textures = new Map<'idle' | 'run' | 'fire', Texture2D>();
   private idleTextureLoaded = false;
   private cameraNode: Node | null = null;
   private readonly nodes = new Map<string, Node>();
+  private readonly heroNameByNode = new Map<string, string>();
   private readonly states = new Map<string, AllyAiState>();
   private readonly targetPositions = new Map<string, Vec3>();
   private readonly targetScales = new Map<string, Vec3>();
@@ -55,6 +58,7 @@ export class AllyRenderer {
     gameplay: GameplayConfig,
     presentation: PresentationConfig,
     allySpritePath: string,
+    heroSpritePaths: Readonly<Record<string, string>> = {},
   ) {
     this.gameplay = gameplay;
     this.presentation = presentation;
@@ -64,6 +68,11 @@ export class AllyRenderer {
       run: baseSpritePath.replace(/\/idle$/, '/run'),
       fire: baseSpritePath.replace(/\/idle$/, '/fire'),
     };
+    const normalizedHeroPaths: Record<string, string> = {};
+    for (const heroName in heroSpritePaths) {
+      normalizedHeroPaths[heroName] = combatSpritePath(heroSpritePaths[heroName]);
+    }
+    this.heroSpritePaths = normalizedHeroPaths;
     this.root = new Node('M2Allies');
     this.root.setParent(sceneRoot);
     this.mesh = utils.createMesh(
@@ -83,6 +92,31 @@ export class AllyRenderer {
       fire: createBillboardMaterial(),
     };
     this.shadowMaterial = createSoftShadowMaterial();
+    for (const heroName in this.heroSpritePaths) {
+      const spritePath = this.heroSpritePaths[heroName];
+      const materials = {
+        idle: createBillboardMaterial(),
+        run: createBillboardMaterial(),
+        fire: createBillboardMaterial(),
+      };
+      this.heroMaterials.set(heroName, materials);
+      (['idle', 'run', 'fire'] as const).forEach((state) => {
+        const path = state === 'idle'
+          ? spritePath
+          : spritePath.replace(/\/idle$/, `/${state}`);
+        loadTexture(path, (texture) => {
+          if (!this.root.isValid) return;
+          materials[state].setProperty('mainTexture', texture);
+          for (const [allyId, node] of this.nodes) {
+            this.updateBillboardState(
+              node,
+              this.states.get(allyId) ?? 'guard',
+              this.heroNameByNode.get(allyId),
+            );
+          }
+        });
+      });
+    }
     (['idle', 'run', 'fire'] as const).forEach((state) => {
       loadTexture(this.spritePaths[state], (texture) => {
         if (!this.root.isValid) {
@@ -125,8 +159,9 @@ export class AllyRenderer {
       let node = this.nodes.get(ally.id);
       const isNew = !node;
       if (!node) {
-        node = this.createNode(ally.id);
+        node = this.createNode(ally.id, ally.heroName);
         this.nodes.set(ally.id, node);
+        this.heroNameByNode.set(ally.id, ally.heroName);
       }
       this.applyState(node, ally, isNew);
     }
@@ -135,6 +170,7 @@ export class AllyRenderer {
       if (!visibleIds.has(allyId)) {
         this.nodes.delete(allyId);
         this.states.delete(allyId);
+        this.heroNameByNode.delete(allyId);
         this.targetPositions.delete(allyId);
         this.targetScales.delete(allyId);
         node.destroy();
@@ -213,10 +249,15 @@ export class AllyRenderer {
     this.billboardMaterials.idle.destroy();
     this.billboardMaterials.run.destroy();
     this.billboardMaterials.fire.destroy();
+    for (const materials of this.heroMaterials.values()) {
+      materials.idle.destroy();
+      materials.run.destroy();
+      materials.fire.destroy();
+    }
     this.shadowMaterial.destroy();
   }
 
-  private createNode(allyId: string): Node {
+  private createNode(allyId: string, heroName: string): Node {
     const node = new Node(`Ally:${allyId}`);
     node.setParent(this.root);
     const hitbox = new Node('Hitbox');
@@ -229,7 +270,7 @@ export class AllyRenderer {
       node,
       null,
       this.billboardMesh,
-      this.billboardMaterials.idle,
+      this.heroMaterials.get(heroName)?.idle ?? this.billboardMaterials.idle,
     );
     renderer.enabled = !this.idleTextureLoaded;
 
@@ -289,7 +330,7 @@ export class AllyRenderer {
           0,
         );
       this.states.set(ally.id, ally.aiState);
-      this.updateBillboardState(node, ally.aiState);
+      this.updateBillboardState(node, ally.aiState, ally.heroName);
     }
   }
 
@@ -301,11 +342,13 @@ export class AllyRenderer {
     return node.getChildByName('Billboard')?.getComponent(MeshRenderer) ?? null;
   }
 
-  private updateBillboardState(node: Node, state: AllyAiState): void {
+  private updateBillboardState(node: Node, state: AllyAiState, heroName?: string): void {
     const spriteState = state === 'engage' ? 'fire' : 'guard' === state || 'deploy' === state ? 'idle' : 'run';
-    const material = this.textures.has(spriteState)
-      ? this.billboardMaterials[spriteState]
-      : this.billboardMaterials.idle;
+    const heroMaterials = heroName ? this.heroMaterials.get(heroName) : undefined;
+    const material = heroMaterials?.[spriteState]
+      ?? (this.textures.has(spriteState)
+        ? this.billboardMaterials[spriteState]
+        : this.billboardMaterials.idle);
     this.getBillboardRenderer(node)?.setSharedMaterial(material, 0);
   }
 }

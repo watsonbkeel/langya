@@ -82,6 +82,7 @@ export interface AlliesAssetsConfig {
     readonly assets: {
       readonly sprite: string;
     };
+    readonly heroSprites?: Readonly<Record<string, string>>;
   };
 }
 
