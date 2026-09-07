@@ -80,8 +80,11 @@ export function createBillboardMaterial(): Material {
   const material = new Material();
   material.initialize({
     effectName: 'builtin-unlit',
-    defines: { USE_TEXTURE: true },
+    // 角色与场景贴图都是 RGBA。开启 alpha test 后，透明背景即使在
+    // WebGL blend/depth 状态变化时也不会被当成黑色实体面片绘制。
+    defines: { USE_TEXTURE: true, USE_ALPHA_TEST: true },
   });
+  material.setProperty('alphaThreshold', 0.1);
   material.setProperty('mainColor', Color.WHITE);
   const target = material.passes[0]?.blendState.targets[0];
   if (target) {
