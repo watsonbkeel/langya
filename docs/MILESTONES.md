@@ -552,6 +552,19 @@ M3 双方清单与真实整局验收均已完成，状态收口为 ✅。按项�
 ### 完成记录
 
 #### 💻 Mac
+2026-09-07：按交接文档先完成当前构建的 Debian 部署与浏览器基线验收。
+由于 Mac 未安装 `rsync`，改用 `tar` 管道同步 `client/build/web-mobile/`；
+Debian `tools/deploy.sh` 完整通过，服务端 101 项测试、类型检查、生产构建、
+Nginx 校验、PM2 reload，以及本机/Tailscale 的 M0–M3 WS 联调均通过。
+浏览器正式地址 `http://100.74.3.56:8080/?build=cebc309` 能加载坡地纹理、
+山地远景、路线标识、队友 HUD 和中正式步枪，控制台无 warning/error。
+
+同日完成 D1 的代码接入骨架：`shared/config/allies.json` 声明五席独立
+`heroSprites` 路径，`AllyRenderer` 按 `heroName` 选择并缓存 idle/run/fire
+三态材质，缺少生成图时仍回退到现有公共中方素材。五名角色的 15 张实际 PNG
+尚未生成，因此 D1 不能标记完成；待轮换后的 `BKEEL_IMAGE_API_KEY` 提供后，
+再按交接文档的 prompt-first 流程生成、逐张验透明背景并复验浏览器。
+
 2026-09-05：完成 M4 素材管线首批接入。使用默认阈值 30 运行
 `process-chars.py` 与 `process-weapons.py`，产出中国军队 / 日军角色
 `idle`、`side`、`portrait` 贴图，以及玩家武器第一人称图和 HUD 图标。
