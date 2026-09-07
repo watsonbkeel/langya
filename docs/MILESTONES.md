@@ -672,6 +672,11 @@ seed 723 / 724 / 725 均投放 200 / 200，25 局汇总 `pass=true`。Node 22.23
 ### 完成记录
 
 #### 🖥️ Debian
+2026-09-07：先落地 M5 房间动作协议的共享类型与服务端解析校验，新增
+`create_room`、`join_room`、`quick_match`、`player_ready`、`start_match`、
+`reconnect` 及 `room_action_result`。新增解析单测后服务端类型检查与测试
+达到 103 项通过。此记录只表示协议/解析层已开始，尚未实现“一房间一权威战斗”
+和多人联机闭环，M5 仍保持未完成。
 > 填写：同步带宽实测、反作弊触发情况
 
 #### 💻 Mac
