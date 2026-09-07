@@ -2,13 +2,19 @@ import {
   CLIENT_MESSAGE_TYPES,
   PROTOCOL_VERSION,
   type ClientMessage,
+  type CreateRoomMessage,
   type FireMessage,
   type InputStateMessage,
   type JoinMessage,
+  type JoinRoomMessage,
   type MountMgMessage,
   type PingMessage,
+  type PlayerReadyMessage,
   type PickupMessage,
   type ReloadMessage,
+  type QuickMatchMessage,
+  type ReconnectMessage,
+  type StartMatchMessage,
   type SwitchWeaponMessage,
   type ThrowGrenadeMessage,
   type UnmountMgMessage,
@@ -50,6 +56,55 @@ function isPingMessage(value: unknown): value is PingMessage {
     typeof value.payload.clientTimeMs === 'number' &&
     Number.isFinite(value.payload.clientTimeMs)
   );
+}
+
+function isPlayerName(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0 && value.length <= 32;
+}
+
+function isCreateRoomMessage(value: unknown): value is CreateRoomMessage {
+  return isRecord(value) &&
+    value.type === CLIENT_MESSAGE_TYPES.createRoom &&
+    isRecord(value.payload) &&
+    isPlayerName(value.payload.playerName) &&
+    value.payload.protocolVersion === PROTOCOL_VERSION;
+}
+
+function isJoinRoomMessage(value: unknown): value is JoinRoomMessage {
+  return isRecord(value) &&
+    value.type === CLIENT_MESSAGE_TYPES.joinRoom &&
+    isRecord(value.payload) &&
+    typeof value.payload.roomCode === 'string' &&
+    /^[A-Z0-9]{4,8}$/.test(value.payload.roomCode) &&
+    isPlayerName(value.payload.playerName) &&
+    value.payload.protocolVersion === PROTOCOL_VERSION;
+}
+
+function isQuickMatchMessage(value: unknown): value is QuickMatchMessage {
+  return isRecord(value) &&
+    value.type === CLIENT_MESSAGE_TYPES.quickMatch &&
+    isRecord(value.payload) &&
+    isPlayerName(value.payload.playerName) &&
+    value.payload.protocolVersion === PROTOCOL_VERSION;
+}
+
+function isEmptyActionMessage(
+  value: unknown,
+  type: string,
+): value is PlayerReadyMessage | StartMatchMessage {
+  return isRecord(value) &&
+    value.type === type &&
+    isRecord(value.payload) &&
+    Object.keys(value.payload).length === 0;
+}
+
+function isReconnectMessage(value: unknown): value is ReconnectMessage {
+  return isRecord(value) &&
+    value.type === CLIENT_MESSAGE_TYPES.reconnect &&
+    isRecord(value.payload) &&
+    typeof value.payload.reconnectToken === 'string' &&
+    value.payload.reconnectToken.length >= 16 &&
+    value.payload.protocolVersion === PROTOCOL_VERSION;
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -220,6 +275,12 @@ export function parseClientMessage(raw: string): ClientMessage | undefined {
 
   if (
     isJoinMessage(parsed) ||
+    isCreateRoomMessage(parsed) ||
+    isJoinRoomMessage(parsed) ||
+    isQuickMatchMessage(parsed) ||
+    isEmptyActionMessage(parsed, CLIENT_MESSAGE_TYPES.playerReady) ||
+    isEmptyActionMessage(parsed, CLIENT_MESSAGE_TYPES.startMatch) ||
+    isReconnectMessage(parsed) ||
     isPingMessage(parsed) ||
     isInputStateMessage(parsed) ||
     isFireMessage(parsed) ||

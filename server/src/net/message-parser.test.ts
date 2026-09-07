@@ -181,4 +181,58 @@ describe('parseClientMessage', () => {
       assert.equal(parseClientMessage(encode(message)), undefined);
     }
   });
+
+  it('接受 M5 房间创建、加入、匹配、准备、开局和重连消息', () => {
+    const messages = [
+      {
+        type: 'create_room',
+        payload: { playerName: '马宝玉', protocolVersion: 1 },
+      },
+      {
+        type: 'join_room',
+        payload: { roomCode: 'AB12', playerName: '葛振林', protocolVersion: 1 },
+      },
+      {
+        type: 'quick_match',
+        payload: { playerName: '宋学义', protocolVersion: 1 },
+      },
+      { type: 'player_ready', payload: {} },
+      { type: 'start_match', payload: {} },
+      {
+        type: 'reconnect',
+        payload: { reconnectToken: '0123456789abcdef', protocolVersion: 1 },
+      },
+    ];
+
+    assert.deepEqual(
+      messages.map((message) => parseClientMessage(encode(message))?.type),
+      messages.map((message) => message.type),
+    );
+  });
+
+  it('拒绝不安全的房间码、昵称、协议版本和重连凭证', () => {
+    const messages = [
+      {
+        type: 'join_room',
+        payload: { roomCode: 'bad-code', playerName: '玩家', protocolVersion: 1 },
+      },
+      {
+        type: 'create_room',
+        payload: { playerName: '', protocolVersion: 1 },
+      },
+      {
+        type: 'quick_match',
+        payload: { playerName: '玩家', protocolVersion: 2 },
+      },
+      {
+        type: 'reconnect',
+        payload: { reconnectToken: 'short', protocolVersion: 1 },
+      },
+      { type: 'player_ready', payload: { unexpected: true } },
+    ];
+
+    for (const message of messages) {
+      assert.equal(parseClientMessage(encode(message)), undefined);
+    }
+  });
 });

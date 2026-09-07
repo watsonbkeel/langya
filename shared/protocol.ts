@@ -2,6 +2,12 @@ export const PROTOCOL_VERSION = 1 as const;
 
 export const CLIENT_MESSAGE_TYPES = {
   join: 'join',
+  createRoom: 'create_room',
+  joinRoom: 'join_room',
+  quickMatch: 'quick_match',
+  playerReady: 'player_ready',
+  startMatch: 'start_match',
+  reconnect: 'reconnect',
   ping: 'ping',
   inputState: 'input_state',
   fire: 'fire',
@@ -29,6 +35,7 @@ export const SERVER_MESSAGE_TYPES = {
   waveStart: 'wave_start',
   supplyDrop: 'supply_drop',
   matchEnd: 'match_end',
+  roomActionResult: 'room_action_result',
 } as const;
 
 export type ClientMessageType =
@@ -47,9 +54,82 @@ export interface JoinPayload {
   readonly protocolVersion: typeof PROTOCOL_VERSION;
 }
 
+export type RoomAction =
+  | 'create_room'
+  | 'join_room'
+  | 'quick_match'
+  | 'player_ready'
+  | 'start_match'
+  | 'reconnect';
+
+export interface CreateRoomPayload {
+  readonly playerName: string;
+  readonly protocolVersion: typeof PROTOCOL_VERSION;
+}
+export type CreateRoomMessage = MessageEnvelope<
+  typeof CLIENT_MESSAGE_TYPES.createRoom,
+  CreateRoomPayload
+>;
+
+export interface JoinRoomPayload {
+  readonly roomCode: string;
+  readonly playerName: string;
+  readonly protocolVersion: typeof PROTOCOL_VERSION;
+}
+export type JoinRoomMessage = MessageEnvelope<
+  typeof CLIENT_MESSAGE_TYPES.joinRoom,
+  JoinRoomPayload
+>;
+
+export interface QuickMatchPayload {
+  readonly playerName: string;
+  readonly protocolVersion: typeof PROTOCOL_VERSION;
+}
+export type QuickMatchMessage = MessageEnvelope<
+  typeof CLIENT_MESSAGE_TYPES.quickMatch,
+  QuickMatchPayload
+>;
+
+export type PlayerReadyMessage = MessageEnvelope<
+  typeof CLIENT_MESSAGE_TYPES.playerReady,
+  Record<string, never>
+>;
+
+export type StartMatchMessage = MessageEnvelope<
+  typeof CLIENT_MESSAGE_TYPES.startMatch,
+  Record<string, never>
+>;
+
+export interface ReconnectPayload {
+  readonly reconnectToken: string;
+  readonly protocolVersion: typeof PROTOCOL_VERSION;
+}
+export type ReconnectMessage = MessageEnvelope<
+  typeof CLIENT_MESSAGE_TYPES.reconnect,
+  ReconnectPayload
+>;
+
 export type JoinMessage = MessageEnvelope<
   typeof CLIENT_MESSAGE_TYPES.join,
   JoinPayload
+>;
+
+export interface RoomActionResultPayload {
+  readonly action: RoomAction;
+  readonly accepted: boolean;
+  readonly roomCode?: string;
+  readonly reconnectToken?: string;
+  readonly rejectReason?:
+    | 'invalid_state'
+    | 'invalid_room'
+    | 'room_full'
+    | 'already_started'
+    | 'not_host'
+    | 'invalid_token';
+}
+export type RoomActionResultMessage = MessageEnvelope<
+  typeof SERVER_MESSAGE_TYPES.roomActionResult,
+  RoomActionResultPayload
 >;
 
 export interface PingPayload {
@@ -553,6 +633,12 @@ export type MatchEndMessage = MessageEnvelope<
 
 export type ClientMessage =
   | JoinMessage
+  | CreateRoomMessage
+  | JoinRoomMessage
+  | QuickMatchMessage
+  | PlayerReadyMessage
+  | StartMatchMessage
+  | ReconnectMessage
   | PingMessage
   | InputStateMessage
   | FireMessage
@@ -578,4 +664,5 @@ export type ServerMessage =
   | MatchStartMessage
   | WaveStartMessage
   | SupplyDropMessage
-  | MatchEndMessage;
+  | MatchEndMessage
+  | RoomActionResultMessage;
