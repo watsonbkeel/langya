@@ -658,8 +658,8 @@ seed 723 / 724 / 725 均投放 200 / 200，25 局汇总 `pass=true`。Node 22.23
 - [x] 房间创建 / 加入 / 满员
 - [x] 真人加入时顶替 AI 席位（PRD 2.5）
 - [x] 掉线玩家转 AI 队友接管（PRD 7.3，60 秒宽限期）
-- [ ] 位置 int16 量化 + 视野裁剪 + 差量同步
-- [ ] 多人 MVP 计分与战报
+- [ ] 位置 int16 量化 + 视野裁剪 + 差量同步（教学演示项目暂缓，见下方决策记录）
+- [x] 多人 MVP 计分与战报
 - [x] 反作弊：射速上限、移动速度、视距校验
 
 **💻 Mac**
@@ -761,6 +761,49 @@ seed 723 / 724 / 725 均投放 200 / 200，25 局汇总 `pass=true`。Node 22.23
 
 **尚未完成**：位置 int16 量化 / 视野裁剪 / 差量同步、多人 MVP 战报核对。
 
+2026-09-07：**多人 MVP 计分与战报核对完成**。
+
+先盘点后动手，避免重复造轮子：`ScoreTracker` 本身已是多席位设计
+（按 `occupantId` 建账、按 `seatIndex` 排序、MVP 按 `mvpHumanOnly` +
+`mvpRequiresAlive` 过滤后按配置的 `tiebreakOrder` 比），`finishRoomMatch()`
+也已经走 `createScoreboard` → `selectMvpPlayerId` → `reportRepository.save`
+的完整落库链路。缺的是**多人场景下的实证覆盖**——单测只验过计分器本身，
+没验过真实战斗会话里多个真人各自开枪时战绩会不会串号。
+
+**发现并修复一处多席位改造遗漏**：`m2-battle-session.ts` 的
+`createFireMessageForEnemy()` 和 `findNearestAliveEnemyId()` 仍硬编码
+`this.player`（席位 0）。多人局里给非首席玩家构造射击消息时，`originPos`
+会填成席位 0 的位置，`fire()` 的 `fireOriginToleranceM` 校验直接判
+`invalid_origin`。两个方法都补上 `playerId` 参数（默认值保持 `this.player.id`，
+单人调用方零改动），改为从射击者自己的位置与武器起算。
+
+新增 3 组多人集成测试（`server/src/game/room-battle-runtime.test.ts`）：
+
+| 测试 | 验证内容 |
+|---|---|
+| 多名真人各自击杀分别记账 | 3 真人在同一房间分别打死 3 / 2 / 1 个敌人，`kills`、`shotsFired`、`headshots` 各归各；战报含全部 5 席（3 真人 + 2 AI）且 seatIndex 有序；`killsForPlayer` 与战报口径一致 |
+| MVP 击杀持平时按配置 tiebreak | 两人击杀数打平、都存活、都无重机枪击杀，仅命中率不同 → MVP 归命中率高者，验证 `tiebreakOrder` 走到第 4 项仍正确 |
+| 多人战报落库读回 | 5 席位战报写入 SQLite 后 `deepEqual` 原样读回，`mvpPlayerId` 与真人/AI 标记不丢失 |
+
+未给生产代码开测试后门：「真人阵亡失去 MVP 资格」这条已由
+`score-tracker.test.ts` 的单测覆盖（`markDead` 后被 `mvpRequiresAlive` 过滤掉），
+集成层不为构造阵亡而新增 debug API。
+
+**自测结果**：`node tools/verify-config.js` 全通过；`npx tsc --noEmit` 无错；
+`npm test` **138/138 通过**（135 → 138，新增 3 组多人计分集成测试）；
+`node tools/check-multiplayer.js` 端到端 **20 项全通过**；
+`node tools/check-anticheat.js` **5 项全通过**，确认本次改动没有回退反作弊行为。
+
+**决策记录（位置 int16 量化 / 视野裁剪 / 差量同步暂缓）**：经 watson 确认，
+本项目是青少年教学演示，不是商业化产品，同房人数上限 5 人、场地 60m × 20m、
+同屏敌人上限 40，20Hz 全量广播的带宽压力在内网/Tailscale 场景下不构成瓶颈。
+量化与差量同步需要同时改 `shared/protocol.ts` + 服务端 + Mac 侧客户端解码，
+按 COLLAB.md 属跨机协商改动，收益与复杂度不成正比，故本轮不做。
+若后续实测带宽确有问题再单独立项。
+
+**下一步**：M5 Debian 侧任务已全部完成，剩余为 Mac 侧客户端 UI
+（房间界面、插值预测、重连 UI、其他玩家表现同步）。
+
 > 待填写：同步带宽实测
 
 #### 💻 Mac
@@ -814,3 +857,4 @@ Chrome 验证鼠标方向、角色接地 / 朝向和枪口指向。适龄合规�
 | 日期 | 里程碑 | 变更内容 |
 |---|---|---|
 | 2026-09-04 | — | 文件创建，对应 PRD v1.1 |
+| 2026-09-07 | M5 | 多人 MVP 计分与战报核对完成；修复 `createFireMessageForEnemy` / `findNearestAliveEnemyId` 硬编码首席位的多席位遗漏；位置 int16 量化等带宽优化经确认暂缓（教学演示项目） |

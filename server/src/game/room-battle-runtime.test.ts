@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
 import {
@@ -6,6 +9,10 @@ import {
   loadProjectConfig,
 } from '../config/project-config';
 import type { ServerMessage } from '../../../shared/protocol';
+import {
+  MatchReportRepository,
+  type MatchReport,
+} from '../db/match-report-repository';
 import { RoomBattleRuntime } from './room-battle-runtime';
 import type { M2RouteId } from './m2-battle-factory';
 import type { M2BattleEvent } from './m2-battle-session';
@@ -334,6 +341,255 @@ describe('RoomBattleRuntime', () => {
       entry.shotsFired > 0,
       '托管期间应当有开火记录，实际为 0',
     );
+  });
+
+  it('多名真人各自击杀分别记账，不会互相串号', () => {
+    const startedAtMs = 1_000_000;
+    const { runtime } = createHarness(
+      [
+        { seatIndex: 0, playerId: 'human:a', playerName: '玩家一' },
+        { seatIndex: 1, playerId: 'human:b', playerName: '玩家二' },
+        { seatIndex: 2, playerId: 'human:c', playerName: '玩家三' },
+      ],
+      startedAtMs,
+    );
+    const battle = runtime.battle;
+    const accuracy = config.waves.waves[0]!.accuracy;
+
+    // 每人各打死一定数量的敌人：A 打 3 个，B 打 2 个，C 打 1 个。
+    // 每次只放一个敌人再打掉，避免射线打到别人的目标造成串号误判。
+    const killPlan: readonly { playerId: string; kills: number }[] = [
+      { playerId: 'human:a', kills: 3 },
+      { playerId: 'human:b', kills: 2 },
+      { playerId: 'human:c', kills: 1 },
+    ];
+    // 步枪有射速冷却，每发之间推进足够时间，避免被冷却挡掉。
+    const fireIntervalMs =
+      Math.ceil(
+        1000 / config.weapons.player.liaoshi13.fireRate,
+      ) + 100;
+    let nowMs = startedAtMs;
+    let clientTick = 1;
+
+    for (const plan of killPlan) {
+      for (let index = 0; index < plan.kills; index += 1) {
+        const enemyId = battle.spawnEnemy('rifleman', 'A', accuracy, nowMs);
+        assert.ok(enemyId, '敌人应当投放成功');
+        const fire = battle.createFireMessageForEnemy(
+          enemyId,
+          clientTick,
+          'head',
+          plan.playerId,
+        );
+        assert.ok(fire, `${plan.playerId} 应当能构造朝向敌人的射击消息`);
+        const resolution = battle.fire(fire, nowMs, plan.playerId);
+        assert.equal(
+          resolution.result.payload.accepted,
+          true,
+          `${plan.playerId} 的射击应被接受`,
+        );
+        assert.equal(resolution.result.payload.hit, true);
+        assert.equal(resolution.death?.payload.enemyId, enemyId);
+        clientTick += 1;
+        nowMs += fireIntervalMs;
+      }
+    }
+
+    const scoreboard = battle.createScoreboard(
+      (nowMs - startedAtMs) / 1000,
+    );
+    const entryFor = (occupantId: string) => {
+      const entry = scoreboard.find(
+        (row) => row.occupantId === occupantId,
+      );
+      assert.ok(entry, `战报里应当有 ${occupantId}`);
+      return entry;
+    };
+
+    // 五个席位都在战报里：3 名真人 + 2 名 AI 队友。
+    assert.equal(scoreboard.length, config.allies.seatCount);
+    assert.equal(
+      scoreboard.filter((row) => !row.isBot).length,
+      3,
+    );
+    // 席位序稳定，客户端可以直接按顺序渲染战报。
+    assert.deepEqual(
+      scoreboard.map((row) => row.seatIndex),
+      [0, 1, 2, 3, 4],
+    );
+
+    assert.equal(entryFor('human:a').kills, 3);
+    assert.equal(entryFor('human:b').kills, 2);
+    assert.equal(entryFor('human:c').kills, 1);
+    // 交叉核对：battle 层的单人查询与战报口径一致。
+    assert.equal(battle.killsForPlayer('human:a'), 3);
+    assert.equal(battle.killsForPlayer('human:b'), 2);
+    assert.equal(battle.killsForPlayer('human:c'), 1);
+    // 每人的开火数只算自己的，爆头也各记各的。
+    assert.equal(entryFor('human:a').shotsFired, 3);
+    assert.equal(entryFor('human:b').shotsFired, 2);
+    assert.equal(entryFor('human:c').shotsFired, 1);
+    assert.equal(entryFor('human:a').headshots, 3);
+
+    // MVP 归击杀最多且仍存活的真人（PRD 2.7 / 7.6）。
+    assert.equal(
+      battle.selectMvpPlayerId((nowMs - startedAtMs) / 1000),
+      'human:a',
+    );
+  });
+
+  it('多人 MVP 击杀持平时按重机枪击杀、存活、命中率依次比（PRD 7.6）', () => {
+    const startedAtMs = 1_000_000;
+    const { runtime } = createHarness(
+      [
+        { seatIndex: 0, playerId: 'human:a', playerName: '玩家一' },
+        { seatIndex: 1, playerId: 'human:b', playerName: '玩家二' },
+      ],
+      startedAtMs,
+    );
+    const battle = runtime.battle;
+    const accuracy = config.waves.waves[0]!.accuracy;
+    const fireIntervalMs =
+      Math.ceil(1000 / config.weapons.player.liaoshi13.fireRate) + 100;
+    let nowMs = startedAtMs;
+    let clientTick = 1;
+
+    const killOnce = (playerId: string): void => {
+      const enemyId = battle.spawnEnemy('rifleman', 'A', accuracy, nowMs);
+      assert.ok(enemyId);
+      const fire = battle.createFireMessageForEnemy(
+        enemyId,
+        clientTick,
+        'head',
+        playerId,
+      );
+      assert.ok(fire);
+      const resolution = battle.fire(fire, nowMs, playerId);
+      assert.equal(resolution.result.payload.accepted, true);
+      clientTick += 1;
+      nowMs += fireIntervalMs;
+    };
+    const missOnce = (playerId: string): void => {
+      const origin = battle.positionForPlayer(playerId);
+      assert.ok(origin);
+      // 朝天开一枪：射线打不到任何敌人，只拉低命中率。
+      const resolution = battle.fire(
+        {
+          type: 'fire',
+          payload: {
+            weaponId: config.gameplay.player.defaultLoadout.primary,
+            originPos: origin,
+            dirVec: { x: 0, y: 1, z: 0 },
+            clientTick,
+          },
+        },
+        nowMs,
+        playerId,
+      );
+      assert.equal(resolution.result.payload.accepted, true);
+      assert.equal(resolution.result.payload.hit, false);
+      clientTick += 1;
+      nowMs += fireIntervalMs;
+    };
+
+    // 两人击杀数打平（各 2 个），都没用重机枪、都活着，
+    // 差异只在命中率：A 全中，B 多打了两枪空枪。
+    killOnce('human:a');
+    killOnce('human:b');
+    killOnce('human:a');
+    killOnce('human:b');
+    missOnce('human:b');
+    missOnce('human:b');
+
+    const endedAtSec = (nowMs - startedAtMs) / 1000;
+    const scoreboard = battle.createScoreboard(endedAtSec);
+    const a = scoreboard.find((row) => row.occupantId === 'human:a');
+    const b = scoreboard.find((row) => row.occupantId === 'human:b');
+    assert.ok(a);
+    assert.ok(b);
+    assert.equal(a.kills, b.kills);
+    assert.equal(a.mgKills, 0);
+    assert.equal(b.mgKills, 0);
+    assert.equal(a.alive, true);
+    assert.equal(b.alive, true);
+    assert.ok(a.accuracy > b.accuracy, '命中率应当拉开差距');
+
+    // MVP 规则来自配置，不是代码里写死的。
+    assert.equal(config.gameplay.score.mvpHumanOnly, true);
+    assert.equal(config.gameplay.score.mvpRequiresAlive, true);
+    assert.equal(battle.selectMvpPlayerId(endedAtSec), 'human:a');
+  });
+
+  it('多人战报能原样落库并读回，MVP 与各席位战绩不丢失', () => {
+    const startedAtMs = 1_000_000;
+    const { runtime } = createHarness(
+      [
+        { seatIndex: 0, playerId: 'human:a', playerName: '玩家一' },
+        { seatIndex: 1, playerId: 'human:b', playerName: '玩家二' },
+      ],
+      startedAtMs,
+    );
+    const battle = runtime.battle;
+    const accuracy = config.waves.waves[0]!.accuracy;
+    const fireIntervalMs =
+      Math.ceil(
+        1000 / config.weapons.player.liaoshi13.fireRate,
+      ) + 100;
+    let nowMs = startedAtMs;
+    let clientTick = 1;
+    for (const playerId of ['human:a', 'human:a', 'human:b']) {
+      const enemyId = battle.spawnEnemy('rifleman', 'A', accuracy, nowMs);
+      assert.ok(enemyId);
+      const fire = battle.createFireMessageForEnemy(
+        enemyId,
+        clientTick,
+        'torso',
+        playerId,
+      );
+      assert.ok(fire);
+      battle.fire(fire, nowMs, playerId);
+      clientTick += 1;
+      nowMs += fireIntervalMs;
+    }
+
+    const endedAtSec = (nowMs - startedAtMs) / 1000;
+    const scoreboard = battle.createScoreboard(endedAtSec);
+    const mvpPlayerId = battle.selectMvpPlayerId(endedAtSec);
+    assert.equal(mvpPlayerId, 'human:a');
+
+    const directory = mkdtempSync(join(tmpdir(), 'langya-mp-report-'));
+    const repository = new MatchReportRepository(
+      join(directory, 'matches.sqlite'),
+    );
+    try {
+      const report: MatchReport = {
+        matchId: 'match-multiplayer-1',
+        result: 'victory',
+        reason: 'time_survived',
+        startedAtMs,
+        endedAtMs: nowMs,
+        scoreboard,
+        mvpPlayerId,
+        spawnedEnemies: battle.totalEnemyCount,
+        defeatedEnemies: 3,
+        totalEnemies: config.waves.totalEnemies,
+      };
+      repository.save(report);
+
+      const loaded = repository.find(report.matchId);
+      assert.ok(loaded);
+      assert.equal(loaded.mvpPlayerId, 'human:a');
+      assert.equal(loaded.scoreboard.length, config.allies.seatCount);
+      // 五个席位的每一项数值都要能原样读回来，客户端战报才靠得住。
+      assert.deepEqual(loaded.scoreboard, scoreboard);
+      assert.equal(
+        loaded.scoreboard.filter((row) => !row.isBot).length,
+        2,
+      );
+    } finally {
+      repository.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it('没有真人时拒绝创建战斗', () => {

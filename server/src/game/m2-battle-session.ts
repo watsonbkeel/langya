@@ -1422,11 +1422,17 @@ export class M2BattleSession<
     enemyId: string,
     clientTick: number,
     hitPart: 'head' | 'torso' | 'limb',
+    playerId: string = this.player.id,
   ): FireMessage | undefined {
     const enemy = this.enemies.find(
       (candidate) => candidate.agent.id === enemyId && candidate.hp > 0,
     );
     if (!enemy) {
+      return undefined;
+    }
+    // 多席位：从这名真人自己的位置起算，否则 fire() 的 originPos 校验会判 invalid_origin。
+    const shooter = this.players.get(playerId);
+    if (!shooter) {
       return undefined;
     }
 
@@ -1441,34 +1447,37 @@ export class M2BattleSession<
             2
           : this.config.enemyHitbox.torsoStartM / 2;
     const direction = normalizeVector({
-      x: enemy.agent.position.x - this.player.position.x,
-      y: enemy.agent.position.y + targetY - this.player.position.y,
-      z: enemy.agent.position.z - this.player.position.z,
+      x: enemy.agent.position.x - shooter.position.x,
+      y: enemy.agent.position.y + targetY - shooter.position.y,
+      z: enemy.agent.position.z - shooter.position.z,
     });
     return {
       type: 'fire',
       payload: {
         weaponId:
-          this.machineGunController.getMounted(this.player.id)
-            ?.weaponId ?? this.player.weapons.currentWeaponId,
-        originPos: this.player.position,
+          this.machineGunController.getMounted(shooter.id)?.weaponId ??
+          shooter.weapons.currentWeaponId,
+        originPos: shooter.position,
         dirVec: direction,
         clientTick,
       },
     };
   }
 
-  findNearestAliveEnemyId(): string | undefined {
+  findNearestAliveEnemyId(
+    playerId: string = this.player.id,
+  ): string | undefined {
+    const origin = this.players.get(playerId)?.position;
+    if (!origin) {
+      return undefined;
+    }
     let nearestId: string | undefined;
     let nearestDistance = Number.POSITIVE_INFINITY;
     for (const enemy of this.enemies) {
       if (enemy.hp <= 0) {
         continue;
       }
-      const distance = distanceBetween(
-        this.player.position,
-        enemy.agent.position,
-      );
+      const distance = distanceBetween(origin, enemy.agent.position);
       if (distance < nearestDistance) {
         nearestId = enemy.agent.id;
         nearestDistance = distance;
