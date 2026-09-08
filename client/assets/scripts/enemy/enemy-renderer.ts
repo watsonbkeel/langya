@@ -16,6 +16,9 @@ import type {
   EnemyAiState,
   EnemyState,
 } from '../../../../shared/protocol';
+// 走 assets 内的镜像副本：Cocos 无法从 assets 之外做值导入。
+// 镜像由 tools/sync-terrain.js 从 shared/terrain.ts 同步并校验。
+import { terrainHeightAt } from '../shared/terrain';
 import type {
   GameplayConfig,
   PresentationConfig,
@@ -262,7 +265,14 @@ export class EnemyRenderer {
   private createGround(): void {
     const ground = new Node('Plateau');
     ground.setParent(this.worldRoot);
-    ground.setPosition(0, -this.presentation.groundThicknessM, 0);
+    // 山顶阵地平台：arena 范围（z 约 -10..+10）恰好落在高度场的山顶平段上，
+    // 因此直接取中心点的地面高度，把板子埋在地表下方做厚度，
+    // 而不是停在 y=0（那是山脚高度，会浮在半空中）。
+    ground.setPosition(
+      0,
+      terrainHeightAt(0, 0) - this.presentation.groundThicknessM,
+      0,
+    );
     ground.setScale(
       this.gameplay.arena.widthM,
       this.presentation.groundThicknessM,

@@ -1,5 +1,6 @@
 import type { ProjectConfig } from '../config/project-config';
 import type { RouteId } from '../../../shared/protocol';
+import { terrainHeightAt } from '../../../shared/terrain';
 import {
   BattleSession,
   type BattleSessionConfig,
@@ -108,7 +109,11 @@ export function createM1BattleRuntime(
       playerHeroName:
         config.allies.heroNames[config.allies.playerDefaultSeat]!,
       playerRouteId,
-      playerPosition: { x: 0, y: playerHeightM, z: 0 },
+      playerPosition: {
+        x: 0,
+        y: terrainHeightAt(0, 0) + playerHeightM,
+        z: 0,
+      },
       enemy: {
         id: `${playerId}:m1-enemy`,
         enemyType,
@@ -116,7 +121,7 @@ export function createM1BattleRuntime(
         hp: enemyConfig.hp,
         position: {
           x: 0,
-          y: 0,
+          y: terrainHeightAt(0, -gameplay.arena.depthM / 2),
           z: -gameplay.arena.depthM / 2,
         },
       },

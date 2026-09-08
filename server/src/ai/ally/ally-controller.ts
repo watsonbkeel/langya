@@ -338,15 +338,17 @@ function moveToward(
   const deltaX = target.x - position.x;
   const deltaY = target.y - position.y;
   const deltaZ = target.z - position.z;
-  const distance = Math.hypot(deltaX, deltaY, deltaZ);
-  if (distance === 0 || distance <= maxDistance) {
+  // 与敌人一致：moveSpeed 是沿地面的水平速度，爬升不占速度预算，
+  // 否则山顶补位的队友在有高差的席位之间会莫名变慢。
+  const horizontalDistance = Math.hypot(deltaX, deltaZ);
+  if (horizontalDistance === 0 || horizontalDistance <= maxDistance) {
     position.x = target.x;
     position.y = target.y;
     position.z = target.z;
     return true;
   }
 
-  const scale = maxDistance / distance;
+  const scale = maxDistance / horizontalDistance;
   position.x += deltaX * scale;
   position.y += deltaY * scale;
   position.z += deltaZ * scale;

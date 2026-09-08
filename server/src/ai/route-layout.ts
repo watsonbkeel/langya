@@ -1,4 +1,15 @@
 import type { Vector3 } from '../../../shared/protocol';
+import { terrainHeightAt } from '../../../shared/terrain';
+
+/**
+ * 冲锋路径的采样间隔（米）。
+ *
+ * 路线两端直连会让敌人沿直线穿过坡体（山腰陷进地下、山脚浮在空中），
+ * 因此按固定间隔在坡面上采样中间点，让预计算路径贴着地形起伏。
+ * 间隔取 5m：130m 的最长路线约 26 段，既贴合 14° 的最大坡度，
+ * 又不会让每 tick 的路径点推进产生额外开销。
+ */
+const ROUTE_SAMPLE_STEP_M = 5;
 
 export interface RouteConfig {
   readonly lengthM: number;
@@ -39,23 +50,53 @@ export function createRouteLayouts<TRouteId extends string>(
   const guardZ = -(arena.depthM / 2);
 
   return routeEntries.map(([routeId, route], index) => {
+    const laneX = firstLaneX + laneSpacing * index;
+    const spawnZ = -route.lengthM;
     const spawnPosition = {
-      x: firstLaneX + laneSpacing * index,
-      y: 0,
-      z: -route.lengthM,
+      x: laneX,
+      y: terrainHeightAt(laneX, spawnZ),
+      z: spawnZ,
     };
     const guardPosition = {
-      x: firstLaneX + laneSpacing * index,
-      y: 0,
+      x: laneX,
+      y: terrainHeightAt(laneX, guardZ),
       z: guardZ,
     };
     return {
       routeId,
       spawnPosition,
       guardPosition,
-      waypoints: [spawnPosition, guardPosition],
+      waypoints: sampleSlopeWaypoints(spawnPosition, guardPosition),
     };
   });
+}
+
+/**
+ * 在山脚与山顶之间沿坡面采样路径点。
+ *
+ * 首尾必须严格等于传入的出生点与防守点，避免测试与外部逻辑
+ * 依赖的端点因采样取整而偏移。
+ */
+function sampleSlopeWaypoints(
+  spawnPosition: Vector3,
+  guardPosition: Vector3,
+): readonly Vector3[] {
+  const spanZ = guardPosition.z - spawnPosition.z;
+  const segments = Math.max(
+    1,
+    Math.round(Math.abs(spanZ) / ROUTE_SAMPLE_STEP_M),
+  );
+
+  const waypoints: Vector3[] = [spawnPosition];
+  for (let step = 1; step < segments; step += 1) {
+    const ratio = step / segments;
+    const x =
+      spawnPosition.x + (guardPosition.x - spawnPosition.x) * ratio;
+    const z = spawnPosition.z + spanZ * ratio;
+    waypoints.push({ x, y: terrainHeightAt(x, z), z });
+  }
+  waypoints.push(guardPosition);
+  return waypoints;
 }
 
 export function findNearestRoute<TRouteId extends string>(

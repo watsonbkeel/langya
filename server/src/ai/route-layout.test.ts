@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 
 import gameplayConfig from '../../../shared/config/gameplay.json';
 import wavesConfig from '../../../shared/config/waves.json';
+import { terrainHeightAt } from '../../../shared/terrain';
 
 import { createRouteLayouts, findNearestRoute } from './route-layout';
 
@@ -24,10 +25,39 @@ describe('route layout', () => {
         layout.guardPosition.z,
         -gameplayConfig.arena.depthM / 2,
       );
-      assert.deepEqual(layout.waypoints, [
-        layout.spawnPosition,
+
+      // 起点与防守点的高度由地形高度场决定：山脚低、山顶高。
+      assert.equal(
+        layout.spawnPosition.y,
+        terrainHeightAt(layout.spawnPosition.x, layout.spawnPosition.z),
+      );
+      assert.equal(
+        layout.guardPosition.y,
+        terrainHeightAt(layout.guardPosition.x, layout.guardPosition.z),
+      );
+      assert.equal(
+        layout.guardPosition.y > layout.spawnPosition.y,
+        true,
+      );
+
+      // 路径沿坡面采样，首尾必须严格等于出生点与防守点。
+      assert.equal(layout.waypoints.length >= 2, true);
+      assert.deepEqual(layout.waypoints[0], layout.spawnPosition);
+      assert.deepEqual(
+        layout.waypoints[layout.waypoints.length - 1],
         layout.guardPosition,
-      ]);
+      );
+
+      // 中间点全部贴合地面，且高度单调不降（一路向上爬）。
+      let previousY = Number.NEGATIVE_INFINITY;
+      for (const waypoint of layout.waypoints) {
+        assert.equal(
+          waypoint.y,
+          terrainHeightAt(waypoint.x, waypoint.z),
+        );
+        assert.equal(waypoint.y >= previousY, true);
+        previousY = waypoint.y;
+      }
     }
   });
 

@@ -9,6 +9,9 @@ import {
 } from 'cc';
 
 import type { RouteId } from '../../../../shared/protocol';
+// 走 assets 内的镜像副本：Cocos 无法从 assets 之外做值导入。
+// 镜像由 tools/sync-terrain.js 从 shared/terrain.ts 同步并校验。
+import { terrainHeightAt } from '../shared/terrain';
 import type {
   GameplayConfig,
   PresentationConfig,
@@ -23,6 +26,20 @@ import {
 } from '../core/billboard';
 
 const GROUND_UV_REPEAT = 8;
+
+/**
+ * 地面网格的采样边长（米）。
+ * 2m 在 60m x 150m 的战场上约 30 x 75 格，
+ * 既能把 14° 的坡面画得平滑，也不会把顶点数推到移动端吃不消的量级。
+ */
+const GROUND_SEGMENT_SIZE_M = 2;
+
+interface GroundBounds {
+  readonly minX: number;
+  readonly maxX: number;
+  readonly minZ: number;
+  readonly maxZ: number;
+}
 const TERRAIN_BACKDROP_HEIGHT_M = 16;
 const COVER_HEIGHT_M = 1.4;
 const MACHINE_GUN_NEST_HEIGHT_M = 2.15;
@@ -68,7 +85,10 @@ export class M4SceneDecorations {
       primitives.box({ width: 1, height: 1, length: 1 }),
     );
     this.billboardMesh = createBillboardMesh();
-    this.groundMesh = createGroundMesh(GROUND_UV_REPEAT);
+    this.groundMesh = createGroundMesh(
+      this.createGroundBounds(),
+      GROUND_UV_REPEAT,
+    );
     this.routeMaterials = {
       A: this.createColorMaterial('#8E734F'),
       B: this.createColorMaterial('#667B70'),
@@ -121,15 +141,23 @@ export class M4SceneDecorations {
     }
   }
 
+  /** 地面网格覆盖的世界范围：横向留出余量，纵深盖满最长路线到山顶后方。 */
+  private createGroundBounds(): GroundBounds {
+    const halfWidth = (this.gameplay.arena.widthM * 1.35) / 2;
+    return {
+      minX: -halfWidth,
+      maxX: halfWidth,
+      minZ: -this.maxRouteLengthM - this.gameplay.arena.depthM / 2,
+      maxZ: this.gameplay.arena.depthM / 2,
+    };
+  }
+
   private createTexturedGround(): void {
     const ground = new Node('RockyGround');
     ground.setParent(this.root);
-    ground.setPosition(0, 0.012, -this.maxRouteLengthM / 2);
-    ground.setScale(
-      this.gameplay.arena.widthM * 1.35,
-      1,
-      this.maxRouteLengthM + this.gameplay.arena.depthM,
-    );
+    // 网格顶点已是世界坐标（含地形高度），节点不再位移或缩放；
+    // 仅抬高一点点避免与路线标记 z-fighting。
+    ground.setPosition(0, 0.012, 0);
     this.groundRenderer = ground.addComponent(MeshRenderer);
     this.groundRenderer.mesh = this.groundMesh;
     this.groundRenderer.setSharedMaterial(this.groundTextureMaterial, 0);
@@ -138,12 +166,13 @@ export class M4SceneDecorations {
 
   private createTerrainBackdrop(): void {
     const width = this.gameplay.arena.widthM;
+    const z = -this.maxRouteLengthM - this.gameplay.arena.depthM / 2;
     this.createBillboardProp(
       'TerrainBackdrop',
       this.terrainBackdropMaterial,
       0,
-      TERRAIN_BACKDROP_HEIGHT_M / 2 - 0.8,
-      -this.maxRouteLengthM - this.gameplay.arena.depthM / 2,
+      terrainHeightAt(0, z) + TERRAIN_BACKDROP_HEIGHT_M / 2 - 0.8,
+      z,
       width * 2.5,
       TERRAIN_BACKDROP_HEIGHT_M,
     );
@@ -163,17 +192,29 @@ export class M4SceneDecorations {
       B: this.waves.routes.B.lengthM,
       C: this.waves.routes.C.lengthM,
     };
+    // 路线标记跨越整段坡面，单个长条无法贴合起伏，
+    // 改成沿路线分段铺设，每段各自取当地地面高度。
+    const segmentLengthM = 4;
     for (const routeId of ['A', 'B', 'C'] as const) {
-      this.createBlock(
-        `Route:${routeId}`,
-        routeXs[routeId],
-        0.024,
-        -routeDepths[routeId] / 2,
-        width / 42,
-        0.025,
-        routeDepths[routeId],
-        this.routeMaterials[routeId],
+      const x = routeXs[routeId];
+      const routeDepth = routeDepths[routeId];
+      const segments = Math.max(
+        1,
+        Math.round(routeDepth / segmentLengthM),
       );
+      for (let index = 0; index < segments; index += 1) {
+        const z = -routeDepth * ((index + 0.5) / segments);
+        this.createBlock(
+          `Route:${routeId}:${index}`,
+          x,
+          terrainHeightAt(x, z) + 0.024,
+          z,
+          width / 42,
+          0.025,
+          routeDepth / segments,
+          this.routeMaterials[routeId],
+        );
+      }
     }
   }
 
@@ -194,7 +235,7 @@ export class M4SceneDecorations {
         `StoneCover:${index}`,
         this.coverMaterial,
         x,
-        COVER_HEIGHT_M / 2,
+        terrainHeightAt(x, z) + COVER_HEIGHT_M / 2,
         z,
         coverWidth,
         COVER_HEIGHT_M,
@@ -205,13 +246,14 @@ export class M4SceneDecorations {
   private createMachineGunNests(): void {
     const width = this.gameplay.arena.widthM;
     const depth = this.gameplay.arena.depthM;
+    const nestZ = -depth * 0.1;
     for (const [index, x] of [-width / 3, width / 3].entries()) {
       this.createBillboardProp(
         `MachineGunNest:${index}`,
         this.machineGunNestMaterial,
         x,
-        MACHINE_GUN_NEST_HEIGHT_M / 2,
-        -depth * 0.1,
+        terrainHeightAt(x, nestZ) + MACHINE_GUN_NEST_HEIGHT_M / 2,
+        nestZ,
         width / 7,
         MACHINE_GUN_NEST_HEIGHT_M,
       );
@@ -231,7 +273,7 @@ export class M4SceneDecorations {
         `SupplyCrate:${index}`,
         this.crateMaterial,
         x,
-        0.55,
+        terrainHeightAt(x, z) + 0.55,
         z,
         2.25,
         1.55,
@@ -359,28 +401,96 @@ export class M4SceneDecorations {
   }
 }
 
-function createGroundMesh(uvRepeat: number): Mesh {
+/**
+ * 生成贴合地形高度场的地面网格。
+ *
+ * 与旧的 4 顶点平板不同，这里直接用**世界坐标**建网格（节点不再缩放），
+ * 每个顶点的 y 都取自 `terrainHeightAt` —— 与服务端判定同一函数，
+ * 因此「看到的坡面」和「打得中的位置」不会脱节。
+ */
+function createGroundMesh(
+  bounds: GroundBounds,
+  uvRepeat: number,
+): Mesh {
+  const spanX = bounds.maxX - bounds.minX;
+  const spanZ = bounds.maxZ - bounds.minZ;
+  const segmentsX = Math.max(
+    1,
+    Math.round(spanX / GROUND_SEGMENT_SIZE_M),
+  );
+  const segmentsZ = Math.max(
+    1,
+    Math.round(spanZ / GROUND_SEGMENT_SIZE_M),
+  );
+
+  const positions: number[] = [];
+  const normals: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+
+  let minY = Number.POSITIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+
+  for (let row = 0; row <= segmentsZ; row += 1) {
+    const vRatio = row / segmentsZ;
+    const z = bounds.minZ + spanZ * vRatio;
+    for (let column = 0; column <= segmentsX; column += 1) {
+      const uRatio = column / segmentsX;
+      const x = bounds.minX + spanX * uRatio;
+      const y = terrainHeightAt(x, z);
+
+      positions.push(x, y, z);
+      const normal = terrainNormalAt(x, z);
+      normals.push(normal.x, normal.y, normal.z);
+      uvs.push(uRatio * uvRepeat, vRatio * uvRepeat);
+
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+    }
+  }
+
+  const stride = segmentsX + 1;
+  for (let row = 0; row < segmentsZ; row += 1) {
+    for (let column = 0; column < segmentsX; column += 1) {
+      const topLeft = row * stride + column;
+      const topRight = topLeft + 1;
+      const bottomLeft = topLeft + stride;
+      const bottomRight = bottomLeft + 1;
+      indices.push(topLeft, bottomLeft, topRight);
+      indices.push(topRight, bottomLeft, bottomRight);
+    }
+  }
+
   return utils.createMesh({
-    positions: [
-      -0.5, 0, -0.5,
-      -0.5, 0, 0.5,
-      0.5, 0, 0.5,
-      0.5, 0, -0.5,
-    ],
-    normals: [
-      0, 1, 0,
-      0, 1, 0,
-      0, 1, 0,
-      0, 1, 0,
-    ],
-    uvs: [
-      0, 0,
-      0, uvRepeat,
-      uvRepeat, uvRepeat,
-      uvRepeat, 0,
-    ],
-    indices: [0, 1, 3, 3, 1, 2],
-    minPos: { x: -0.5, y: 0, z: -0.5 },
-    maxPos: { x: 0.5, y: 0, z: 0.5 },
+    positions,
+    normals,
+    uvs,
+    indices,
+    minPos: { x: bounds.minX, y: minY, z: bounds.minZ },
+    maxPos: { x: bounds.maxX, y: maxY, z: bounds.maxZ },
   });
+}
+
+/**
+ * 用有限差分求地形法线，让坡面有正确的明暗过渡而不是一片死平。
+ */
+function terrainNormalAt(
+  x: number,
+  z: number,
+): { readonly x: number; readonly y: number; readonly z: number } {
+  const epsilon = 0.5;
+  const slopeX =
+    (terrainHeightAt(x + epsilon, z) -
+      terrainHeightAt(x - epsilon, z)) /
+    (2 * epsilon);
+  const slopeZ =
+    (terrainHeightAt(x, z + epsilon) -
+      terrainHeightAt(x, z - epsilon)) /
+    (2 * epsilon);
+  const length = Math.hypot(slopeX, 1, slopeZ);
+  return {
+    x: -slopeX / length,
+    y: 1 / length,
+    z: -slopeZ / length,
+  };
 }

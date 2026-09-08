@@ -19,6 +19,7 @@ import {
   type WeaponState,
   type WorldSnapshotMessage,
 } from '../../../shared/protocol';
+import { terrainHeightAt } from '../../../shared/terrain';
 import {
   AllyAgent,
   AllyController,
@@ -327,6 +328,8 @@ export class M2BattleSession<
   private readonly supplyDropManager: SupplyDropManager;
   private readonly machineGunController: MachineGunController;
   private readonly weaponRacks: readonly WeaponRackItemState[];
+  /** 玩家眼睛相对脚下地面的高度（米），移动时用于贴合地形。 */
+  private readonly playerEyeHeightM: number;
   private readonly pendingGrenades: PendingGrenade[] = [];
   /** 复用缓冲：避免每 tick 为敌人选靶重新分配数组。 */
   private readonly friendlyTargetBuffer: FriendlyTarget[] = [];
@@ -346,7 +349,7 @@ export class M2BattleSession<
       ...(options.humans === undefined ? {} : { humans: options.humans }),
     });
     const guardPositions = this.createInitialGuardPositions();
-    const playerHeightM =
+    this.playerEyeHeightM =
       (options.config.enemyHitbox.torsoStartM +
         options.config.enemyHitbox.headStartM) /
       2;
@@ -360,18 +363,20 @@ export class M2BattleSession<
       if (!guardPosition) {
         throw new Error(`真人席位 ${seat.index} 缺少防守位置`);
       }
+      // guardPosition.y 已是该点的地面高度，玩家眼睛再抬一个眼高。
+      const eyePosition = {
+        ...guardPosition,
+        y: guardPosition.y + this.playerEyeHeightM,
+      };
       this.players.set(seat.occupant.id, {
         id: seat.occupant.id,
         name: seat.occupant.displayName,
         seatIndex: seat.index,
         routeId: seat.routeId,
-        guardPosition: { ...guardPosition, y: playerHeightM },
+        guardPosition: eyePosition,
         maxHp: options.config.player.maxHp,
         hp: options.config.player.initialHp,
-        position: {
-          ...guardPosition,
-          y: playerHeightM,
-        },
+        position: { ...eyePosition },
         aimYaw: 0,
         aimPitch: 0,
         isCrouch: false,
@@ -459,7 +464,7 @@ export class M2BattleSession<
         this.room.id,
         options.config.machineGun.nestCount,
         options.config.routes,
-        playerHeightM,
+        this.playerEyeHeightM,
       ),
     );
     this.weaponRacks = createWeaponRacks(
@@ -1870,26 +1875,29 @@ export class M2BattleSession<
     const halfWidth = this.config.arena.widthM / 2;
     const halfDepth = this.config.arena.depthM / 2;
 
+    const nextX = clamp(
+      participant.position.x +
+        (rightX * participant.moveDirX + forwardX * participant.moveDirY) *
+          speed *
+          deltaSec,
+      -halfWidth,
+      halfWidth,
+    );
+    const nextZ = clamp(
+      participant.position.z +
+        (rightZ * participant.moveDirX + forwardZ * participant.moveDirY) *
+          speed *
+          deltaSec,
+      -halfDepth,
+      halfDepth,
+    );
+
+    // 山顶阵地本身有起伏，移动后眼睛高度必须跟着地面走，
+    // 否则玩家会在斜坡上悬空或陷进地里，俯射角度也会失真。
     participant.position = {
-      x: clamp(
-        participant.position.x +
-          (rightX * participant.moveDirX +
-            forwardX * participant.moveDirY) *
-            speed *
-            deltaSec,
-        -halfWidth,
-        halfWidth,
-      ),
-      y: participant.position.y,
-      z: clamp(
-        participant.position.z +
-          (rightZ * participant.moveDirX +
-            forwardZ * participant.moveDirY) *
-            speed *
-            deltaSec,
-        -halfDepth,
-        halfDepth,
-      ),
+      x: nextX,
+      y: terrainHeightAt(nextX, nextZ) + this.playerEyeHeightM,
+      z: nextZ,
     };
   }
 
@@ -2025,12 +2033,15 @@ export class M2BattleSession<
       const firstOffset =
         -(this.config.seatSpacingM * (routeSeats.length - 1)) / 2;
       routeSeats.forEach((seat, index) => {
+        // 席位沿山顶横向排开；山脊两侧有高差，平移后必须重新取地面高度。
+        const x =
+          route.guardPosition.x +
+          firstOffset +
+          index * this.config.seatSpacingM;
         positions.set(seat.index, {
           ...route.guardPosition,
-          x:
-            route.guardPosition.x +
-            firstOffset +
-            index * this.config.seatSpacingM,
+          x,
+          y: terrainHeightAt(x, route.guardPosition.z),
         });
       });
     }
@@ -2050,13 +2061,16 @@ export class M2BattleSession<
     ).length;
     const direction = occupiedCount % 2 === 0 ? 1 : -1;
     const offsetSlots = Math.floor(occupiedCount / 2) + 1;
+    // 补位同样是山顶横向平移，新位置必须重新取地面高度，否则会悬空或陷地。
+    const x =
+      route.guardPosition.x +
+      direction * offsetSlots * this.config.seatSpacingM;
     return {
       ...route,
       guardPosition: {
         ...route.guardPosition,
-        x:
-          route.guardPosition.x +
-          direction * offsetSlots * this.config.seatSpacingM,
+        x,
+        y: terrainHeightAt(x, route.guardPosition.z),
       },
     };
   }
@@ -2304,7 +2318,7 @@ function createMachineGunPlacements<TRouteId extends string>(
   roomId: string,
   nestCount: number,
   routes: readonly RouteLayout<TRouteId>[],
-  playerHeightM: number,
+  eyeHeightM: number,
 ): readonly MachineGunPlacement[] {
   if (routes.length === 0 || nestCount <= 0) {
     throw new Error('生成重机枪位需要防守路线和正数枪位数量');
@@ -2325,7 +2339,8 @@ function createMachineGunPlacements<TRouteId extends string>(
       id: `${roomId}:mg:${index + 1}`,
       position: {
         ...route.guardPosition,
-        y: playerHeightM,
+        // guardPosition.y 已是该点的地面高度，机枪射击点再抬到射手视线高度
+        y: route.guardPosition.y + eyeHeightM,
       },
       baseYaw: yawToward(route.guardPosition, route.spawnPosition),
     };

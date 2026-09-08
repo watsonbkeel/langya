@@ -2,6 +2,7 @@ import type {
   SupplyItemState,
   Vector3,
 } from '../../../shared/protocol';
+import { terrainHeightAt } from '../../../shared/terrain';
 import type { RandomSource } from '../ai/seeded-random';
 
 const MILLISECONDS_PER_SECOND = 1000;
@@ -212,11 +213,11 @@ function createSupplyPoints(
   arenaWidthM: number,
 ): readonly Vector3[] {
   const spacing = arenaWidthM / (pointCount + 1);
-  return Array.from({ length: pointCount }, (_, index) => ({
-    x: -arenaWidthM / 2 + spacing * (index + 1),
-    y: 0,
-    z: 0,
-  }));
+  return Array.from({ length: pointCount }, (_, index) => {
+    // 补给点沿山顶横向排开，高度取当地地面高度，避免箱子悬空。
+    const x = -arenaWidthM / 2 + spacing * (index + 1);
+    return { x, y: terrainHeightAt(x, 0), z: 0 };
+  });
 }
 
 function randomInclusive(

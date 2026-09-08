@@ -70,7 +70,9 @@ describe('M2 match simulator', () => {
   });
 
   it("允许延迟投放时在时限后补齐同屏上限排队的敌人", () => {
-    const result = simulateM2Match(config, 724);
+    // 种子需挑一个会把最后几名敌人排到时限之后的对局；
+    // 地形贴合改变了命中几何，原种子 724 已不再触发加时，换用 9。
+    const result = simulateM2Match(config, 9);
     const matchDurationTicks =
       config.gameplay.match.durationSec *
       config.gameplay.server.tickRateHz;

@@ -337,8 +337,8 @@ export class FirstPersonController {
       Math.min(MAX_MOUSE_DELTA_PX, event.getDeltaY()),
     );
     this.aimYaw -= deltaX * this.presentation.mouseSensitivityDeg;
-    // 运行时默认兼容 macOS 上常见的上下反向问题，同时保留 URL 级别的
-    // 明确覆盖能力，避免不同浏览器/平台的 Pointer Lock 行为不一致。
+    // Pointer Lock 下 movementY 向下为正，各平台一致：默认不翻转。
+    // 仅在玩家用 ?invertMouseY=1 显式要求时才反向。
     const pitchDelta = this.invertMouseYAxis ? -deltaY : deltaY;
     this.aimPitch += pitchDelta * this.presentation.mouseSensitivityDeg;
     const pitchMin =
@@ -511,21 +511,22 @@ function normalizeDegrees(value: number): number {
   return normalized === -180 ? 180 : normalized;
 }
 
+/**
+ * 视角 Y 轴是否反转。
+ *
+ * 游戏运行在 Pointer Lock 下，Cocos 的 web mouse-input 用
+ * `y = prevY - movementY` 换算坐标，因此 `getDeltaY()` 拿到的已经是
+ * 「鼠标上移为正」，各平台一致。早期按 `platform.includes('mac')`
+ * 强制翻转是错误的，正是 macOS 上下视角反向的根因。
+ * 只保留 `?invertMouseY=1` 开关，供偏好「飞行摇杆式」的玩家使用。
+ */
 function detectMouseYAxisInversion(): boolean {
   if (typeof window === 'undefined') {
     return false;
   }
 
-  const search = new URLSearchParams(window.location.search);
-  const explicit = search.get('invertMouseY');
-  if (explicit === '1' || explicit === 'true') {
-    return true;
-  }
-  if (explicit === '0' || explicit === 'false') {
-    return false;
-  }
-
-  const platform =
-    `${navigator.userAgent} ${navigator.platform}`.toLowerCase();
-  return platform.includes('mac');
+  const explicit = new URLSearchParams(window.location.search).get(
+    'invertMouseY',
+  );
+  return explicit === '1' || explicit === 'true';
 }

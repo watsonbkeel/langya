@@ -395,6 +395,29 @@ if (gameplay) {
   }
 }
 
+// ---------- 地形高度场双份真源一致性 ----------
+// shared/terrain.ts 是真源，client/assets/scripts/shared/terrain.ts 是镜像。
+// 两份漂移会让「客户端画出的地面」与「服务端判定的地面」脱节，
+// 表现为「看到人在坡上、子弹却打空」，属于必须拦截的错误。
+{
+  const terrainSource = path.resolve(__dirname, '..', 'shared', 'terrain.ts');
+  const terrainMirror = path.resolve(
+    __dirname, '..', 'client', 'assets', 'scripts', 'shared', 'terrain.ts',
+  );
+  if (!fs.existsSync(terrainSource)) {
+    err('缺少地形真源：shared/terrain.ts');
+  } else if (!fs.existsSync(terrainMirror)) {
+    err('缺少客户端地形镜像：client/assets/scripts/shared/terrain.ts（跑 node tools/sync-terrain.js）');
+  } else if (
+    Buffer.compare(
+      fs.readFileSync(terrainSource),
+      fs.readFileSync(terrainMirror),
+    ) !== 0
+  ) {
+    err('地形镜像与 shared/terrain.ts 不一致，视觉与判定会脱节（跑 node tools/sync-terrain.js 同步）');
+  }
+}
+
 // ---------- 输出 ----------
 console.log('');
 if (warnings.length) {

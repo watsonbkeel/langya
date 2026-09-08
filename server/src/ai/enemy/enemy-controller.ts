@@ -2,6 +2,7 @@ import type {
   EnemyAiState,
   Vector3,
 } from '../../../../shared/protocol';
+import { terrainHeightAt } from '../../../../shared/terrain';
 import type { RouteLayout } from '../route-layout';
 
 export interface EnemyTarget {
@@ -89,11 +90,17 @@ export class EnemyAgent<TRouteId extends string> {
     this.id = options.id;
     this.enemyType = options.enemyType;
     this.routeId = options.route.routeId;
-    this.waypoints = options.route.waypoints.map((waypoint) => ({
-      x: waypoint.x + options.spawnOffset.x,
-      y: waypoint.y + options.spawnOffset.y,
-      z: waypoint.z + options.spawnOffset.z,
-    }));
+    // 随机散开偏移会把路径点推离原采样位置，因此平移后必须重新贴地，
+    // 否则同一波敌人会半数陷进坡里、半数浮在空中。
+    this.waypoints = options.route.waypoints.map((waypoint) => {
+      const x = waypoint.x + options.spawnOffset.x;
+      const z = waypoint.z + options.spawnOffset.z;
+      return {
+        x,
+        y: terrainHeightAt(x, z) + options.spawnOffset.y,
+        z,
+      };
+    });
     const spawnPosition = this.waypoints[0];
     if (!spawnPosition) {
       throw new Error(`路线 "${options.route.routeId}" 缺少路径点`);
@@ -111,18 +118,28 @@ export class EnemyAgent<TRouteId extends string> {
       return;
     }
 
-    const waypoint = this.waypoints[this.waypointIndex];
-    if (!waypoint) {
-      return;
-    }
-
     // 路径在开局时预计算，tick 中只逐点推进，不运行实时寻路。
-    if (moveToward(
-      this.position,
-      waypoint,
-      this.behavior.moveSpeed * deltaSec,
-    )) {
+    //
+    // 贴合地形后路径点从「首尾两点」变成沿坡面每 5m 一个采样点，
+    // 若每 tick 只推进一个点，到点时剩余的移动预算会被丢弃，
+    // 行军速度就会随采样密度而变慢。这里把预算走完为止，
+    // 使推进距离只由 moveSpeed 决定，与路径点疏密无关。
+    let remainingM = this.behavior.moveSpeed * deltaSec;
+    while (remainingM > 0) {
+      const waypoint = this.waypoints[this.waypointIndex];
+      if (!waypoint) {
+        return;
+      }
+
+      const stepM = horizontalDistanceBetween(this.position, waypoint);
+      if (stepM > remainingM) {
+        moveToward(this.position, waypoint, remainingM);
+        return;
+      }
+
+      moveToward(this.position, waypoint, stepM);
       this.waypointIndex += 1;
+      remainingM -= stepM;
     }
   }
 
@@ -323,12 +340,17 @@ function moveToward(
   const deltaX = target.x - position.x;
   const deltaY = target.y - position.y;
   const deltaZ = target.z - position.z;
-  const distance = Math.hypot(deltaX, deltaY, deltaZ);
-  if (distance === 0) {
+  // moveSpeed 是「沿地面的水平速度」：波次配置里的 travelTimeSec
+  // （A 60m/18s、B 90m/28s、C 130m/40s）都是按水平距离标定的，
+  // 若把爬升算进速度预算，同样的 moveSpeed 在坡上就走不完全程，
+  // 波次节奏会整体拖慢。因此推进量只看 XZ，y 按同比例跟随路径点贴坡。
+  const horizontalDistance = Math.hypot(deltaX, deltaZ);
+  if (horizontalDistance === 0) {
+    position.y = target.y;
     return true;
   }
 
-  const scale = Math.min(1, maxDistance / distance);
+  const scale = Math.min(1, maxDistance / horizontalDistance);
   position.x += deltaX * scale;
   position.y += deltaY * scale;
   position.z += deltaZ * scale;
@@ -341,4 +363,12 @@ function distanceBetween(first: Vector3, second: Vector3): number {
     first.y - second.y,
     first.z - second.z,
   );
+}
+
+/** 沿地面的水平距离：移动预算按水平距离结算，爬升不额外消耗速度。 */
+function horizontalDistanceBetween(
+  first: Vector3,
+  second: Vector3,
+): number {
+  return Math.hypot(first.x - second.x, first.z - second.z);
 }
