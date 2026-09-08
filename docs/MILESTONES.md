@@ -543,7 +543,7 @@ M3 双方清单与真实整局验收均已完成，状态收口为 ✅。按项�
 **🖥️ Debian（并行做，不碰客户端）**
 - [x] 服务端性能剖析，确认 44 个 AI 实体下 CPU < 20%
 - [x] 补齐 combat 层单元测试
-- [ ] 清理 M1–M3 积累的技术债
+- [x] 清理 M1–M3 积累的技术债
 
 ### 完成判据
 
@@ -645,6 +645,46 @@ P95 0.0448 ms，P99 0.1194 ms，最大 1.2943 ms；五个 M3 完整模拟的单�
 seed 723 / 724 / 725 均投放 200 / 200，25 局汇总 `pass=true`。Node 22.23.2
 下配置校验、类型检查、100 / 100 测试和生产构建通过。系统默认 Node 20 仍不支持
 `node:sqlite`；正式部署脚本已使用项目 Node 22 路径，不影响现行服务。
+
+2026-09-08：完成 M4 最后一项「清理 M1–M3 积累的技术债」。本轮遵循「先量化
+再动手」，不做无证据的重构。
+
+**先量化基线**（改动前）：`verify-config.js` 通过；`server` / `client` 两侧
+`tsc --noEmit` 无错；`npm test` 138 / 138 通过；`tools/simulate-match.js`
+十局汇总 `pass=true`，平均单核 CPU 0.0125%、最高 0.0401%，平均每局
+CPU 37.42 ms / 6000 tick（约 0.0062 ms/tick），远低于 20% 红线。
+
+**真正修掉的一处**：广播路径对同一条消息按连接重复 `JSON.stringify`。
+`server/src/net/websocket-server.ts` 抽出 `sendSerialized()`，让
+`broadcastToRoom()` 与 `broadcastRoomState()` 每次广播只序列化一次并复用
+字符串（房间内无可发送连接时懒序列化，不做无用功）。基准实测：单份满编快照
+（40 敌）10,232 字节，序列化 0.0203 ms；1 人房节省 0.2%，3 人房
+0.0608 ms → 0.0203 ms（省 66.6%），5 人房 0.1017 ms → 0.0203 ms
+（省 80.0%），收益随房间人数线性放大。5 人房 20Hz 全量广播带宽约 999 KB/s，
+为后续 int16 量化 + 差量同步留下明确的量化依据。
+
+**评估后判定不改的**：`m2-battle-session.ts` 的 `getEnemyTargets()`、
+`countEnemiesByRoute()`、`createSnapshot()` 每 tick 仍有 `.map` / 对象字面量
+分配。实测整局平均仅 0.0062 ms/tick，且 `createSnapshot()` 的产物本身就是要
+序列化下发的载荷，池化收益极低却会显著增加可读性成本（本项目同时是教学案例）。
+故按「有实测证据才优化」原则跳过，不做投机性重构。`getFriendlyTargets()`
+已有的 `friendlyTargetBuffer` 复用保留不动。
+
+**铁律复查**：铁律 2 全量扫描服务端裸数字，仅剩 `MILLISECONDS_PER_SECOND =
+1000`、限流窗口 `WINDOW_MS = 1000`、`parsePort('WS_PORT', 8081)` 等单位/端口
+常量与测试夹具，业务数值均来自 `shared/config/*.json`，无违规。铁律 8 复查
+`ClientMessage` / `ServerMessage` / `WorldSnapshotPayload` / `RoomStatePayload`
+等类型定义只存在于 `shared/protocol.ts`，server 侧全部为 `import`，无重复定义。
+`.gitignore` 中 `output/`、`.playwright-cli/`、`*.bak`、`*.bak-*` 均已覆盖，
+旧审计中的该项债务此前已解决，无需改动。
+
+**改动后自测**（全部实跑）：`tsc --noEmit` 无错；`npm test` 138 / 138；
+`tools/check-multiplayer.js` 20 项全通过（三人同房、快照 tick 对齐、席位不重复、
+掉线重连回原席位）；`tools/check-anticheat.js` 5 项全通过（限流触发 1008、
+踢出后可重连）；`tools/check-m3-ws.js` 11 项全通过（重机枪挂载 / 扣弹 /
+下枪）；`tools/simulate-match.js` 十局 `pass=true`，队友歼敌占比 26.79%
+（≤ 50% 约束成立），200 人全投放，同屏峰值 40。改动仅限 `server/`，未触碰
+`shared/` 与 `client/`，不触发 COLLAB.md 协商流程。
 
 ---
 

@@ -671,9 +671,10 @@ export class GameWebSocketServer {
 
   private broadcastRoomState(room: MultiplayerRoom<M2RouteId>): void {
     const message = room.toRoomState();
+    const payload = JSON.stringify(message);
     for (const client of this.clients.values()) {
       if (client.roomCode === room.id) {
-        this.send(client.socket, message);
+        this.sendSerialized(client.socket, message.type, payload);
       }
     }
   }
@@ -958,13 +959,23 @@ export class GameWebSocketServer {
     }
   }
 
+  /**
+   * 向房间内全部已入局连接广播同一条消息。
+   *
+   * 全房间收到的内容完全相同，因此**只序列化一次**再复用给每个连接。
+   * 世界快照走的就是这条路径（20Hz × 满员 5 人），按连接各 stringify 一次
+   * 会让序列化开销随人数线性上涨，属于 AGENTS.md 明令禁止的热路径浪费。
+   */
   private broadcastToRoom(
     roomCode: string,
     message: ServerMessage,
   ): void {
+    let payload: string | undefined;
     for (const client of this.clients.values()) {
       if (client.roomCode === roomCode && client.joined) {
-        this.send(client.socket, message);
+        // 懒序列化：房间里一个可发送的连接都没有时不做无用功。
+        payload ??= JSON.stringify(message);
+        this.sendSerialized(client.socket, message.type, payload);
       }
     }
   }
@@ -1260,16 +1271,28 @@ export class GameWebSocketServer {
   }
 
   private send(socket: WebSocket, message: ServerMessage): void {
+    this.sendSerialized(socket, message.type, JSON.stringify(message));
+  }
+
+  /**
+   * 发送已序列化好的消息体。
+   * 广播场景下由调用方复用同一份字符串，避免按连接重复序列化。
+   */
+  private sendSerialized(
+    socket: WebSocket,
+    messageType: ServerMessage['type'],
+    payload: string,
+  ): void {
     const session = this.clients.get(socket);
     if (!session) {
       return;
     }
     this.sendMonitor.send(
       socket,
-      JSON.stringify(message),
-      message.type,
+      payload,
+      messageType,
       () => this.createLogContext(session),
-      message.type === SERVER_MESSAGE_TYPES.worldSnapshot,
+      messageType === SERVER_MESSAGE_TYPES.worldSnapshot,
     );
   }
 }
