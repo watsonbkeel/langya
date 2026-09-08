@@ -14,6 +14,7 @@ import type {
   MachineGunState,
   MatchEndMessage,
   MatchStartMessage,
+  RoomActionResultMessage,
   RoomStateMessage,
   RouteId,
   SnapshotMessage,
@@ -34,7 +35,12 @@ import {
 } from '../level/m3-world-interactions';
 import { M4SceneDecorations } from '../level/m4-scene-decorations';
 import { M1Hud } from '../ui/m1-hud';
+import { RoomView } from '../ui/room-view';
 import { WeaponView } from '../weapon/weapon-view';
+
+/** 重连凭证存在会话级存储：刷新页面能回原席位，关掉标签页则不保留。 */
+const RECONNECT_TOKEN_KEY = 'langyashan.reconnectToken';
+const PLAYER_NAME_KEY = 'langyashan.playerName';
 
 interface M1DebugState {
   readonly connected: boolean;
@@ -75,6 +81,10 @@ interface M1DebugState {
   readonly matchEnded: boolean;
   readonly scoreboardEntries: number;
   readonly fps: number;
+  readonly lobbyStage: string;
+  readonly roomCode: string | null;
+  readonly isHost: boolean;
+  readonly reconnectPending: boolean;
 }
 
 declare global {
@@ -88,6 +98,7 @@ declare global {
 export class M1Game {
   private readonly config: M1GameConfig;
   private readonly hud: M1Hud;
+  private readonly roomView: RoomView;
   private readonly weaponView: WeaponView;
   private readonly allyRenderer: AllyRenderer;
   private readonly enemyRenderer: EnemyRenderer;
@@ -144,6 +155,12 @@ export class M1Game {
   private fpsElapsedSec = 0;
   private fpsFrames = 0;
   private nextMachineGunFireAtMs = 0;
+  private roomCode: string | null = null;
+  private reconnectToken: string | null = null;
+  private isHost = false;
+  private matchStarted = false;
+  private reconnectPending = false;
+  private readonly playerName: string;
 
   constructor(canvas: Node, config: M1GameConfig) {
     this.config = config;
@@ -170,9 +187,43 @@ export class M1Game {
     this.hud.setRestartHandler(() => {
       // 结算页只负责重新进入一局；新局仍由服务器创建并裁决。
       if (typeof window !== 'undefined') {
+        window.sessionStorage?.removeItem(RECONNECT_TOKEN_KEY);
         window.location.reload();
       }
     });
+    this.playerName = this.resolvePlayerName();
+    this.roomView = new RoomView(
+      canvas,
+      config.presentation,
+      config.waves,
+      config.allies.seatCount,
+      {
+        onSoloStart: () => {
+          this.roomView.setHint('正在建立单人战场…');
+          this.netClient.joinSolo(this.playerName);
+        },
+        onCreateRoom: () => {
+          this.roomView.setHint('正在创建房间…');
+          this.netClient.createRoom(this.playerName);
+        },
+        onJoinRoom: (code) => {
+          this.roomView.setHint(`正在加入房间 ${code}…`);
+          this.netClient.joinRoom(code, this.playerName);
+        },
+        onQuickMatch: () => {
+          this.roomView.setHint('正在寻找可加入的房间…');
+          this.netClient.quickMatch(this.playerName);
+        },
+        onPlayerReady: () => {
+          this.roomView.setHint('已告知服务器你准备完毕');
+          this.netClient.playerReady();
+        },
+        onStartMatch: () => {
+          this.roomView.setHint('正在开局…');
+          this.netClient.startMatch();
+        },
+      },
+    );
     this.weaponView = new WeaponView(
       canvas,
       config.presentation,
@@ -235,12 +286,14 @@ export class M1Game {
         } else if (status.kind === 'disconnected') {
           this.lastDisconnectCode = status.code;
           this.lastDisconnectReason = status.reason;
+          this.onDisconnected(status.code);
         }
         this.hud.renderConnection(status);
         this.publishDebugState();
       },
       onSnapshot: (message) => this.onSnapshot(message),
       onRoomState: (message) => this.onRoomState(message),
+      onRoomActionResult: (message) => this.onRoomActionResult(message),
       onWorldSnapshot: (message) => this.onWorldSnapshot(message),
       onFireResult: (message) => this.onFireResult(message),
       onEnemyDied: (message) => {
@@ -280,7 +333,144 @@ export class M1Game {
   }
 
   connect(): void {
+    this.controller.setLobbyMode(true);
+    this.netClient.setOpenHandler(() => this.onSocketReady());
     void this.netClient.connect();
+  }
+
+  /**
+   * 连上服务器后决定去向：手里有重连凭证就先试着回原来那一局，
+   * 没有就停在大厅等玩家选择入口。
+   */
+  private onSocketReady(): void {
+    const token = this.readStoredToken();
+    if (token) {
+      this.reconnectPending = true;
+      this.reconnectToken = token;
+      this.roomView.setStage('entry');
+      this.roomView.setReconnectNotice('检测到未结束的战斗，正在尝试重连…');
+      this.netClient.reconnect(token);
+      this.publishDebugState();
+      return;
+    }
+    this.roomView.setStage('entry');
+    this.roomView.setHint('选择进入方式');
+    this.publishDebugState();
+  }
+
+  private onDisconnected(code: number): void {
+    // 1008 是服务器主动踢人（限流 / 非法输入），重连没有意义。
+    if (code === 1008 || this.matchEnded) {
+      this.clearStoredToken();
+      return;
+    }
+    if (!this.reconnectToken) {
+      return;
+    }
+    this.reconnectPending = true;
+    this.roomView.setStage('entry');
+    this.roomView.setReconnectNotice('连接中断，正在重连…');
+    this.controller.setLobbyMode(true);
+    void this.netClient.connect();
+  }
+
+  private onRoomActionResult(message: RoomActionResultMessage): void {
+    const payload = message.payload;
+    if (!payload.accepted) {
+      this.reconnectPending = false;
+      if (payload.action === 'reconnect') {
+        // 凭证失效就别再重试了，清掉回大厅重新进。
+        this.clearStoredToken();
+        this.roomView.setReconnectNotice('');
+        this.roomView.setStage('entry');
+        this.roomView.setHint('上一局已经结束，请重新选择进入方式');
+      } else {
+        this.roomView.showRejectReason(payload);
+      }
+      this.publishDebugState();
+      return;
+    }
+
+    if (payload.roomCode !== undefined) {
+      this.roomCode = payload.roomCode;
+    }
+    if (payload.reconnectToken !== undefined) {
+      this.reconnectToken = payload.reconnectToken;
+      this.writeStoredToken(payload.reconnectToken);
+    }
+
+    if (payload.action === 'create_room') {
+      this.isHost = true;
+      this.roomView.setHost(true);
+      this.roomView.setStage('room');
+      this.roomView.setHint('把房间码告诉同伴，人齐后点开始战斗');
+    } else if (
+      payload.action === 'join_room' ||
+      payload.action === 'quick_match'
+    ) {
+      this.isHost = false;
+      this.roomView.setHost(false);
+      this.roomView.setStage('room');
+      this.roomView.setHint('已进入房间，等待房主开始');
+    } else if (payload.action === 'reconnect') {
+      this.reconnectPending = false;
+      this.roomView.setReconnectNotice('');
+      this.enterCombat();
+    } else if (payload.action === 'player_ready') {
+      this.roomView.setHint('已准备，等待房主开始');
+    }
+    this.publishDebugState();
+  }
+
+  /** 大厅收起、战斗输入接管。单人和多人走同一条路径。 */
+  private enterCombat(): void {
+    if (this.matchStarted) {
+      return;
+    }
+    this.matchStarted = true;
+    this.roomView.setStage('hidden');
+    this.controller.setLobbyMode(false);
+    this.hud.setCombatFocus(false, '点击画面进入战斗');
+  }
+
+  private resolvePlayerName(): string {
+    if (typeof window === 'undefined') {
+      return '狼牙山战士';
+    }
+    const params = new URLSearchParams(window.location.search);
+    const fromQuery = params.get('name')?.trim();
+    if (fromQuery) {
+      window.sessionStorage?.setItem(PLAYER_NAME_KEY, fromQuery);
+      return fromQuery;
+    }
+    const stored = window.sessionStorage?.getItem(PLAYER_NAME_KEY)?.trim();
+    if (stored) {
+      return stored;
+    }
+    const generated = `战士${Math.floor(Math.random() * 900 + 100)}`;
+    window.sessionStorage?.setItem(PLAYER_NAME_KEY, generated);
+    return generated;
+  }
+
+  private readStoredToken(): string | null {
+    if (typeof window === 'undefined') {
+      return null;
+    }
+    return window.sessionStorage?.getItem(RECONNECT_TOKEN_KEY) ?? null;
+  }
+
+  private writeStoredToken(token: string): void {
+    if (typeof window !== 'undefined') {
+      window.sessionStorage?.setItem(RECONNECT_TOKEN_KEY, token);
+    }
+  }
+
+  private clearStoredToken(): void {
+    this.reconnectToken = null;
+    this.reconnectPending = false;
+    if (typeof window !== 'undefined') {
+      window.sessionStorage?.removeItem(RECONNECT_TOKEN_KEY);
+    }
   }
 
   update(deltaTime: number): void {
@@ -322,7 +512,9 @@ export class M1Game {
   }
 
   destroy(): void {
+    this.netClient.setOpenHandler(null);
     this.netClient.disconnect();
+    this.roomView.destroy();
     this.controller.destroy();
     this.allyRenderer.destroy();
     this.enemyRenderer.destroy();
@@ -356,6 +548,12 @@ export class M1Game {
 
   private onRoomState(message: RoomStateMessage): void {
     this.roomSeatCount = message.payload.seats.length;
+    this.roomCode = message.payload.roomId;
+    this.roomView.renderRoomState(message.payload, this.clientId);
+    // 服务器说这局已经开打，大厅就该让位。
+    if (message.payload.status === 'active') {
+      this.enterCombat();
+    }
     this.publishDebugState();
   }
 
@@ -612,6 +810,7 @@ export class M1Game {
 
   private onMatchStart(_message: MatchStartMessage): void {
     this.matchPhase = 'deploy';
+    this.enterCombat();
     this.publishDebugState();
   }
 
@@ -634,6 +833,8 @@ export class M1Game {
     this.matchEnded = true;
     this.scoreboardEntries = message.payload.scoreboard.length;
     this.weaponView.setVisible(false);
+    // 已经打完的局不需要重连，避免刷新页面后卡在旧战场。
+    this.clearStoredToken();
     this.hud.showMatchEnd(message.payload, this.clientId);
     this.publishDebugState();
   }
@@ -775,6 +976,10 @@ export class M1Game {
       matchEnded: this.matchEnded,
       scoreboardEntries: this.scoreboardEntries,
       fps: this.fps,
+      lobbyStage: this.roomView.getStage(),
+      roomCode: this.roomCode,
+      isHost: this.isHost,
+      reconnectPending: this.reconnectPending,
     };
   }
 

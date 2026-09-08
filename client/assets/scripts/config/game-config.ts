@@ -78,6 +78,9 @@ export interface WavesConfig {
 }
 
 export interface AlliesAssetsConfig {
+  /** 席位总数（含玩家）。房间 UI 要按它排席位行，不能写死 5。 */
+  readonly seatCount: number;
+  readonly heroNames: readonly string[];
   readonly bot: {
     readonly assets: {
       readonly sprite: string;
@@ -399,7 +402,12 @@ function isAlliesAssetsConfig(value: unknown): value is AlliesAssetsConfig {
   if (!isRecord(value) || !isRecord(value.bot) || !isRecord(value.bot.assets)) {
     return false;
   }
-  return typeof value.bot.assets.sprite === 'string';
+  return (
+    typeof value.bot.assets.sprite === 'string' &&
+    Number.isSafeInteger(value.seatCount) &&
+    Array.isArray(value.heroNames) &&
+    value.heroNames.every((name) => typeof name === 'string')
+  );
 }
 
 function isEnemiesAssetsConfig(value: unknown): value is EnemiesAssetsConfig {

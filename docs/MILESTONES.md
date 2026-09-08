@@ -703,8 +703,8 @@ CPU 37.42 ms / 6000 tick（约 0.0062 ms/tick），远低于 20% 红线。
 - [x] 反作弊：射速上限、移动速度、视距校验
 
 **💻 Mac**
-- [ ] 房间 UI：创建 / 加入 / 席位显示
-- [ ] **玩家只能加入中国军队（无阵营选择 UI）**
+- [x] 房间 UI：创建 / 加入 / 席位显示
+- [x] **玩家只能加入中国军队（无阵营选择 UI）**
 - [ ] 客户端插值 + 本地预测（**仅移动，不预测伤害**）
 - [ ] 断线重连 UI（服务端已就绪，待接客户端界面）
 - [ ] 其他玩家的表现同步（位置、朝向、开火）
@@ -847,7 +847,37 @@ CPU 37.42 ms / 6000 tick（约 0.0062 ms/tick），远低于 20% 红线。
 > 待填写：同步带宽实测
 
 #### 💻 Mac
-> 填写：插值效果、Tailscale 下的实测延迟、同步问题记录
+
+2026-09-07：**房间大厅 UI 完成（创建 / 加入 / 快速匹配 / 席位显示 / 自动重连）**。
+
+改造前客户端连上 WebSocket 就自动发 `join` 直接开打，M5 的房间协议服务端虽已
+就绪却完全没有入口。本次补齐客户端侧：
+
+| 文件 | 改动 |
+|---|---|
+| `client/assets/scripts/net/net-client.ts` | 连上后不再自动 `join`，改为只发 `ping` 并回调 `setOpenHandler`；新增 `room_action_result` 监听与 7 个房间动作发送方法（solo / create / join / quick / ready / start / reconnect） |
+| `client/assets/scripts/ui/room-view.ts`（新增） | 大厅界面：入口面板 4 按钮、房间码键盘输入面板、房间面板（房间码 + 状态 + 5 席位 + 准备 / 开始）。全部尺寸取自 `presentation` 配置，无硬编码数值（铁律 2）；全部节点由代码创建（铁律 7） |
+| `client/assets/scripts/player/first-person-controller.ts` | 新增 `setLobbyMode()`，大厅可见时不抢指针锁、不响应战斗按键 |
+| `client/assets/scripts/core/m1-game.ts` | 接入大厅状态机、`room_action_result` 分支处理、重连凭证 sessionStorage 持久化与断线自动重连；调试状态新增 `lobbyStage` / `roomCode` / `isHost` / `reconnectPending` |
+| `tools/check-room-flow.js`（新增） | M5 房间协议契约自测 26 项 |
+
+**自测结果**：
+- `cd client && npx tsc --noEmit` 无错。
+- `node tools/verify-config.js` 通过（波次总和 200 / 五席位 / 队友约束 / 武器引用 / 合规红线）。
+- `node tools/check-room-flow.js` **26/26 通过**：覆盖「连接后不自动开打」「创建房间返回房间码 + 重连凭证 + 5 席位」「房间码加入」「错误房间码拒绝且理由为 `invalid_room`」「快速匹配」「准备」「非房主开局被拒且理由为 `not_host`」「房主开局转 active 并下发世界快照」「断线后凭凭证重连」「无效凭证拒绝且理由为 `invalid_token`」。
+- **浏览器真机实测**（Cocos web-mobile 构建 + 本地预览）：进页面停在 `lobbyStage:"entry"` 未自动开打；坐标点击「创建房间」后 `lobbyStage:"room"`、`roomCode:"JVVE"`、`isHost:true`、`roomSeatCount:5`；房间面板文案实测为「房间码 JVVE」「真人 1 / 5 席 · 把房间码告诉同伴即可加入」，5 个席位分别渲染出马宝玉 / 葛振林 / 宋学义 / 胡德林 / 胡福才及各自守备路线；房主可见「开始战斗」按钮。
+
+**实测中发现一个 P0 历史遗留 bug（非本次改动引入，待修）**：服务端存在两套
+互不相通的身份 ID —— snapshot 下发的是 WebSocket 连接 ID，而席位与战斗实体
+用的是 `human:<uuid>` 稳定战斗身份，客户端拿不到后者。实测单人开局后
+`playerAlive:false`、`playerPosition:null`、`spectatingAllyId` 错落到某个 bot，
+玩家被当成死人并进入观战。修复需动 `shared/protocol.ts` 与 `server/**`
+（均非 Mac 归属），已按铁律 11 停手并记入 `docs/OPEN-QUESTIONS.md`，等 watson
+确认由哪台机器修。
+
+**尚未完成**：客户端插值 + 本地预测、其他玩家表现同步、3 人同房实测。
+
+> 待填写：插值效果、Tailscale 下的实测延迟、同步问题记录
 
 ---
 

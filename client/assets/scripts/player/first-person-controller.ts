@@ -54,6 +54,8 @@ export class FirstPersonController {
   private ignoreMouseUntilMs = 0;
   private fireHeld = false;
   private spectatorMode = false;
+  // 大厅期间挂起所有战斗输入：不抓鼠标锁，否则房间按钮点不到。
+  private lobbyMode = true;
   private footstepAccumulatorSec = 0;
   private audioContext: AudioContext | null = null;
   private readonly preventContextMenu = (event: Event): void => {
@@ -187,6 +189,21 @@ export class FirstPersonController {
     this.spectatorMode = false;
   }
 
+  /** 大厅显示时关闭战斗输入，进入战斗后再打开。 */
+  setLobbyMode(active: boolean): void {
+    this.lobbyMode = active;
+    if (active) {
+      this.fireHeld = false;
+      this.pressedKeys.clear();
+      if (
+        typeof document !== 'undefined' &&
+        document.pointerLockElement !== null
+      ) {
+        document.exitPointerLock();
+      }
+    }
+  }
+
   setMountedAimLimits(limits: MountedAimLimits | null): void {
     const previous = this.mountedAimLimits;
     this.mountedAimLimits = limits;
@@ -259,6 +276,10 @@ export class FirstPersonController {
   }
 
   private onKeyDown(event: EventKeyboard): void {
+    // 大厅里的按键归房间码输入，不能触发换弹 / 手雷等战斗动作。
+    if (this.lobbyMode) {
+      return;
+    }
     if (this.spectatorMode) {
       if (event.keyCode === KeyCode.KEY_Q) {
         this.actions.onSwitchWeapon();
@@ -291,7 +312,7 @@ export class FirstPersonController {
   }
 
   private onMouseMove(event: EventMouse): void {
-    if (this.spectatorMode) {
+    if (this.spectatorMode || this.lobbyMode) {
       return;
     }
     const canvas = game.canvas;
@@ -340,7 +361,7 @@ export class FirstPersonController {
   }
 
   private onMouseDown(event: EventMouse): void {
-    if (this.spectatorMode) {
+    if (this.spectatorMode || this.lobbyMode) {
       return;
     }
     if (event.getButton() !== EventMouse.BUTTON_LEFT) {

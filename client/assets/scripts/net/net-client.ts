@@ -6,6 +6,7 @@ import type {
   AllyState,
   ActionResultMessage,
   ClientMessage,
+  CreateRoomMessage,
   EnemyState,
   EnemyDiedMessage,
   FireMessage,
@@ -13,19 +14,26 @@ import type {
   InputStateMessage,
   ItemState,
   JoinMessage,
+  JoinRoomMessage,
   MachineGunState,
   MatchEndMessage,
   MatchProgressState,
   MatchStartMessage,
   MountMgMessage,
   PickupMessage,
+  PlayerReadyMessage,
   PongMessage,
+  QuickMatchMessage,
+  ReconnectMessage,
   ReloadMessage,
+  RoomAction,
+  RoomActionResultMessage,
   RoomSeatState,
   RoomStateMessage,
   RouteId,
   ServerMessage,
   SnapshotMessage,
+  StartMatchMessage,
   SupplyDropMessage,
   SwitchWeaponMessage,
   ThrowGrenadeMessage,
@@ -57,6 +65,7 @@ export interface NetClientListener {
   readonly onStatus: StatusListener;
   readonly onSnapshot: (message: SnapshotMessage) => void;
   readonly onRoomState: (message: RoomStateMessage) => void;
+  readonly onRoomActionResult: (message: RoomActionResultMessage) => void;
   readonly onWorldSnapshot: (message: WorldSnapshotMessage) => void;
   readonly onFireResult: (message: FireResultMessage) => void;
   readonly onEnemyDied: (message: EnemyDiedMessage) => void;
@@ -197,6 +206,41 @@ function isRoomSeatState(value: unknown): value is RoomSeatState {
     typeof value.isBot === 'boolean' &&
     typeof value.alive === 'boolean' &&
     isRouteId(value.routeId)
+  );
+}
+
+function isRoomAction(value: unknown): value is RoomAction {
+  return (
+    value === 'create_room' ||
+    value === 'join_room' ||
+    value === 'quick_match' ||
+    value === 'player_ready' ||
+    value === 'start_match' ||
+    value === 'reconnect'
+  );
+}
+
+function isRoomActionResultMessage(
+  value: unknown,
+): value is RoomActionResultMessage {
+  if (
+    !isRecord(value) ||
+    value.type !== 'room_action_result' ||
+    !isRecord(value.payload)
+  ) {
+    return false;
+  }
+
+  const payload = value.payload;
+  return (
+    isRoomAction(payload.action) &&
+    typeof payload.accepted === 'boolean' &&
+    (payload.roomCode === undefined ||
+      typeof payload.roomCode === 'string') &&
+    (payload.reconnectToken === undefined ||
+      typeof payload.reconnectToken === 'string') &&
+    (payload.rejectReason === undefined ||
+      typeof payload.rejectReason === 'string')
   );
 }
 
@@ -489,6 +533,7 @@ function parseServerMessage(raw: string): ServerMessage | undefined {
     isPongMessage(parsed) ||
     isSnapshotMessage(parsed) ||
     isRoomStateMessage(parsed) ||
+    isRoomActionResultMessage(parsed) ||
     isWorldSnapshotMessage(parsed) ||
     isFireResultMessage(parsed) ||
     isEnemyDiedMessage(parsed) ||
@@ -511,9 +556,15 @@ export class NetClient {
   private socket: WebSocket | null = null;
   private nextClientTick = 0;
   private readonly listener: NetClientListener;
+  private openHandler: (() => void) | null = null;
 
   constructor(listener: NetClientListener) {
     this.listener = listener;
+  }
+
+  /** 连接就绪回调。上层用它决定这次连上来是进大厅还是直接重连。 */
+  setOpenHandler(handler: (() => void) | null): void {
+    this.openHandler = handler;
   }
 
   async connect(): Promise<void> {
@@ -540,21 +591,16 @@ export class NetClient {
         return;
       }
 
-      const joinMessage: JoinMessage = {
-        type: 'join',
-        payload: {
-          playerName: 'Mac M2 客户端',
-          protocolVersion: PROTOCOL_VERSION,
-        },
-      };
-      this.send(joinMessage);
-
+      // 连接建立后只测延迟，不自动进战斗。
+      // 进哪一局由上层大厅决定：单人走 join，多人走 create_room /
+      // join_room / quick_match，断线回来走 reconnect。
       const pingMessage: ClientMessage = {
         type: 'ping',
         payload: { clientTimeMs: Date.now() },
       };
       this.send(pingMessage);
       this.listener.onStatus({ kind: 'measuring' });
+      this.openHandler?.();
     });
 
     socket.addEventListener('message', (event: MessageEvent<unknown>) => {
@@ -581,6 +627,9 @@ export class NetClient {
           break;
         case 'room_state':
           this.listener.onRoomState(message);
+          break;
+        case 'room_action_result':
+          this.listener.onRoomActionResult(message);
           break;
         case 'world_snapshot':
           this.listener.onWorldSnapshot(message);
@@ -637,6 +686,63 @@ export class NetClient {
         });
       }
     });
+  }
+
+  /** 单人快捷入口：服务器自建只有自己的房间并立即开局（铁律 3）。 */
+  joinSolo(playerName: string): boolean {
+    const message: JoinMessage = {
+      type: 'join',
+      payload: { playerName, protocolVersion: PROTOCOL_VERSION },
+    };
+    return this.send(message);
+  }
+
+  createRoom(playerName: string): boolean {
+    const message: CreateRoomMessage = {
+      type: 'create_room',
+      payload: { playerName, protocolVersion: PROTOCOL_VERSION },
+    };
+    return this.send(message);
+  }
+
+  joinRoom(roomCode: string, playerName: string): boolean {
+    const message: JoinRoomMessage = {
+      type: 'join_room',
+      payload: { roomCode, playerName, protocolVersion: PROTOCOL_VERSION },
+    };
+    return this.send(message);
+  }
+
+  quickMatch(playerName: string): boolean {
+    const message: QuickMatchMessage = {
+      type: 'quick_match',
+      payload: { playerName, protocolVersion: PROTOCOL_VERSION },
+    };
+    return this.send(message);
+  }
+
+  playerReady(): boolean {
+    const message: PlayerReadyMessage = {
+      type: 'player_ready',
+      payload: {},
+    };
+    return this.send(message);
+  }
+
+  startMatch(): boolean {
+    const message: StartMatchMessage = {
+      type: 'start_match',
+      payload: {},
+    };
+    return this.send(message);
+  }
+
+  reconnect(reconnectToken: string): boolean {
+    const message: ReconnectMessage = {
+      type: 'reconnect',
+      payload: { reconnectToken, protocolVersion: PROTOCOL_VERSION },
+    };
+    return this.send(message);
   }
 
   sendInput(state: InputState): number | undefined {

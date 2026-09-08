@@ -387,3 +387,24 @@
   `join`，服务端房间实现仍是单人房间自动补 AI；Mac 侧不新增临时协议或本地
   联机逻辑，待 Debian 按 M5 约定提供创建 / 加入 / 掉线接管消息后再做客户端
   房间 UI 与多人联调。
+
+- [Mac] 2026-09-07 — 【P0 待修 · 需 Debian 侧改动】客户端认不出「自己是谁」：
+  服务端存在两套互不相通的身份 ID —— `snapshot.payload.connection.clientId`
+  是 WebSocket 连接 ID（如 `f9fe307a-...`），而席位与战斗实体用的是稳定战斗
+  身份 `human:<uuid>`（`server/src/room/multiplayer-room.ts:284` 的
+  `createPlayerId()`，由 `8cffcbb` 引入）。客户端唯一能拿到的是前者，导致
+  `seat.occupantId === selfId`、`ally.id === clientId` 永远不成立。
+
+  实测影响（浏览器真机，单人上阵）：开局后 `playerAlive:false`、
+  `playerPosition:null`、`magazineAmmo:null`、`spectatingAllyId` 错误地落到
+  某个 bot 上 —— 玩家被当成死人并进入观战。房间面板里自己的席位也标不出
+  「（你）」。这不是大厅 UI 的问题，是历史遗留的协议缺口。
+
+  建议修法（改动面很小）：`shared/protocol.ts` 的 `ConnectionSnapshot` 增加
+  可选字段 `playerId?: string`，`server/src/net/websocket-server.ts`
+  的 `sendSnapshot()` 把已有的 `session.playerId` 一并下发即可（该字段在
+  `attachRoomSession()` 里已经赋好值，无需新增状态）。客户端再用它替换
+  `m1-game.ts` 里的 `clientId` 作为自我识别依据。
+
+  归属说明：`shared/**` 与 `server/**` 均非 Mac 归属（COLLAB.md），故本次
+  只记录不动手，等 watson 确认由哪台机器修。

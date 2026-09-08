@@ -21,6 +21,13 @@
     "moveSpeed": 4.0,
     "assets": {
       "sprite": "chars/cn-soldier/idle"
+    },
+    "heroSprites": {
+      "马宝玉": "chars/heroes/seat-0",
+      "葛振林": "chars/heroes/seat-1",
+      "宋学义": "chars/heroes/seat-2",
+      "胡德林": "chars/heroes/seat-3",
+      "胡福才": "chars/heroes/seat-4"
     }
   },
   "deployment": {
