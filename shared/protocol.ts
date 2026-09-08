@@ -268,9 +268,16 @@ export type ThrowGrenadeMessage = MessageEnvelope<
 >;
 
 export interface ConnectionSnapshot {
+  /** WebSocket 连接 id，重连后会变，不能用来认人。 */
   readonly clientId: string;
   readonly joined: boolean;
   readonly playerName?: string;
+  /**
+   * 稳定战斗身份（形如 `human:<uuid>`），是席位、快照 ally、击杀归属、
+   * 计分板统一使用的 id。客户端要判断「哪个是我」必须用这个而不是 clientId。
+   * 尚未入座（还在大厅）时不下发。
+   */
+  readonly playerId?: string;
 }
 
 export interface SnapshotPayload {

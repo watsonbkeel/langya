@@ -111,6 +111,30 @@ docs(debian): 回写 M0 完成记录
 2. PRD 没覆盖的新数值：加字段可以直接做，但要跑 `verify-config.js` 确保不破坏既有校验
 3. 改动已有数值：必须问 watson
 
+### 越界改动记录
+
+正常情况不该有这一节。这里只记录经 watson 明确授权的例外，方便另一台机器
+下次 pull 时知道「为什么我的地盘被动了」。
+
+**2026-09-08 · Mac 越界改动 `shared/protocol.ts` + `server/src/net/websocket-server.ts`**
+
+- **改了什么**：`ConnectionSnapshot` 新增可选字段 `playerId?: string`；
+  `sendSnapshot()` 把已有的 `session.playerId` 一并下发；`attachRoomSession()`
+  在入座后补发一次快照。两处都是加法，没有改动或删除既有字段与逻辑。
+- **为什么非改不可**：服务端存在两套身份 id —— snapshot 下发的 `clientId` 是
+  WebSocket 连接 id，而席位、快照 ally、击杀归属、计分板用的是稳定战斗身份
+  `human:<uuid>`。客户端只拿得到前者，导致 `ally.id === clientId` 永远为假。
+  实测单人开局后玩家被当成死人、镜头掉进观战 AI，M3 单人体验实际是坏的。
+  这是 `8cffcbb`（战斗运行时提升到房间级）引入的历史遗留缺口。
+- **为什么在 Mac 做**：改动当天 Debian 工作站局域网、Tailscale、frpc 三条通道
+  全部不可达（Tailscale 节点列表里已无该机器），且验收标准是浏览器实跑，
+  Debian 无 GUI 跑不了。经 watson 明确授权后在 Mac 完成。
+- **验证**：server `tsc --noEmit` 无错、`npm test` 138/138；client `tsc --noEmit`
+  无错；`tools/check-room-flow.js` 31/31（新增 5 项专门锁这个缺口）；
+  浏览器实跑单人局确认自我识别恢复正常。
+- **对 Debian 的影响**：无需改动即可继续开发。新字段是可选的，旧客户端不受影响。
+  若 Debian 侧另有依赖 `clientId` 认人的代码，应一并切到 `playerId`。
+
 ---
 
 ## 5. 里程碑的双机拆分

@@ -85,6 +85,8 @@ interface M1DebugState {
   readonly roomCode: string | null;
   readonly isHost: boolean;
   readonly reconnectPending: boolean;
+  /** 稳定战斗身份，自我识别的唯一依据。 */
+  readonly playerId: string | null;
 }
 
 declare global {
@@ -109,7 +111,13 @@ export class M1Game {
   private readonly pendingShots = new Map<number, number>();
   private readonly inputIntervalSec: number;
   private inputAccumulatorSec = 0;
+  /** WebSocket 连接 id，重连后会变，只用于日志/调试，不能用来认人。 */
   private clientId: string | null = null;
+  /**
+   * 稳定战斗身份（`human:<uuid>`）。席位、快照 ally、击杀归属、计分板
+   * 用的都是它。判断「哪个是我」一律用这个字段。
+   */
+  private playerId: string | null = null;
   private playerPosition: Vector3 | null = null;
   private weaponState: WeaponState | null = null;
   private availableWeaponIds: readonly string[] = [];
@@ -297,7 +305,7 @@ export class M1Game {
       onWorldSnapshot: (message) => this.onWorldSnapshot(message),
       onFireResult: (message) => this.onFireResult(message),
       onEnemyDied: (message) => {
-        if (message.payload.killerId === this.clientId) {
+        if (this.playerId !== null && message.payload.killerId === this.playerId) {
           this.kills += 1;
         }
         this.enemyRenderer.remove(message.payload.enemyId);
@@ -544,12 +552,15 @@ export class M1Game {
 
   private onSnapshot(message: SnapshotMessage): void {
     this.clientId = message.payload.connection.clientId;
+    // 入座后服务端才会带上战斗身份；大厅阶段没有，保持 null。
+    // 注意不要在这里回退成 clientId —— 两者不是一套 id，混用会认错人。
+    this.playerId = message.payload.connection.playerId ?? null;
   }
 
   private onRoomState(message: RoomStateMessage): void {
     this.roomSeatCount = message.payload.seats.length;
     this.roomCode = message.payload.roomId;
-    this.roomView.renderRoomState(message.payload, this.clientId);
+    this.roomView.renderRoomState(message.payload, this.playerId);
     // 服务器说这局已经开打，大厅就该让位。
     if (message.payload.status === 'active') {
       this.enterCombat();
@@ -568,7 +579,7 @@ export class M1Game {
     );
     this.allyRenderer.sync(
       message.payload.allies,
-      this.clientId,
+      this.playerId,
       this.spectatingAllyId,
     );
     this.hud.updateAllies(message.payload.allies);
@@ -679,7 +690,7 @@ export class M1Game {
 
   private onAllyDamaged(message: AllyDamagedMessage): void {
     this.allyDamageEvents += 1;
-    if (message.payload.allyId === this.clientId) {
+    if (this.playerId !== null && message.payload.allyId === this.playerId) {
       this.hud.showDamage();
     } else {
       this.allyRenderer.flashDamaged(message.payload.allyId);
@@ -689,9 +700,13 @@ export class M1Game {
   }
 
   private findPlayer(allies: readonly AllyState[]): AllyState | undefined {
-    return this.clientId
-      ? allies.find((ally) => ally.id === this.clientId)
-      : allies.find((ally) => !ally.isBot);
+    // 严格按战斗身份匹配。不做「挑第一个非 bot」的兜底 ——
+    // 多人局里那样会把队友当成自己，反而把问题藏起来。
+    // 拿不到 playerId 说明还没入座，此时本来就不该有「我」。
+    if (this.playerId === null) {
+      return undefined;
+    }
+    return allies.find((ally) => ally.id === this.playerId);
   }
 
   private fire(): void {
@@ -835,7 +850,7 @@ export class M1Game {
     this.weaponView.setVisible(false);
     // 已经打完的局不需要重连，避免刷新页面后卡在旧战场。
     this.clearStoredToken();
-    this.hud.showMatchEnd(message.payload, this.clientId);
+    this.hud.showMatchEnd(message.payload, this.playerId);
     this.publishDebugState();
   }
 
@@ -909,7 +924,7 @@ export class M1Game {
     this.applySpectatorTarget(next);
     this.allyRenderer.sync(
       this.latestAllies,
-      this.clientId,
+      this.playerId,
       this.spectatingAllyId,
     );
     this.publishDebugState();
@@ -980,6 +995,7 @@ export class M1Game {
       roomCode: this.roomCode,
       isHost: this.isHost,
       reconnectPending: this.reconnectPending,
+      playerId: this.playerId,
     };
   }
 

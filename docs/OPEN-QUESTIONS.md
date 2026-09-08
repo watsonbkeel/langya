@@ -388,7 +388,7 @@
   联机逻辑，待 Debian 按 M5 约定提供创建 / 加入 / 掉线接管消息后再做客户端
   房间 UI 与多人联调。
 
-- [Mac] 2026-09-07 — 【P0 待修 · 需 Debian 侧改动】客户端认不出「自己是谁」：
+- [Mac] 2026-09-07 — 【P0 · 已于 2026-09-08 在 Mac 修复，见文末】客户端认不出「自己是谁」：
   服务端存在两套互不相通的身份 ID —— `snapshot.payload.connection.clientId`
   是 WebSocket 连接 ID（如 `f9fe307a-...`），而席位与战斗实体用的是稳定战斗
   身份 `human:<uuid>`（`server/src/room/multiplayer-room.ts:284` 的
@@ -408,3 +408,28 @@
 
   归属说明：`shared/**` 与 `server/**` 均非 Mac 归属（COLLAB.md），故本次
   只记录不动手，等 watson 确认由哪台机器修。
+
+- [Mac] 2026-09-08 — 【上条 P0 的修复结论】经 watson 授权在 Mac 越界改动
+  `shared/protocol.ts` 与 `server/src/net/websocket-server.ts`（Debian 当时
+  局域网 / Tailscale / frpc 三通道全断，且验收需浏览器实跑，Debian 无 GUI）。
+
+  改动只有加法三处：`ConnectionSnapshot` 增加可选 `playerId?: string`；
+  `sendSnapshot()` 带上已有的 `session.playerId`；`attachRoomSession()` 在
+  入座后补发一次快照（连接时那次还没席位，只靠 20Hz 周期广播会让开局前
+  若干帧的自我识别落空）。客户端 `m1-game.ts` 新增 `playerId` 字段并把 7 处
+  自我识别调用点从 `clientId` 切过去。
+
+  一并按 watson 决策收紧了 `findPlayer()`：删掉「找不到自己就挑第一个非 bot」
+  的兜底。该兜底在多人局会把队友当成自己，属于掩盖问题而非容错；现在拿不到
+  `playerId` 就返回 undefined，走正常的「尚未入座」分支。
+
+  实测对比（浏览器单人局）：修复前 `playerAlive:false`、`playerPosition:null`、
+  `magazineAmmo:null`、`spectatingAllyId` 落到某个 bot；修复后
+  `playerAlive:true`、`playerPosition:{x:-24,y:0.95,z:-10}`、弹匣 5/备弹 60、
+  `spectatingAllyId:null`，连打 3 发弹匣 5→2、`lastFireAccepted:true`、
+  服务端裁决延迟 7ms。另用 45 秒观测窗口收集 17 次 `enemy_died`，真人击杀
+  零错配。
+
+  `tools/check-room-flow.js` 新增 5 项断言把这个缺口钉死（入座后必须下发
+  playerId、playerId 与 clientId 必须不同值、playerId 能在席位表精确命中自己、
+  开局后能在 allies 里找到自己、且匹配到的不是 AI）。26 项 → 31 项全通过。

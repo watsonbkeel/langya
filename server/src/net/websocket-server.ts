@@ -12,6 +12,7 @@ import {
   type AllyCalloutMessage,
   type AllyDamagedMessage,
   type AllyDiedMessage,
+  type ConnectionSnapshot,
   type EnemyDiedMessage,
   type FireMessage,
   type MatchEndMessage,
@@ -659,6 +660,10 @@ export class GameWebSocketServer {
     // 记住稳定战斗身份：后续所有战斗动作都用它定位到席位，
     // 重连换了连接 id 也能接回原来那个人。
     session.playerId = occupant.id;
+    // 入座后立刻补发一次快照，把 playerId 交给客户端。
+    // 连接时那次快照还没有席位，客户端拿不到战斗身份就认不出「哪个 ally 是我」；
+    // 只靠周期广播会让开局前几帧的自我识别落空。
+    this.sendSnapshot(session);
   }
 
   private getSessionRoom(
@@ -1192,16 +1197,14 @@ export class GameWebSocketServer {
   }
 
   private sendSnapshot(session: ClientSession): void {
-    const connection = session.playerName
-      ? {
-          clientId: session.id,
-          joined: session.joined,
-          playerName: session.playerName,
-        }
-      : {
-          clientId: session.id,
-          joined: session.joined,
-        };
+    // clientId 是连接 id，重连就变；playerId 才是稳定战斗身份。
+    // 客户端要认出「哪个 ally 是我」只能靠后者，所以入座后必须一并下发。
+    const connection: ConnectionSnapshot = {
+      clientId: session.id,
+      joined: session.joined,
+      ...(session.playerName ? { playerName: session.playerName } : {}),
+      ...(session.playerId ? { playerId: session.playerId } : {}),
+    };
 
     const message: SnapshotMessage = {
       type: SERVER_MESSAGE_TYPES.snapshot,

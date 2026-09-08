@@ -171,6 +171,31 @@ async function main() {
   );
   check(seatFields, '席位字段齐全，房间 UI 能直接渲染');
 
+  // ①-b 自我识别：入座后必须下发稳定战斗身份 playerId。
+  // 这条防的是一个真实踩过的坑：snapshot 只给 WebSocket 连接 id，
+  // 而席位/ally/击杀归属用的是 `human:<uuid>`，客户端因此认不出自己，
+  // 开局后会把自己当成死人并进入观战。
+  const hostSnapshot = await host.wait(
+    (m) => m.type === 'snapshot' && m.payload.connection.playerId !== undefined,
+    'snapshot(含 playerId)',
+  );
+  const hostPlayerId = hostSnapshot.payload.connection.playerId;
+  check(
+    typeof hostPlayerId === 'string' && hostPlayerId.length > 0,
+    '入座后 snapshot 下发了稳定战斗身份 playerId',
+  );
+  check(
+    hostPlayerId !== hostSnapshot.payload.connection.clientId,
+    'playerId 与连接 id 是两个不同的值（不能混用）',
+  );
+  const selfSeat = hostRoomState.payload.seats.find(
+    (seat) => seat.occupantId === hostPlayerId,
+  );
+  check(
+    selfSeat !== undefined && selfSeat.isBot === false,
+    'playerId 能在席位表里精确匹配到自己（房间 UI 据此标注「你」）',
+  );
+
   // ② 用房间码加入（对应「输入房间码加入」）
   guest.send({
     type: 'join_room',
@@ -256,8 +281,25 @@ async function main() {
     active.payload.status === 'active',
     '房间状态转为 active，客户端据此收起大厅',
   );
-  await host.wait((m) => m.type === 'world_snapshot', 'world_snapshot');
+  const firstWorld = await host.wait(
+    (m) => m.type === 'world_snapshot',
+    'world_snapshot',
+  );
   check(true, '开局后开始下发世界快照');
+
+  // 开局后必须能用 playerId 在 allies 里定位到自己且不是 bot。
+  // 这一条不过 = 玩家会被当成死人、镜头掉进观战 bot。
+  const selfAlly = firstWorld.payload.allies.find(
+    (ally) => ally.id === hostPlayerId,
+  );
+  check(
+    selfAlly !== undefined,
+    '世界快照的 allies 里能用 playerId 找到自己',
+  );
+  check(
+    selfAlly !== undefined && selfAlly.isBot === false,
+    '匹配到的自己不是 AI 队友',
+  );
 
   // ⑧ 断线重连（对应大厅的自动重连路径）
   const guestToken = joined.payload.reconnectToken;

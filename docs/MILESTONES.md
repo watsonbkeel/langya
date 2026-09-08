@@ -867,13 +867,50 @@ CPU 37.42 ms / 6000 tick（约 0.0062 ms/tick），远低于 20% 红线。
 - `node tools/check-room-flow.js` **26/26 通过**：覆盖「连接后不自动开打」「创建房间返回房间码 + 重连凭证 + 5 席位」「房间码加入」「错误房间码拒绝且理由为 `invalid_room`」「快速匹配」「准备」「非房主开局被拒且理由为 `not_host`」「房主开局转 active 并下发世界快照」「断线后凭凭证重连」「无效凭证拒绝且理由为 `invalid_token`」。
 - **浏览器真机实测**（Cocos web-mobile 构建 + 本地预览）：进页面停在 `lobbyStage:"entry"` 未自动开打；坐标点击「创建房间」后 `lobbyStage:"room"`、`roomCode:"JVVE"`、`isHost:true`、`roomSeatCount:5`；房间面板文案实测为「房间码 JVVE」「真人 1 / 5 席 · 把房间码告诉同伴即可加入」，5 个席位分别渲染出马宝玉 / 葛振林 / 宋学义 / 胡德林 / 胡福才及各自守备路线；房主可见「开始战斗」按钮。
 
-**实测中发现一个 P0 历史遗留 bug（非本次改动引入，待修）**：服务端存在两套
+**实测中发现一个 P0 历史遗留 bug（非本次改动引入）**：服务端存在两套
 互不相通的身份 ID —— snapshot 下发的是 WebSocket 连接 ID，而席位与战斗实体
 用的是 `human:<uuid>` 稳定战斗身份，客户端拿不到后者。实测单人开局后
 `playerAlive:false`、`playerPosition:null`、`spectatingAllyId` 错落到某个 bot，
-玩家被当成死人并进入观战。修复需动 `shared/protocol.ts` 与 `server/**`
-（均非 Mac 归属），已按铁律 11 停手并记入 `docs/OPEN-QUESTIONS.md`，等 watson
-确认由哪台机器修。
+玩家被当成死人并进入观战。**该问题已于 2026-09-08 修复，见下条记录。**
+
+2026-09-08：**修复 P0 自我识别缺口（经 watson 授权越界改 shared/ 与 server/）**。
+
+Debian 当时局域网 / Tailscale / frpc 三条通道全部不可达（Tailscale 节点列表里
+已无该机器），且本修复的验收标准是浏览器实跑，Debian 无 GUI 做不了，故经
+watson 明确授权后在 Mac 完成。越界记录已写入 `docs/COLLAB.md` 第 4 节。
+
+| 文件 | 改动 |
+|---|---|
+| `shared/protocol.ts` | `ConnectionSnapshot` 增加可选字段 `playerId?: string`（加法，旧客户端不受影响） |
+| `server/src/net/websocket-server.ts` | `sendSnapshot()` 带上已有的 `session.playerId`；`attachRoomSession()` 入座后补发一次快照 |
+| `client/assets/scripts/core/m1-game.ts` | 新增 `playerId` 字段，7 处自我识别调用点从 `clientId` 切换过来；`findPlayer()` 改为严格匹配 |
+| `tools/check-room-flow.js` | 新增 5 项断言锁死该缺口 |
+
+补发快照这一步是必需的：连接时那次快照还没有席位，只靠 20Hz 周期广播会让
+开局前若干帧的自我识别落空。
+
+`findPlayer()` 一并删掉了「找不到自己就挑第一个非 bot」的兜底 —— 该兜底在
+多人局会把队友当成自己，是掩盖问题而不是容错。
+
+**自测结果**：
+- server `tsc --noEmit` 无错、`npm test` **138/138 通过**。
+- client `tsc --noEmit` 无错。
+- `check-room-flow` **31/31**（26 → 31，新增 5 项）；`check-multiplayer`、
+  `check-anticheat`、`check-m3-ws`、`verify-config` 全部通过，无连带破坏。
+- **浏览器实测对比**：
+
+| 指标 | 修复前 | 修复后 |
+|---|---|---|
+| `playerId` | 不存在 | `human:e2e33f47-…` |
+| `playerAlive` | `false` | `true` |
+| `playerPosition` | `null` | `{x:-24, y:0.95, z:-10}` |
+| `spectatingAllyId` | 错落到 `bot:1` | `null` |
+| `magazineAmmo` / `reserveAmmo` | `null` | `5` / `60` |
+| `visibleAllyCount` | 3 | 4 |
+
+  进入战斗后指针正常锁定、波次推进到 `wave`、连打 3 发弹匣 5→2、
+  `lastFireAccepted:true`、服务端裁决延迟 7ms。另用 45 秒窗口收集 17 次
+  `enemy_died`，真人击杀零错配。
 
 **尚未完成**：客户端插值 + 本地预测、其他玩家表现同步、3 人同房实测。
 
