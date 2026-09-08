@@ -132,6 +132,12 @@ export interface M2WaveTimingConfig {
 export interface M2ValidationConfig {
   readonly fireOriginToleranceM: number;
   readonly directionMagnitudeTolerance: number;
+  /**
+   * 视距校验容差倍数（反作弊）。
+   * 命中距离超过「武器 effectiveRangeM × 该倍数」即判为无效射击。
+   * 场地最长路线 130m，武器有效射程 150–200m，正常交战不会触发。
+   */
+  readonly rangeToleranceMultiplier: number;
 }
 
 export interface M2MedkitConfig extends AllyMedkitConfig {
@@ -145,6 +151,8 @@ export interface M2GrenadeConfig extends GrenadeConfig {
 export interface M2PlayerWeaponConfig
   extends InventoryWeaponConfig,
     Omit<WeaponDamageConfig, 'hitPartMultiplier'> {
+  /** 武器有效射程（米），用于服务端视距校验。 */
+  readonly effectiveRangeM: number;
 }
 
 export interface M2EnemyWeaponConfig
@@ -1092,6 +1100,8 @@ export class M2BattleSession<
       WeaponState,
       'magazineAmmo' | 'reserveAmmo'
     >;
+    // 本次射击所用武器的有效射程，供下面的视距校验使用（反作弊）
+    let effectiveRangeM: number;
 
     if (mounted) {
       const aim = directionToAim(payload.dirVec);
@@ -1110,6 +1120,7 @@ export class M2BattleSession<
         return this.rejectFire(message, fireState.reason, ammoState);
       }
       isMachineGun = true;
+      effectiveRangeM = this.config.machineGun.effectiveRangeM;
       damageForHit = (hitPart) =>
         Math.round(
           this.config.machineGun.damage *
@@ -1139,6 +1150,7 @@ export class M2BattleSession<
         );
       }
       const weaponConfig = participant.weapons.currentConfig;
+      effectiveRangeM = weaponConfig.effectiveRangeM;
       ammoState = this.getAmmoState(participant);
       damageForHit = (hitPart, distanceM) =>
         calculateDamage(
@@ -1163,6 +1175,25 @@ export class M2BattleSession<
       this.config.enemyHitbox,
     );
     if (!hit) {
+      this.scoreTracker.recordShot(participant.id, {
+        hit: false,
+        damage: 0,
+        isKill: false,
+        isMachineGun,
+        waveIndex: this.getCurrentWaveIndex(),
+      });
+      return {
+        result: this.createMissResult(message, ammoState),
+      };
+    }
+
+    // 视距校验（反作弊）：命中距离超出武器有效射程容差就当子弹打不到。
+    // 这里不返回 rejectFire —— 射击本身是合法的（冷却、弹匣都过了），
+    // 只是超出射程打不中。判成未命中既堵住了远程作弊，也不会误伤正常玩家：
+    // 场地最长路线 130m，武器有效射程 150-200m，正常交战根本触不到这条线。
+    const maxHitDistanceM =
+      effectiveRangeM * this.config.validation.rangeToleranceMultiplier;
+    if (hit.distanceM > maxHitDistanceM) {
       this.scoreTracker.recordShot(participant.id, {
         hit: false,
         damage: 0,

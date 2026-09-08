@@ -38,6 +38,10 @@ import {
 import { ClientTickTracker } from './client-tick-tracker';
 import { parseClientMessage } from './message-parser';
 import {
+  MessageRateLimiter,
+  type RateLimitBucket,
+} from './message-rate-limiter';
+import {
   createWebSocketLogLine,
   decodeCloseReason,
   describeWebSocketError,
@@ -78,6 +82,8 @@ export class GameWebSocketServer {
     string,
     ReturnType<typeof setTimeout>
   >();
+  /** 每连接消息限流（反作弊）。 */
+  private readonly rateLimiter: MessageRateLimiter;
   private heartbeatInterval: ReturnType<typeof setInterval> | undefined;
   private snapshotSequence = 0;
 
@@ -91,6 +97,9 @@ export class GameWebSocketServer {
     this.sendMonitor = new WebSocketSendMonitor(
       runtimeConfig.wsBackpressureWarnBytes,
       runtimeConfig.wsBackpressureLogIntervalMs,
+    );
+    this.rateLimiter = new MessageRateLimiter(
+      projectConfig.gameplay.antiCheat,
     );
     this.roomManager = new RoomManager({
       seatCount: projectConfig.allies.seatCount,
@@ -204,6 +213,27 @@ export class GameWebSocketServer {
         socket.close(1007, '消息格式或协议版本无效');
         return;
       }
+
+      // 反作弊限流：武器冷却能挡住「超射速的有效开火」，但挡不住
+      // 「每秒刷几千条消息」——那些消息照样要解析、算射线、广播事件。
+      // 这里按类型分桶设上限，超限先丢弃，累计到阈值再断开。
+      const verdict = this.rateLimiter.check(
+        session.id,
+        classifyRateLimitBucket(message.type),
+        receivedAtMs,
+      );
+      if (!verdict.allowed) {
+        this.logSocketEvent('warn', 'rate_limited', session, {
+          messageType: message.type,
+          limit: verdict.reason ?? 'unknown',
+          violations: verdict.violations,
+        });
+        if (verdict.shouldKick) {
+          socket.close(1008, '消息频率超限');
+        }
+        return;
+      }
+
       session.lastInboundAtMs = receivedAtMs;
       session.lastInboundMessageType = message.type;
 
@@ -372,6 +402,8 @@ export class GameWebSocketServer {
         reason: decodeCloseReason(reason),
       });
       this.clients.delete(socket);
+      // 限流计数跟着物理连接走，连接没了就清掉，避免长期运行内存增长
+      this.rateLimiter.forget(session.id);
       if (session.roomCode) {
         const room = this.roomManager.get(session.roomCode);
         if (room) {
@@ -1240,4 +1272,22 @@ export class GameWebSocketServer {
       message.type === SERVER_MESSAGE_TYPES.worldSnapshot,
     );
   }
+}
+
+/**
+ * 把消息类型归到限流分桶。
+ * 只有输入和开火在热路径上高频出现，需要单独设上限；
+ * 其余（建房、加入、准备、ping 等）走总量上限即可。
+ */
+function classifyRateLimitBucket(messageType: string): RateLimitBucket {
+  if (messageType === CLIENT_MESSAGE_TYPES.inputState) {
+    return 'input';
+  }
+  if (
+    messageType === CLIENT_MESSAGE_TYPES.fire ||
+    messageType === CLIENT_MESSAGE_TYPES.throwGrenade
+  ) {
+    return 'fire';
+  }
+  return 'other';
 }

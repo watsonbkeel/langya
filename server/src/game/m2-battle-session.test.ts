@@ -658,7 +658,117 @@ describe('M2BattleSession', () => {
       .payload.allies.find((ally) => !ally.isBot);
     assert.equal(unmountedPlayer?.mountedMgId, undefined);
   });
+
+  it('视距校验：命中距离超出武器有效射程容差时判为未命中', () => {
+    // 真实配置里武器射程 150-200m、场地最长路线 130m，正常交战打不到这条线。
+    // 所以这里把射程压到 1m 来构造超程场景，验证校验确实生效。
+    const shortRangeConfig = withPlayerWeaponRange(config, 1);
+    const { battle } = createM2BattleRuntime(
+      shortRangeConfig,
+      'player-range',
+      '测试玩家',
+      11,
+    );
+    const enemyId = battle.spawnEnemy(
+      'rifleman',
+      'A',
+      config.waves.waves[0]!.accuracy,
+      0,
+    );
+    assert.ok(enemyId);
+    const fire = battle.createFireMessageForEnemy(enemyId, 1, 'torso');
+    assert.ok(fire);
+
+    const resolution = battle.fire(fire, 0);
+
+    // 射击本身合法（冷却、弹匣都过了），只是子弹到不了，所以是未命中而非拒绝
+    assert.equal(resolution.result.payload.accepted, true);
+    assert.equal(resolution.result.payload.hit, false);
+    assert.equal(resolution.death, undefined);
+    assert.equal(battle.playerKills, 0);
+
+    const playerScore = battle
+      .createScoreboard()
+      .find((entry) => entry.occupantId === 'player-range');
+    assert.ok(playerScore);
+    // 超程仍然算一次开火（消耗了子弹），但不算命中
+    assert.equal(playerScore.shotsFired, 1);
+    assert.equal(playerScore.shotsHit, 0);
+    assert.equal(playerScore.damageDealt, 0);
+  });
+
+  it('视距校验：射程之内的正常射击不受影响', () => {
+    // 用真实配置（射程 200m）打同一个敌人，必须正常命中——确认校验不误伤玩家
+    const { battle } = createM2BattleRuntime(
+      config,
+      'player-in-range',
+      '测试玩家',
+      11,
+    );
+    const enemyId = battle.spawnEnemy(
+      'rifleman',
+      'A',
+      config.waves.waves[0]!.accuracy,
+      0,
+    );
+    assert.ok(enemyId);
+    const fire = battle.createFireMessageForEnemy(enemyId, 1, 'torso');
+    assert.ok(fire);
+
+    const resolution = battle.fire(fire, 0);
+
+    assert.equal(resolution.result.payload.accepted, true);
+    assert.equal(resolution.result.payload.hit, true);
+  });
+
+  it('武器配置缺少 effectiveRangeM 时拒绝建立战斗', () => {
+    const brokenConfig = withPlayerWeaponRange(config, undefined);
+    assert.throws(
+      () =>
+        createM2BattleRuntime(
+          brokenConfig,
+          'player-broken',
+          '测试玩家',
+          12,
+        ),
+      /effectiveRangeM/,
+    );
+  });
 });
+
+/**
+ * 复制一份配置并改写玩家武器的有效射程，用于视距校验测试。
+ * 传 undefined 表示删掉该字段，模拟配置缺失。
+ */
+function withPlayerWeaponRange(
+  source: typeof config,
+  effectiveRangeM: number | undefined,
+): typeof config {
+  const players = Object.fromEntries(
+    Object.entries(source.weapons.player).map(([weaponId, weapon]) => {
+      if (!('fireRate' in weapon)) {
+        return [weaponId, weapon];
+      }
+      const { effectiveRangeM: _dropped, ...rest } = weapon as Record<
+        string,
+        unknown
+      >;
+      return [
+        weaponId,
+        effectiveRangeM === undefined
+          ? rest
+          : { ...rest, effectiveRangeM },
+      ];
+    }),
+  );
+  return {
+    ...source,
+    weapons: {
+      ...source.weapons,
+      player: players,
+    },
+  } as typeof config;
+}
 
 function normalize(vector: { x: number; y: number; z: number }) {
   const length = vectorLength(vector);

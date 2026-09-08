@@ -123,6 +123,7 @@
       "displayName": "九二式重机枪",
       "damage": 45,
       "fireRate": 7.5,
+      "effectiveRangeM": 200,
       "beltCapacity": 250,
       "overheatSec": 6.0,
       "cooldownSec": 4.0,

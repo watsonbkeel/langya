@@ -309,7 +309,16 @@ function createPlayerWeapons(
     if (!('fireRate' in weapon)) {
       continue;
     }
-    weapons[weaponId] = findPlayerWeaponConfig(config, weaponId);
+    // effectiveRangeM 用于反作弊视距校验，配置缺失说明数值文件不完整，直接失败
+    const effectiveRangeM = (weapon as { effectiveRangeM?: unknown })
+      .effectiveRangeM;
+    if (typeof effectiveRangeM !== 'number' || !(effectiveRangeM > 0)) {
+      throw new Error(`玩家武器 "${weaponId}" 缺少有效的 effectiveRangeM`);
+    }
+    weapons[weaponId] = {
+      ...findPlayerWeaponConfig(config, weaponId),
+      effectiveRangeM,
+    };
   }
   return weapons;
 }
@@ -335,6 +344,7 @@ function createMachineGunConfig(
     weaponId,
     damage: weapon.damage,
     fireRate: weapon.fireRate,
+    effectiveRangeM: weapon.effectiveRangeM,
     beltCapacity: weapon.beltCapacity,
     overheatSec: weapon.overheatSec,
     cooldownSec: weapon.cooldownSec,

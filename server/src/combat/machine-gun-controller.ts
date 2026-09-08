@@ -13,6 +13,8 @@ export interface MachineGunConfig {
   readonly weaponId: string;
   readonly damage: number;
   readonly fireRate: number;
+  /** 有效射程（米），用于服务端视距校验（反作弊）。 */
+  readonly effectiveRangeM: number;
   readonly beltCapacity: number;
   readonly overheatSec: number;
   readonly cooldownSec: number;

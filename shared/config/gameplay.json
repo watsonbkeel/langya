@@ -36,7 +36,16 @@
     "headHitboxStartM": 1.4,
     "torsoHitboxStartM": 0.5,
     "defenderCoverExposureMultiplier": 0.15,
-    "comment": "服务端射击校验、彩色占位敌人碰撞体与山顶石垒对防守者的暴露修正"
+    "rangeToleranceMultiplier": 1.1,
+    "comment": "服务端射击校验、彩色占位敌人碰撞体与山顶石垒对防守者的暴露修正。rangeToleranceMultiplier：命中距离超过武器 effectiveRangeM 的该倍数即判无效射击（反作弊视距校验）"
+  },
+
+  "antiCheat": {
+    "inputMessagesPerSec": 40,
+    "fireMessagesPerSec": 25,
+    "totalMessagesPerSec": 120,
+    "violationsBeforeKick": 20,
+    "comment": "每连接消息限流上限（反作弊，PRD 12 客户端篡改本地数据无法影响计分）。输入按 20Hz tick 留一倍余量；开火上限高于最快武器射速；累计超限达阈值即断开连接"
   },
 
   "medkit": {

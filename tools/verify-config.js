@@ -276,6 +276,58 @@ if (gameplay) {
   ) {
     err('combat 命中部位高度必须满足 0 ≤ torso < head < hitboxHeight');
   }
+  // 视距校验容差：小于 1 会让武器打不到标称射程，过大则形同虚设
+  if (
+    !(combat.rangeToleranceMultiplier >= 1) ||
+    combat.rangeToleranceMultiplier > 2
+  ) {
+    err('combat.rangeToleranceMultiplier 必须不小于 1 且不超过 2');
+  }
+
+  // 反作弊限流阈值（服务端按每连接每秒计数）
+  const antiCheat = gameplay.antiCheat || {};
+  for (const key of [
+    'inputMessagesPerSec',
+    'fireMessagesPerSec',
+    'totalMessagesPerSec',
+    'violationsBeforeKick',
+  ]) {
+    if (!Number.isInteger(antiCheat[key]) || antiCheat[key] <= 0) {
+      err(`antiCheat.${key} 必须为正整数`);
+    }
+  }
+  // 输入限流必须高于服务器 tick 率，否则正常玩家会被误伤
+  if (
+    antiCheat.inputMessagesPerSec > 0 &&
+    server.tickRateHz > 0 &&
+    antiCheat.inputMessagesPerSec < server.tickRateHz
+  ) {
+    err(
+      `antiCheat.inputMessagesPerSec(${antiCheat.inputMessagesPerSec}) 不得低于 server.tickRateHz(${server.tickRateHz})`,
+    );
+  }
+  if (
+    antiCheat.totalMessagesPerSec > 0 &&
+    antiCheat.totalMessagesPerSec <
+      antiCheat.inputMessagesPerSec + antiCheat.fireMessagesPerSec
+  ) {
+    err('antiCheat.totalMessagesPerSec 必须不小于输入与开火上限之和');
+  }
+  // 开火限流必须高于最快武器射速，否则合法连射会被当成作弊
+  if (weapons && antiCheat.fireMessagesPerSec > 0) {
+    const fireRates = [
+      ...Object.values(weapons.player || {}),
+      ...Object.values(weapons.emplacement || {}),
+    ]
+      .map((weapon) => weapon.fireRate)
+      .filter((rate) => typeof rate === 'number' && rate > 0);
+    const fastest = fireRates.length ? Math.max(...fireRates) : 0;
+    if (fastest > 0 && antiCheat.fireMessagesPerSec < fastest) {
+      err(
+        `antiCheat.fireMessagesPerSec(${antiCheat.fireMessagesPerSec}) 低于最快武器射速(${fastest})`,
+      );
+    }
+  }
 
   const m = gameplay.match || {};
   if (m.durationSec !== 300) err(`match.durationSec = ${m.durationSec}，必须为 300`);
