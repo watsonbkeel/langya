@@ -322,7 +322,7 @@ server/src/
 ```bash
 # 部署连通性
 curl -I http://127.0.0.1:8080
-curl -I http://100.126.150.80:8080
+curl -I http://100.74.3.56:8080
 node tools/check-ws.js ws://127.0.0.1:8081/ws
 
 # 类型检查

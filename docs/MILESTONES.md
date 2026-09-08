@@ -70,11 +70,11 @@
 
 ```bash
 curl -I http://127.0.0.1:8080          # 200
-curl -I http://100.126.150.80:8080     # 200（Tailscale 内网可达）
+curl -I http://100.74.3.56:8080     # 200（Tailscale 内网可达）
 node tools/check-ws.js ws://127.0.0.1:8081/ws   # 握手成功 + 收到心跳
 ```
 
-浏览器打开 `http://100.126.150.80:8080` 看到「已连接，延迟 xx ms」。
+浏览器打开 `http://100.74.3.56:8080` 看到「已连接，延迟 xx ms」。
 
 ### 完成记录
 
@@ -85,7 +85,7 @@ node tools/check-ws.js ws://127.0.0.1:8081/ws   # 握手成功 + 收到心跳
 `nginx.service` 与 `pm2-root.service` 均为 `active + enabled`。应用由项目专用
 Node.js `22.23.2` 执行。本机、局域网 `192.168.1.80`、当前 Tailscale
 `100.74.3.56` 均通过 HTTP 200、直连 WS 和 Nginx 同源 WS 自测。系统原有
-Apache 80 端口服务未修改。PRD 原定 Tailscale 地址 `100.126.150.80`
+Apache 80 端口服务未修改。PRD 原定 Tailscale 地址 `100.74.3.56`
 当前不属于本机，实际地址已写入 `docs/DEPLOY.md`。
 
 Mac 生成的 Cocos Creator 3.8.7 `web-mobile` 构建已通过 Taildrop 传到 Debian，
@@ -879,6 +879,13 @@ Debian 当时局域网 / Tailscale / frpc 三条通道全部不可达（Tailscal
 已无该机器），且本修复的验收标准是浏览器实跑，Debian 无 GUI 做不了，故经
 watson 明确授权后在 Mac 完成。越界记录已写入 `docs/COLLAB.md` 第 4 节。
 
+> ⚠️ **事后更正**：当天下午拿到 SSH 权限后查明，**Debian 并未掉线**——
+> 机器已连续运行 100 天，只是 **Tailscale IP 从 `100.126.150.80` 变成
+> `100.74.3.56`**，而文档里的地址是旧的。越界改动本身仍经 watson 授权、
+> 结论也正确，但「三通道全断」这个前提判断是错的。
+> **教训：下次「连不上 Debian」先 `tailscale ip -4` 确认地址，并以
+> `docs/DEPLOY.md` 为服务器信息真源，不要直接判定机器挂了。**
+
 | 文件 | 改动 |
 |---|---|
 | `shared/protocol.ts` | `ConnectionSnapshot` 增加可选字段 `playerId?: string`（加法，旧客户端不受影响） |
@@ -913,6 +920,53 @@ watson 明确授权后在 Mac 完成。越界记录已写入 `docs/COLLAB.md` �
   `enemy_died`，真人击杀零错配。
 
 **尚未完成**：客户端插值 + 本地预测、其他玩家表现同步、3 人同房实测。
+
+#### 🚀 部署（Debian）
+
+2026-09-08：**P0 修复已上线 Debian，线上验收全绿**（watson 授权 SSH 后直接上机）。
+
+**环境校正**（之前多处文档记错）：
+
+| 项 | 旧记录 | 实际 |
+|---|---|---|
+| Tailscale IP | 100.126.150.80 | **100.74.3.56**（已批量更新全部文档） |
+| 项目路径 | /root/langya | **/root/langya/langya**（嵌套一层） |
+| Node | — | 系统 v20，但项目专用 **v22.23.2 在 `/opt/langyashan/node22/bin`** |
+| PM2 | — | `server/node_modules/pm2/bin/pm2`，进程名 `langyashan-server` |
+
+**踩坑**：首次 `npm test` 报 3 个 `ERR_UNKNOWN_BUILTIN_MODULE` 失败，原因是
+用了系统 Node v20，而战报存储依赖 `node:sqlite`（Node 22.5+ 才内置）。
+换成 `/opt/langyashan/node22` 后 **138/138 全过**，与 Mac 一致。
+
+**部署动作**：
+1. `git pull --ff-only origin main`：`0346712` → `807f4dc`，跨 14 个提交，
+   服务器无本地改动，零冲突
+2. Node22 下 `npm ci` + `npm run build`（dist 157KB → 196.8KB）
+3. `pm2 restart langyashan-server --update-env` + `pm2 save`（`pm2-root` 已 enabled）
+4. 客户端：服务器**无 Cocos Creator**，产物在 Mac 构建后上传；服务器**无 rsync**，
+   改用 `tar over ssh`（`COPYFILE_DISABLE=1` + 排除 `._*`，避免 macOS 元数据垃圾），
+   传到 `.new` 后 `mv` 原子切换，旧版留为 `.old` 可回滚
+5. 切换前已备份到 `/root/backup/langyashan-www-20260908-134212`（23MB）
+
+**线上验收**：
+- 服务端：138/138 单测、`verify-config`、`check-ws`、`check-multiplayer`、
+  `check-anticheat`、`check-m3-ws` 全过
+- **`check-room-flow` 31/31**：服务器本地跑一遍，又从 Mac 打
+  `ws://100.74.3.56:8080/ws`（**经 nginx `/ws` 反代，与真人玩家完全相同的链路**）
+  再跑一遍，均包含「世界快照的 allies 里能用 playerId 找到自己」与
+  「匹配到的自己不是 AI 队友」两条 P0 核心断言
+- 三个地址 HTTP 200：`127.0.0.1:8080` / `192.168.1.80:8080` / `100.74.3.56:8080`
+- 线上 `/assets/main/index.js` 含 `playerId`（旧版搜不到），确认新版生效
+- 浏览器打开 `http://100.74.3.56:8080/` 标题正确，大厅 UI 完整渲染
+  （RoomView 三面板 + 4 按钮均在）
+
+**发现的限制**：release 构建会压缩混淆类名与方法名，`getDebugState` 被改名，
+**浏览器里探测不到入口脚本**。线上验证要靠协议探针脚本
+（`tools/check-*.js` 都支持传 WS 地址参数），需要 Canvas 级调试时用 `debug=true` 构建。
+
+**未清理（留作回滚，待 watson 确认）**：`/var/www/langyashan.old`、
+`/var/www/langyashan.m0-backup-20260904-151058`、`/root/backup/langyashan-www-20260908-134212`。
+磁盘 461G 可用，不急。
 
 > 待填写：插值效果、Tailscale 下的实测延迟、同步问题记录
 
@@ -965,3 +1019,4 @@ Chrome 验证鼠标方向、角色接地 / 朝向和枪口指向。适龄合规�
 |---|---|---|
 | 2026-09-04 | — | 文件创建，对应 PRD v1.1 |
 | 2026-09-07 | M5 | 多人 MVP 计分与战报核对完成；修复 `createFireMessageForEnemy` / `findNearestAliveEnemyId` 硬编码首席位的多席位遗漏；位置 int16 量化等带宽优化经确认暂缓（教学演示项目） |
+| 2026-09-08 | M5 | 房间大厅 UI 完成；修复 P0 自我识别缺口（snapshot 下发 `playerId`）；**已部署上线 Debian 并经 nginx 反代链路验收 31/31**；校正 Tailscale IP 为 `100.74.3.56`（全文档批量更新） |

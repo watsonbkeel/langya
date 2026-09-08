@@ -31,15 +31,40 @@ watson 的职责：域名、对外 Nginx 转发、Tailscale 链路、证书
 
 | 项 | 值 |
 |---|---|
-| 机器 | Debian 13 工作站 |
+| 机器 | Debian 13 trixie 工作站（hostname `watson`） |
 | 局域网地址 | 192.168.1.80 |
-| Tailscale 地址 | 100.126.150.80 |
-| SSH | 端口 5212（已有） |
-| Node.js | 22 LTS |
-| 进程管理 | PM2 |
-| Web 服务 | Nginx |
+| Tailscale 地址 | 100.74.3.56 |
+| SSH | 端口 22（Tailscale 直连）、端口 5212（frpc 对外） |
+| **项目路径** | **`/root/langya/langya`**（嵌套一层，外层不是 git 仓库） |
+| **Node.js** | **`/opt/langyashan/node22/bin`（v22.23.2）** |
+| **PM2** | **`<项目>/server/node_modules/pm2/bin/pm2`**，进程名 `langyashan-server` |
+| Web 服务 | Nginx，静态根 `/var/www/langyashan` |
 
 > 这台机器还跑着其他服务。**不要修改与本项目无关的配置**。
+
+### ⚠️ 上机第一件事：切到项目专用 Node
+
+```bash
+export PATH=/opt/langyashan/node22/bin:$PATH
+```
+
+系统自带的 `/usr/bin/node` 是 **v20**，用它跑 `npm test` 会有 **3 个
+`ERR_UNKNOWN_BUILTIN_MODULE` 假失败**——因为战报存储用了 `node:sqlite`
+（Node 22.5+ 才内置）。换成 Node 22 后应为 **138/138 全过**。
+
+别把这三个失败当成代码问题去排查。
+
+### ⚠️ 「连不上 Debian」先查 Tailscale IP
+
+**Tailscale IP 会变**。2026-09-08 就因为文档里是旧地址
+（`100.126.150.80`）而误判「机器掉线」，实际上它已连续运行 100 天。
+
+```bash
+tailscale ip -4        # 以这个输出为准
+tailscale status | grep -i watson
+```
+
+服务器信息的唯一真源是 **`docs/DEPLOY.md`**，不是 `AGENTS.md` 或 `PRD.md`。
 
 ---
 
@@ -57,7 +82,7 @@ watson 的职责：域名、对外 Nginx 转发、Tailscale 链路、证书
 **因为要经 Tailscale 内网转发访问。**
 
 ```
-只听 127.0.0.1  →  Tailscale 接口（100.126.150.80）访问不到  ❌
+只听 127.0.0.1  →  Tailscale 接口（100.74.3.56）访问不到  ❌
 听 0.0.0.0      →  局域网和 Tailscale 都能访问              ✅
 ```
 
@@ -190,7 +215,7 @@ sudo systemctl reload nginx
 `wsUrl` 留空时，客户端从当前页面地址自动推导：
 
 ```
-访问 http://100.126.150.80:8080  →  ws://100.126.150.80:8080/ws
+访问 http://100.74.3.56:8080  →  ws://100.74.3.56:8080/ws
 访问 https://game.example.com    →  wss://game.example.com/ws
 ```
 
@@ -210,7 +235,7 @@ curl -I http://192.168.1.80:8080
 # 期望：HTTP/1.1 200 OK
 
 # 3. Tailscale 地址可访问 ← 关键
-curl -I http://100.126.150.80:8080
+curl -I http://100.74.3.56:8080
 # 期望：HTTP/1.1 200 OK
 
 # 4. WebSocket 可连接
@@ -226,7 +251,7 @@ systemctl is-enabled pm2-$USER
 # 期望：enabled
 ```
 
-**最终验证**：在浏览器打开 `http://100.126.150.80:8080`，能完整打完一局游戏。
+**最终验证**：在浏览器打开 `http://100.74.3.56:8080`，能完整打完一局游戏。
 
 ---
 
@@ -259,6 +284,77 @@ ws.on('error', (err) => {
   process.exit(1);
 });
 ```
+
+---
+
+## 实战部署步骤（2026-09-08 验证可用）
+
+### 服务端
+
+```bash
+export PATH=/opt/langyashan/node22/bin:$PATH
+cd /root/langya/langya
+
+git pull --ff-only origin main          # 服务器不应有本地改动，用 ff-only 暴露异常
+cd server && npm ci && npm run build    # esbuild，秒级
+npm test                                 # 应为 138/138
+
+PM2=/root/langya/langya/server/node_modules/pm2/bin/pm2
+$PM2 restart langyashan-server --update-env
+$PM2 save                                # 不存重启机器会丢状态
+```
+
+### 客户端（必须在 Mac 构建后上传）
+
+服务器**没装 Cocos Creator**，也**没装 rsync**。用 `tar over ssh`：
+
+```bash
+# Mac 侧：构建后先还原被写脏的配置
+git checkout -- client/settings/v2/packages/information.json
+
+# 上传到暂存目录（COPYFILE_DISABLE=1 + 排除 ._* 避免 macOS 元数据垃圾）
+cd client/build/web-mobile
+COPYFILE_DISABLE=1 tar --exclude '._*' --exclude '.DS_Store' -czf - . \
+  | ssh root@100.74.3.56 'rm -rf /var/www/langyashan.new \
+      && mkdir -p /var/www/langyashan.new \
+      && tar -xzf - -C /var/www/langyashan.new'
+```
+
+然后在服务器上**备份 + 原子切换**（旧版留为 `.old`，出问题能一条命令回滚）：
+
+```bash
+cp -a /var/www/langyashan /root/backup/langyashan-www-$(date +%Y%m%d-%H%M%S)
+rm -rf /var/www/langyashan.old
+mv /var/www/langyashan /var/www/langyashan.old
+mv /var/www/langyashan.new /var/www/langyashan
+chown -R www-data:www-data /var/www/langyashan
+```
+
+> `tar` 报 `Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'`
+> 是 macOS 扩展属性噪声，无害，可忽略。
+
+---
+
+## 线上验收：用协议探针，不要靠 Canvas 探测
+
+**release 构建会压缩混淆类名与方法名**，`getDebugState` 被改名，
+浏览器里遍历节点树找不到入口脚本。这是正常现象，不是部署失败。
+
+正确做法是拿自测脚本打线上地址（都支持传 WS 参数）：
+
+```bash
+# 从 Mac 打线上 nginx 反代 —— 与真人玩家完全相同的链路，最硬的验收
+node tools/check-room-flow.js  ws://100.74.3.56:8080/ws
+node tools/check-multiplayer.js ws://100.74.3.56:8080/ws
+```
+
+另外直接抓线上产物验证版本：
+
+```bash
+curl -s http://100.74.3.56:8080/assets/main/index.js | grep -c playerId
+```
+
+需要 Canvas 级调试时，用 `debug=true` 构建一份单独跑。
 
 ---
 
@@ -334,7 +430,7 @@ ss -tlnp | grep -E '8080|8081'
 # 应看到 0.0.0.0:8080 和 0.0.0.0:8081
 
 # 测试 Tailscale 链路延迟
-ping -c 10 100.126.150.80
+ping -c 10 100.74.3.56
 ```
 
 ---

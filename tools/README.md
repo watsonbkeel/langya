@@ -16,7 +16,7 @@ node tools/verify-config.js
 
 # 部署验证（本机 + Tailscale 都要跑）
 node tools/check-ws.js ws://127.0.0.1:8081/ws
-node tools/check-ws.js ws://100.126.150.80:8081/ws
+node tools/check-ws.js ws://100.74.3.56:8081/ws
 
 # AI 数值校准（M2）
 node tools/simulate-match.js --runs 10 --output stats.json

@@ -835,7 +835,7 @@ langyashan-defense/
 | 开发 / 构建 | Debian 13 工作站 | Codex 主要工作区 |
 | 服务端运行 | 同上 | PM2 常驻，开机自启 |
 | 静态资源 | 同上 Nginx | 托管 `build/web-mobile` |
-| 内网访问地址 | 局域网 192.168.1.80 / Tailscale 100.126.150.80 | 两个地址都应可访问 |
+| 内网访问地址 | 局域网 192.168.1.80 / Tailscale 100.74.3.56 | 两个地址都应可访问 |
 | 对外入口 | watson 自行配置域名 + Nginx 转发 | 不在本次交付范围 |
 
 ### 10.3 端口规划
@@ -883,7 +883,7 @@ rsync -a --delete client/build/web-mobile/ /var/www/langyashan/
 **交付验证（Codex 必须自测通过）**：
 ```bash
 curl -I http://127.0.0.1:8080              # 静态站点 200
-curl -I http://100.126.150.80:8080         # Tailscale 地址可达
+curl -I http://100.74.3.56:8080         # Tailscale 地址可达
 # WebSocket 连通性自测脚本
 node tools/check-ws.js ws://127.0.0.1:8081/ws
 ```
@@ -965,7 +965,7 @@ node tools/check-ws.js ws://127.0.0.1:8081/ws
 - [ ] 服务端 PM2 常驻，重启机器后自动拉起
 - [ ] Nginx 静态站点在 8080 可访问
 - [ ] WebSocket 服务在 8081 可连接
-- [ ] **通过 Tailscale 地址（100.126.150.80）可正常访问并完整游玩**
+- [ ] **通过 Tailscale 地址（100.74.3.56）可正常访问并完整游玩**
 - [ ] 客户端 WS 地址可配置，换域名无需重新构建
 - [ ] 提供 `docs/DEPLOY.md` 说明服务管理命令
 

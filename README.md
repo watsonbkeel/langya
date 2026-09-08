@@ -168,7 +168,7 @@ rsync -a --delete client/build/web-mobile/ /var/www/langyashan/
 | 地址 | 用途 |
 |---|---|
 | `http://192.168.1.80:8080` | 局域网访问 |
-| `http://100.126.150.80:8080` | Tailscale 内网访问 |
+| `http://100.74.3.56:8080` | Tailscale 内网访问 |
 
 > **对外访问**由 watson 通过域名 + Nginx 转发经 Tailscale 自行配置，不在开发交付范围内。
 
