@@ -266,8 +266,9 @@ export function getWSUrl(): string {
 ## 无头构建
 
 ```bash
-# Debian 上无 GUI 构建
-CocosCreator --project ./client --build "platform=web-mobile;debug=false"
+# 必须清掉这两个环境变量，否则 Cocos CLI 解析参数失败
+env -u NODE_OPTIONS -u ELECTRON_RUN_AS_NODE \
+  CocosCreator --project ./client --build "platform=web-mobile;debug=false"
 
 # 常用参数
 # debug=true         保留调试信息，用于开发
@@ -276,6 +277,16 @@ CocosCreator --project ./client --build "platform=web-mobile;debug=false"
 ```
 
 **构建产物**：`client/build/web-mobile/`
+
+**耗时参考**：整条命令约 13 秒，其中实际构建约 4 秒，其余是引擎启动。
+
+**构建会写脏配置文件**：`client/settings/v2/packages/information.json` 的
+`customSplash` / `removeSplash` 会被自动改成 `enable: true` 并写入一个
+Cocos 官方表单 `sid`。这是构建噪声，**提交前务必还原**：
+
+```bash
+git checkout -- client/settings/v2/packages/information.json
+```
 
 **若构建失败**：
 1. 检查 `.scene` 是否引用了不存在的资源（代码化后容易残留引用）
@@ -303,6 +314,74 @@ export function dumpTree(node: Node, depth = 0) {
   node.children.forEach(c => dumpTree(c, depth + 1));
 }
 ```
+
+---
+
+## 用浏览器自动化点 Canvas 里的按钮（UI 实测）
+
+UI 全是代码创建的 Canvas 节点，DOM 里只有一个 `<canvas>`，选择器点不到。
+验证大厅、按钮、席位这类交互必须走「算坐标 + 模拟鼠标」这条路。
+
+**四步法**：
+
+```js
+// 1) 遍历场景树找到目标节点
+const scene = cc.director.getScene();
+function find(node, name) {
+  if (node.name === name) return node;
+  for (const c of node.children) { const r = find(c, name); if (r) return r; }
+  return null;
+}
+const btn = find(scene, 'CreateRoomButton');
+
+// 2) 世界坐标 → 屏幕坐标（必须用 Canvas 绑定的那个相机）
+const camera = scene.getComponentInChildren(cc.Canvas).cameraComponent;
+const screen = camera.worldToScreen(btn.worldPosition);
+
+// 3) 屏幕坐标 → CSS 坐标（y 轴要翻转）
+const cssX = screen.x;
+const cssY = canvasHeight - screen.y;
+```
+
+```bash
+# 4) agent-browser 的 click 只接选择器、不接坐标，必须拆成三步
+agent-browser mouse move <cssX> <cssY>
+agent-browser mouse down
+agent-browser mouse up
+```
+
+**配套调试出口**：入口脚本上挂一个 `getDebugState()`，把
+`playerId` / `playerAlive` / `playerPosition` / `magazineAmmo` /
+`spectatingAllyId` / `lastFireAccepted` 等关键指标暴露给控制台。
+验收标准就是「开局 30 秒内这些指标是否符合预期」，比截图肉眼看可靠得多。
+
+**WS 探针脚本注意**：手写脚本连服务器时，握手消息必须带
+`protocolVersion: 1`，否则会被服务端**静默丢弃**，表现为「发了没反应」。
+
+---
+
+## 客户端自我识别：只认 playerId，不认 clientId
+
+服务端有两套 id，混用是踩过坑的 P0 级 bug：
+
+| id | 含义 | 稳定性 |
+|---|---|---|
+| `clientId` | WebSocket 连接 id | 重连即变，**不能用来认人** |
+| `playerId`（`human:<uuid>`） | 稳定战斗身份 | 席位 / allies / 击杀归属 / 计分统一用它 |
+
+```ts
+// ❌ 曾经的写法：开局后永远找不到自己
+allies.find(a => a.id === this.clientId);
+
+// ✅ 正确：用 snapshot 下发的 playerId，且严格匹配
+private findPlayer(allies: readonly AllyState[]): AllyState | undefined {
+  if (this.playerId === null) return undefined;
+  return allies.find(ally => ally.id === this.playerId);
+}
+```
+
+**不要写「找不到就拿第一个」的兜底** —— 宁可不渲染，也不能把 AI 队友
+当成玩家自己（会导致血条、弹药、观战目标全部错位且难以察觉）。
 
 ---
 
