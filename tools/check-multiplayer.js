@@ -12,6 +12,10 @@
  *   4. 三人收到的 world_snapshot tick 对齐（同一个主循环）
  *   5. 快照 allies[] 里有 3 个真人 + 2 个 AI，席位不重复
  *   6. 一人开火后，另外两人能看到同一份世界变化
+ *   7. 掉线后在宽限期内重连，能接回原席位（PRD 7.3）
+ *
+ * 注：「掉线 60 秒超时转 AI 托管」因为要真等满宽限期，不适合放在本脚本，
+ * 由 server/src/game/room-battle-runtime.test.ts 直接驱动时钟覆盖。
  *
  * 用法：
  *   node tools/check-multiplayer.js                             # 默认 ws://127.0.0.1:8081/ws
@@ -55,7 +59,7 @@ const SEAT_COUNT = alliesConfig.seatCount;
 
 const url = process.argv[2] || 'ws://127.0.0.1:8081/ws';
 const PROTOCOL_VERSION = 1;
-const TIMEOUT_MS = 15000;
+const TIMEOUT_MS = 30000;
 const PLAYER_NAMES = ['玩家一', '玩家二', '玩家三'];
 
 const failures = [];
@@ -304,6 +308,94 @@ async function main() {
       roomState
         ? `真人席位数：${roomState.seats.filter((s) => !s.isBot).length}`
         : '未收到 room_state',
+    );
+
+    // 7. 宽限期内掉线重连，接回原席位（PRD 7.3）
+    const beforeSeat = roomState?.seats.find(
+      (seat) => seat.displayName === third.name && !seat.isBot,
+    );
+    check(
+      beforeSeat !== undefined,
+      '掉线前能定位到目标玩家的席位',
+      `玩家：${third.name}`,
+    );
+    const savedToken = third.reconnectToken;
+    third.close();
+    await sleep(300);
+
+    const rejoined = new TestClient(third.name);
+    clients.push(rejoined);
+    await rejoined.open();
+    rejoined.send('reconnect', {
+      reconnectToken: savedToken,
+      protocolVersion: PROTOCOL_VERSION,
+    });
+    await waitFor(
+      '重连被服务器受理',
+      () =>
+        rejoined.roomActionResults.some(
+          (result) => result.action === 'reconnect' && result.accepted,
+        ),
+      6000,
+    );
+    check(
+      rejoined.roomActionResults.some(
+        (result) => result.action === 'reconnect' && result.accepted,
+      ),
+      '宽限期内凭重连凭证重连成功',
+    );
+
+    await waitFor(
+      '重连后补发开局播报与快照',
+      () =>
+        rejoined.matchStart !== undefined &&
+        rejoined.worldSnapshots.length >= 1 &&
+        rejoined.roomStates.length >= 1,
+      6000,
+    );
+    check(
+      rejoined.matchStart?.matchId === roomCode,
+      '重连后回到同一局（matchId 不变）',
+      `matchId=${rejoined.matchStart?.matchId} roomCode=${roomCode}`,
+    );
+
+    const afterState =
+      rejoined.roomStates[rejoined.roomStates.length - 1];
+    const afterSeat = afterState?.seats.find(
+      (seat) => seat.displayName === third.name && !seat.isBot,
+    );
+    check(
+      afterSeat !== undefined &&
+        beforeSeat !== undefined &&
+        afterSeat.seatIndex === beforeSeat.seatIndex &&
+        afterSeat.occupantId === beforeSeat.occupantId,
+      '重连接回原席位（席位号与战斗身份都不变）',
+      beforeSeat && afterSeat
+        ? `前 seat=${beforeSeat.seatIndex}/${beforeSeat.occupantId}，` +
+          `后 seat=${afterSeat.seatIndex}/${afterSeat.occupantId}`
+        : '未找到席位',
+    );
+    check(
+      afterSeat !== undefined && afterSeat.autopilot !== true,
+      '宽限期内重连不会被托管',
+      `autopilot=${afterSeat?.autopilot}`,
+    );
+
+    // 重连后能继续正常操作（新连接的 clientTick 从 0 重新计数）
+    rejoined.send('fire', {
+      clientTick: rejoined.nextTick(),
+      weaponId: DEFAULT_WEAPON_ID,
+      originPos: { x: 0, y: 1.6, z: 0 },
+      dirVec: { x: 0, y: 0, z: 1 },
+    });
+    await waitFor(
+      '重连后开火收到裁决',
+      () => rejoined.fireResults.length >= 1,
+      6000,
+    );
+    check(
+      rejoined.fireResults.length >= 1,
+      '重连后可以继续作战（动作被服务器受理）',
     );
   } catch (error) {
     console.error(`❌ 执行异常：${error.message}`);

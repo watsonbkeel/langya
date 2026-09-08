@@ -46,6 +46,13 @@ export interface RoomBattleRuntimeOptions {
     events: readonly M2BattleEvent<M2RouteId>[],
   ) => void;
   readonly onMatchEnd: (info: RoomBattleEndInfo) => void;
+  /**
+   * 掉线超过宽限期，席位刚转 AI 托管时回调（PRD 7.3）。
+   * 给 websocket 层一个广播房间状态、写日志的机会。
+   */
+  readonly onAutopilotEngaged?: (
+    playerIds: readonly string[],
+  ) => void;
 }
 
 /**
@@ -65,6 +72,12 @@ export class RoomBattleRuntime {
   private readonly broadcast: BattleBroadcast;
   private readonly onEvents: RoomBattleRuntimeOptions['onEvents'];
   private readonly onMatchEnd: RoomBattleRuntimeOptions['onMatchEnd'];
+  private readonly onAutopilotEngaged:
+    | RoomBattleRuntimeOptions['onAutopilotEngaged']
+    | undefined;
+  /** 掉线席位的托管截止时刻，按 playerId 索引（PRD 7.3）。 */
+  private readonly reconnectDeadlines = new Map<string, number>();
+  private readonly reconnectGraceSec: number;
   private ended = false;
 
   constructor(options: RoomBattleRuntimeOptions) {
@@ -77,7 +90,10 @@ export class RoomBattleRuntime {
     this.broadcast = options.broadcast;
     this.onEvents = options.onEvents;
     this.onMatchEnd = options.onMatchEnd;
+    this.onAutopilotEngaged = options.onAutopilotEngaged;
     this.startedAtMs = options.startedAtMs;
+    this.reconnectGraceSec =
+      options.projectConfig.gameplay.server.reconnectGraceSec;
 
     const runtime = createM3BattleRuntime(
       options.projectConfig,
@@ -177,6 +193,13 @@ export class RoomBattleRuntime {
       return;
     }
 
+    // 先处理掉线宽限期：超时的席位在本 tick 就交给 AI，
+    // 保证托管接手和战斗推进在同一帧内完成，不会空一帧没人守。
+    const engaged = this.sweepReconnectDeadlines(nowMs);
+    if (engaged.length > 0) {
+      this.onAutopilotEngaged?.(engaged);
+    }
+
     const elapsedMs = nowMs - this.startedAtMs;
     const waveUpdate = this.waveScheduler.update(
       elapsedMs,
@@ -227,6 +250,72 @@ export class RoomBattleRuntime {
     this.broadcast(
       this.battle.createSnapshot(tick, nowMs, progress),
     );
+  }
+
+  /**
+   * 某个席位掉线了，开始 60 秒重连倒计时（PRD 7.3）。
+   * 倒计时期间角色原地保留，超时才转 AI 托管。
+   */
+  markDisconnected(playerId: string, nowMs = Date.now()): boolean {
+    if (this.ended || !this.battle.hasPlayer(playerId)) {
+      return false;
+    }
+    // 已经在托管中就不用再排队了。
+    if (this.battle.isAutopilot(playerId)) {
+      return false;
+    }
+    this.reconnectDeadlines.set(
+      playerId,
+      nowMs + this.reconnectGraceSec * 1000,
+    );
+    return true;
+  }
+
+  /**
+   * 席位重连回来了：取消倒计时，若已被托管则收回控制权。
+   * 返回 true 表示确实从托管手里接回来了（调用方据此广播房间状态）。
+   */
+  markReconnected(playerId: string): boolean {
+    this.reconnectDeadlines.delete(playerId);
+    return this.battle.releaseAutopilot(playerId);
+  }
+
+  /** 该席位是否正在等待重连（还没超时）。 */
+  isAwaitingReconnect(playerId: string): boolean {
+    return this.reconnectDeadlines.has(playerId);
+  }
+
+  /** 剩余重连秒数，用于日志与客户端提示。 */
+  reconnectSecondsLeft(
+    playerId: string,
+    nowMs = Date.now(),
+  ): number | undefined {
+    const deadline = this.reconnectDeadlines.get(playerId);
+    if (deadline === undefined) {
+      return undefined;
+    }
+    return Math.max(0, (deadline - nowMs) / 1000);
+  }
+
+  /**
+   * 检查有没有掉线席位超过宽限期，超时的转 AI 托管。
+   * 返回本 tick 新转托管的 playerId 列表。
+   */
+  private sweepReconnectDeadlines(nowMs: number): readonly string[] {
+    if (this.reconnectDeadlines.size === 0) {
+      return [];
+    }
+    const engaged: string[] = [];
+    for (const [playerId, deadline] of this.reconnectDeadlines) {
+      if (nowMs < deadline) {
+        continue;
+      }
+      this.reconnectDeadlines.delete(playerId);
+      if (this.battle.engageAutopilot(playerId)) {
+        engaged.push(playerId);
+      }
+    }
+    return engaged;
   }
 
   /** 队伍里还有真人活着吗。全员阵亡才算真人这条线断了。 */

@@ -27,6 +27,10 @@ import {
   type AllyShotIntent,
 } from '../ai/ally/ally-controller';
 import {
+  AutopilotBrain,
+  type AutopilotTarget,
+} from '../ai/ally/autopilot-brain';
+import {
   CalloutController,
   type AllyCallout,
   type CalloutConfig,
@@ -214,6 +218,9 @@ interface MutablePlayer {
   readonly id: string;
   readonly name: string;
   readonly seatIndex: number;
+  readonly routeId: string;
+  /** 席位固定的防守位，托管期间 AI 往这里靠拢。 */
+  readonly guardPosition: Vector3;
   readonly maxHp: number;
   hp: number;
   position: Vector3;
@@ -225,6 +232,11 @@ interface MutablePlayer {
   readonly weapons: PlayerWeaponInventory<M2PlayerWeaponConfig>;
   grenadesRemaining: number;
   medkitsRemaining: number;
+  /**
+   * 掉线超时后由 AI 托管（PRD 7.3）。
+   * 席位归属不变，血量弹药战绩仍算这个人的，只是决策换成 AI 做。
+   */
+  autopilot: boolean;
 }
 
 interface EnemyRuntime<TRouteId extends string, TEnemyType extends string> {
@@ -292,6 +304,11 @@ export class M2BattleSession<
   /** 本会话的首个真人（单人模式即唯一真人），供既有单人 API 复用。 */
   private readonly player: MutablePlayer;
   private readonly allies: AllyAgent<TRouteId>[] = [];
+  /** 掉线托管中的席位大脑，按 playerId 索引；没托管的人不在表里。 */
+  private readonly autopilots = new Map<
+    string,
+    AutopilotBrain<TRouteId>
+  >();
   private readonly enemies: EnemyRuntime<TRouteId, TEnemyType>[] = [];
   private readonly enemyAgents: EnemyAgent<TRouteId>[] = [];
   private readonly allyController: AllyController<TRouteId>;
@@ -339,6 +356,8 @@ export class M2BattleSession<
         id: seat.occupant.id,
         name: seat.occupant.displayName,
         seatIndex: seat.index,
+        routeId: seat.routeId,
+        guardPosition: { ...guardPosition, y: playerHeightM },
         maxHp: options.config.player.maxHp,
         hp: options.config.player.initialHp,
         position: {
@@ -357,6 +376,7 @@ export class M2BattleSession<
         grenadesRemaining:
           options.config.player.defaultLoadout.throwableCount,
         medkitsRemaining: options.config.player.medkitCount,
+        autopilot: false,
       });
     }
 
@@ -464,6 +484,62 @@ export class M2BattleSession<
     return this.players.has(playerId);
   }
 
+  /**
+   * 掉线超时，把这个真人席位交给 AI 托管（PRD 7.3）。
+   *
+   * 只换决策方式，不搬数据：血量、弹药、背包、机枪占位、战绩全都留在原处，
+   * 所以人回来时 `releaseAutopilot` 一调就能原样接回去。
+   * 返回 false 表示这个 playerId 不在本局，或者已经在托管中。
+   */
+  engageAutopilot(playerId: string): boolean {
+    const participant = this.players.get(playerId);
+    if (!participant || participant.autopilot) {
+      return false;
+    }
+    participant.autopilot = true;
+    // 托管不接管机枪：机枪位是稀缺资源，占着不放会挡住还在线的队友。
+    this.machineGunController.unmount(participant.id);
+    participant.moveDirX = 0;
+    participant.moveDirY = 0;
+    participant.isCrouch = false;
+    this.autopilots.set(
+      playerId,
+      new AutopilotBrain<TRouteId>({
+        reactionDelaySec: this.config.bot.reactionDelaySec,
+        accuracy: this.config.bot.accuracy,
+        accuracyLongRange: this.config.bot.accuracyLongRange,
+        longRangeThresholdM: this.config.bot.longRangeThresholdM,
+        moveSpeed: this.config.bot.moveSpeed,
+        medkitAutoUseThreshold:
+          this.config.bot.medkitAutoUseThreshold,
+      }),
+    );
+    return true;
+  }
+
+  /** 真人重连回来，收回托管。返回 false 表示本来就不在托管中。 */
+  releaseAutopilot(playerId: string): boolean {
+    const participant = this.players.get(playerId);
+    if (!participant || !participant.autopilot) {
+      return false;
+    }
+    participant.autopilot = false;
+    // 交接瞬间把移动意图清零，避免人接手时角色还在按 AI 的方向滑行。
+    participant.moveDirX = 0;
+    participant.moveDirY = 0;
+    this.autopilots.delete(playerId);
+    return true;
+  }
+
+  isAutopilot(playerId: string): boolean {
+    return this.players.get(playerId)?.autopilot === true;
+  }
+
+  /** 当前处于托管中的席位 playerId 列表。 */
+  get autopilotPlayerIds(): readonly string[] {
+    return [...this.autopilots.keys()];
+  }
+
   /** 取真人参战者，不存在则抛错（调用方应先用 hasPlayer 判断）。 */
   private requirePlayer(playerId: string): MutablePlayer {
     const participant = this.players.get(playerId);
@@ -550,6 +626,11 @@ export class M2BattleSession<
     if (!participant) {
       return false;
     }
+    // 托管期间不接受真人输入：这个席位现在由 AI 开，
+    // 接受输入会让 AI 的走位和残留的旧输入打架。
+    if (participant.autopilot) {
+      return false;
+    }
     const { payload } = message;
     if (
       payload.aimPitch < this.config.player.aimPitchMinDeg ||
@@ -588,6 +669,9 @@ export class M2BattleSession<
       (nowMs - this.startedAtMs) / 1000,
     );
     this.machineGunController.update(nowMs);
+    // 托管席位先决策：本 tick 的移动意图要在 updatePlayer 之前写好，
+    // 位移仍然走真人那套 updateParticipant，保证物理表现一致。
+    const autopilotShots = this.driveAutopilots(deltaSec, nowMs);
     this.updatePlayer(deltaSec, nowMs);
     const events: M2BattleEvent<TRouteId>[] = [
       ...this.supplyDropManager.update(
@@ -643,6 +727,7 @@ export class M2BattleSession<
         events.push(death);
       }
     }
+    events.push(...autopilotShots);
     events.push(...this.resolvePendingGrenades(nowMs));
 
     const callout = this.calloutController.update(
@@ -1187,6 +1272,7 @@ export class M2BattleSession<
             ...(mountedMachineGun === undefined
               ? {}
               : { mountedMgId: mountedMachineGun.id }),
+            ...(participant.autopilot ? { autopilot: true } : {}),
             weapon: this.getPlayerWeaponState(participant),
           };
         }),
@@ -1262,7 +1348,9 @@ export class M2BattleSession<
             heroName: seat.heroName,
             occupantId: seat.occupant.id,
             displayName: participant.name,
+            // 席位归属没变，仍然是真人的位置，只是暂时由 AI 代打。
             isBot: false,
+            ...(participant.autopilot ? { autopilot: true } : {}),
             alive: participant.hp > 0,
             routeId: findNearestRoute(
               participant.position,
@@ -1591,6 +1679,125 @@ export class M2BattleSession<
     for (const participant of this.players.values()) {
       this.updateParticipant(participant, deltaSec, nowMs);
     }
+  }
+
+  /**
+   * 驱动全部托管席位（PRD 7.3 掉线转 AI 接管）。
+   *
+   * 复用真人那套开火通道 `fire()`：走同样的原点校验、武器冷却、弹匣消耗、
+   * 命中裁决与计分，所以托管期间打死的敌人仍然记在这个人头上，
+   * 战报里也不会因为「托管过」而少算成绩。
+   */
+  private driveAutopilots(
+    deltaSec: number,
+    nowMs: number,
+  ): readonly M2BattleEvent<TRouteId>[] {
+    if (this.autopilots.size === 0) {
+      return [];
+    }
+
+    const events: M2BattleEvent<TRouteId>[] = [];
+    const targets = this.getAutopilotTargets();
+    for (const [playerId, brain] of this.autopilots) {
+      const participant = this.players.get(playerId);
+      if (!participant || participant.hp === 0) {
+        continue;
+      }
+
+      // 血量掉到阈值以下先自救，和 AI 队友同一套判据。
+      if (
+        participant.medkitsRemaining > 0 &&
+        brain.shouldUseMedkit(participant.hp, participant.maxHp)
+      ) {
+        this.tryUsePlayerMedkit(playerId);
+      }
+
+      // 托管不用摇杆，直接把位置往防守位挪，再清零移动意图，
+      // 避免 updateParticipant 里再叠加一次位移。
+      participant.position = brain.stepTowardGuard(
+        participant.position,
+        participant.guardPosition,
+        deltaSec,
+      );
+      participant.moveDirX = 0;
+      participant.moveDirY = 0;
+      participant.isCrouch = false;
+
+      const intent = brain.think(
+        nowMs,
+        participant.position,
+        participant.routeId as TRouteId,
+        targets,
+      );
+      if (!intent) {
+        continue;
+      }
+
+      // 瞄准躯干中心，与 createFireMessageForEnemy 的口径一致。
+      const torsoY =
+        (this.config.enemyHitbox.torsoStartM +
+          this.config.enemyHitbox.headStartM) /
+        2;
+      const direction = normalizeVector({
+        x: intent.targetPosition.x - participant.position.x,
+        y:
+          intent.targetPosition.y + torsoY - participant.position.y,
+        z: intent.targetPosition.z - participant.position.z,
+      });
+      const aim = directionToAim(direction);
+      participant.aimYaw = aim.yaw;
+      participant.aimPitch = clamp(
+        aim.pitch,
+        this.config.player.aimPitchMinDeg,
+        this.config.player.aimPitchMaxDeg,
+      );
+
+      // AI 命中率靠掷骰子体现：没过判定就把枪口偏开，
+      // 走同一条 fire() 通道，弹药与射速照常消耗。
+      const hitRoll = this.random.next() <= intent.accuracy;
+      const resolution = this.fire(
+        {
+          type: 'fire',
+          payload: {
+            weaponId: participant.weapons.currentWeaponId,
+            originPos: participant.position,
+            dirVec: hitRoll
+              ? direction
+              : deflectDirection(direction),
+            clientTick: 0,
+          },
+        },
+        nowMs,
+        playerId,
+      );
+      if (resolution.death) {
+        events.push({
+          type: 'enemy_died',
+          enemyId: resolution.death.payload.enemyId,
+          killerId: playerId,
+          // 托管期间的战绩仍归这个真人，所以不是 bot。
+          killerIsBot: false,
+        });
+      }
+    }
+    return events;
+  }
+
+  /** 托管选靶用的敌人列表。 */
+  private getAutopilotTargets(): readonly AutopilotTarget<TRouteId>[] {
+    const targets: AutopilotTarget<TRouteId>[] = [];
+    for (const enemy of this.enemies) {
+      if (enemy.hp <= 0) {
+        continue;
+      }
+      targets.push({
+        id: enemy.agent.id,
+        routeId: enemy.agent.routeId,
+        position: enemy.agent.position,
+        alive: true,
+      });
+    }
+    return targets;
   }
 
   private updateParticipant(
@@ -2011,6 +2218,20 @@ function distanceBetween(first: Vector3, second: Vector3): number {
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
+}
+
+/**
+ * 托管 AI 没过命中判定时，把枪口横向偏开再射线检测。
+ * 这样「打偏」和真人打偏走的是同一条判定路径，
+ * 不需要在 fire() 里为 AI 开后门。
+ */
+function deflectDirection(direction: Vector3): Vector3 {
+  // 绕 Y 轴转 90 度：原方向的水平分量整个甩到侧面去，必然脱靶。
+  return normalizeVector({
+    x: direction.z,
+    y: direction.y,
+    z: -direction.x,
+  });
 }
 
 function createWeaponRacks<TRouteId extends string>(

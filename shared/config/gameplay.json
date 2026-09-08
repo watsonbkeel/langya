@@ -24,7 +24,8 @@
   "server": {
     "tickRateHz": 20,
     "maxSingleMatchCpuPercent": 20,
-    "comment": "权威服务器固定 20Hz 更新与状态同步；单局 CPU 红线按单核占比计算"
+    "reconnectGraceSec": 60,
+    "comment": "权威服务器固定 20Hz 更新与状态同步；单局 CPU 红线按单核占比计算；掉线保留角色 60 秒等待重连，超时转 AI 接管（PRD 7.3）"
   },
 
   "combat": {

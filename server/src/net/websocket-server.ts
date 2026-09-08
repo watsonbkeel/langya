@@ -73,6 +73,11 @@ export class GameWebSocketServer {
   private readonly roomManager: RoomManager<M2RouteId>;
   /** 房间码 -> 房间级战斗运行时。一个房间只有一份战斗。 */
   private readonly battles = new Map<string, RoomBattleRuntime>();
+  /** 全员掉线的房间的延迟回收定时器，宽限期内有人回来就取消。 */
+  private readonly idleTimers = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
   private heartbeatInterval: ReturnType<typeof setInterval> | undefined;
   private snapshotSequence = 0;
 
@@ -148,6 +153,10 @@ export class GameWebSocketServer {
       battle.stop();
     }
     this.battles.clear();
+    for (const timer of this.idleTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.idleTimers.clear();
     for (const client of this.clients.values()) {
       client.socket.close(1001, '服务器正在停止');
     }
@@ -369,6 +378,12 @@ export class GameWebSocketServer {
           room.markDisconnected(session.id);
           this.broadcastRoomState(room);
         }
+        // PRD 7.3：先给 60 秒重连窗口，角色原地保留；
+        // 超时由主循环把席位转给 AI 托管，对局继续。
+        const runtime = this.battles.get(session.roomCode);
+        if (runtime && session.playerId) {
+          runtime.markDisconnected(session.playerId);
+        }
         // 房间里没人在线了就停掉主循环，避免空房间白烧 CPU。
         this.stopBattleIfRoomEmpty(session.roomCode);
       }
@@ -565,6 +580,23 @@ export class GameWebSocketServer {
     if (!runtime || runtime.matchEnded) {
       return;
     }
+    // 人回来了，取消这个房间的空房回收。
+    const idleTimer = this.idleTimers.get(room.id);
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      this.idleTimers.delete(room.id);
+    }
+    // 取消重连倒计时；若已超时被 AI 托管，这里把控制权收回来（PRD 7.3）。
+    if (session.playerId) {
+      const releasedFromAutopilot = runtime.markReconnected(
+        session.playerId,
+      );
+      if (releasedFromAutopilot) {
+        this.logSocketEvent('info', 'autopilot_released', session, {
+          playerId: session.playerId,
+        });
+      }
+    }
     session.joined = true;
     // 重连是新的 WebSocket 连接，客户端 tick 会从头开始，
     // 沿用旧的递增校验会把人挡在门外。
@@ -743,6 +775,9 @@ export class GameWebSocketServer {
       onMatchEnd: (info) => {
         this.finishRoomMatch(room, info);
       },
+      onAutopilotEngaged: (playerIds) => {
+        this.handleAutopilotEngaged(room, playerIds);
+      },
     });
     this.battles.set(room.id, runtime);
 
@@ -757,6 +792,29 @@ export class GameWebSocketServer {
     }
     runtime.start();
     return runtime;
+  }
+
+  /**
+   * 掉线超过 60 秒，席位已转 AI 托管（PRD 7.3）。
+   * 广播一次房间状态，让还在线的队友看到「谁被托管了」。
+   */
+  private handleAutopilotEngaged(
+    room: MultiplayerRoom<M2RouteId>,
+    playerIds: readonly string[],
+  ): void {
+    const runtime = this.battles.get(room.id);
+    if (!runtime) {
+      return;
+    }
+    for (const playerId of playerIds) {
+      const seat = room.findSeatByPlayerId(playerId);
+      console.info(
+        `[autopilot_engaged] room=${room.id} seat=${seat?.index ?? '?'} ` +
+          `player=${seat?.occupant?.displayName ?? playerId} ` +
+          `graceSec=${this.projectConfig.gameplay.server.reconnectGraceSec}`,
+      );
+    }
+    this.broadcastToRoom(room.id, runtime.battle.createRoomState());
   }
 
   /** 取会话所在房间的战斗上下文，含稳定战斗身份。 */
@@ -809,22 +867,59 @@ export class GameWebSocketServer {
   }
 
   /**
-   * 房间内已无在线连接时停掉战斗主循环。
-   * 断线玩家的席位由 AI 顶上继续打（PRD 11.2），
-   * 但如果全房都掉线了就没有观众，继续跑纯属浪费 CPU。
+   * 房间内已无在线连接时的处理。
+   *
+   * 不能立刻销毁：PRD 7.3 给了 60 秒重连窗口，单人局掉线后如果马上把战斗
+   * 拆了，人回来就没得接了。所以这里让主循环继续跑满宽限期，
+   * 到点仍无人在线才真正回收（60 秒的空转 CPU 换重连体验，值）。
    */
   private stopBattleIfRoomEmpty(roomCode: string): void {
     const runtime = this.battles.get(roomCode);
     if (!runtime) {
       return;
     }
-    for (const client of this.clients.values()) {
-      if (client.roomCode === roomCode) {
+    if (this.hasOnlineClient(roomCode)) {
+      return;
+    }
+    if (this.idleTimers.has(roomCode)) {
+      return;
+    }
+    const graceMs =
+      this.projectConfig.gameplay.server.reconnectGraceSec * 1000;
+    const timer = setTimeout(() => {
+      this.idleTimers.delete(roomCode);
+      // 宽限期内有人回来了就继续打，不回收。
+      if (this.hasOnlineClient(roomCode)) {
         return;
       }
+      this.disposeBattle(roomCode);
+    }, graceMs);
+    // 空房回收不该拖住进程退出。
+    timer.unref?.();
+    this.idleTimers.set(roomCode, timer);
+  }
+
+  private hasOnlineClient(roomCode: string): boolean {
+    for (const client of this.clients.values()) {
+      if (client.roomCode === roomCode) {
+        return true;
+      }
     }
-    runtime.stop();
-    this.battles.delete(roomCode);
+    return false;
+  }
+
+  /** 回收房间战斗：停主循环、清引用、把房间标记为结束。 */
+  private disposeBattle(roomCode: string): void {
+    const runtime = this.battles.get(roomCode);
+    if (runtime) {
+      runtime.stop();
+      this.battles.delete(roomCode);
+    }
+    const timer = this.idleTimers.get(roomCode);
+    if (timer) {
+      clearTimeout(timer);
+      this.idleTimers.delete(roomCode);
+    }
     const room = this.roomManager.get(roomCode);
     if (room) {
       room.markEnded();
@@ -916,6 +1011,12 @@ export class GameWebSocketServer {
     this.broadcastToRoom(room.id, message);
     room.markEnded();
     this.battles.delete(room.id);
+    // 战报已发，重连也没意义了，顺手把空房回收定时器撤掉。
+    const idleTimer = this.idleTimers.get(room.id);
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      this.idleTimers.delete(room.id);
+    }
   }
 
   private acceptClientTick(

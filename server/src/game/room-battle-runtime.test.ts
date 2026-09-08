@@ -16,6 +16,8 @@ interface Harness {
   readonly runtime: RoomBattleRuntime;
   readonly broadcasts: ServerMessage[];
   readonly ended: { value: boolean };
+  /** 每次托管接管回调收到的 playerId 批次。 */
+  readonly autopilotEngaged: string[][];
 }
 
 function createHarness(
@@ -28,6 +30,7 @@ function createHarness(
 ): Harness {
   const broadcasts: ServerMessage[] = [];
   const ended = { value: false };
+  const autopilotEngaged: string[][] = [];
   const runtime = new RoomBattleRuntime({
     roomId: 'RM01',
     projectConfig: config,
@@ -42,8 +45,11 @@ function createHarness(
     onMatchEnd: () => {
       ended.value = true;
     },
+    onAutopilotEngaged: (playerIds) => {
+      autopilotEngaged.push([...playerIds]);
+    },
   });
-  return { runtime, broadcasts, ended };
+  return { runtime, broadcasts, ended, autopilotEngaged };
 }
 
 describe('RoomBattleRuntime', () => {
@@ -185,6 +191,149 @@ describe('RoomBattleRuntime', () => {
 
     assert.equal(endCount, 1);
     assert.equal(runtime.matchEnded, true);
+  });
+
+  it('掉线未超过宽限期时保留角色，不转 AI 托管（PRD 7.3）', () => {
+    const startedAtMs = 1_000_000;
+    const graceMs = config.gameplay.server.reconnectGraceSec * 1000;
+    const { runtime, autopilotEngaged } = createHarness(
+      [
+        { seatIndex: 0, playerId: 'human:a', playerName: '玩家一' },
+        { seatIndex: 1, playerId: 'human:b', playerName: '玩家二' },
+      ],
+      startedAtMs,
+    );
+
+    assert.equal(runtime.markDisconnected('human:a', startedAtMs), true);
+    assert.equal(runtime.isAwaitingReconnect('human:a'), true);
+
+    // 差一秒到点，仍然是这个人的席位。
+    runtime.step(1, 0.05, startedAtMs + graceMs - 1_000);
+
+    assert.equal(runtime.battle.isAutopilot('human:a'), false);
+    assert.equal(autopilotEngaged.length, 0);
+    assert.equal(runtime.battle.hasPlayer('human:a'), true);
+  });
+
+  it('掉线超过宽限期转 AI 托管，对局继续且席位仍算真人', () => {
+    const startedAtMs = 1_000_000;
+    const graceMs = config.gameplay.server.reconnectGraceSec * 1000;
+    const { runtime, autopilotEngaged, ended } = createHarness(
+      [
+        { seatIndex: 0, playerId: 'human:a', playerName: '玩家一' },
+        { seatIndex: 1, playerId: 'human:b', playerName: '玩家二' },
+      ],
+      startedAtMs,
+    );
+    const hpBefore = runtime.battle.hpForPlayer('human:a');
+
+    runtime.markDisconnected('human:a', startedAtMs);
+    runtime.step(1, 0.05, startedAtMs + graceMs + 1_000);
+
+    assert.equal(runtime.battle.isAutopilot('human:a'), true);
+    assert.deepEqual(autopilotEngaged, [['human:a']]);
+    assert.equal(runtime.isAwaitingReconnect('human:a'), false);
+    // 托管只换决策，不搬数据：血量与席位归属都不变。
+    assert.equal(runtime.battle.hpForPlayer('human:a'), hpBefore);
+    assert.equal(runtime.battle.hasPlayer('human:a'), true);
+    // 对局继续。
+    assert.equal(ended.value, false);
+    assert.equal(runtime.matchEnded, false);
+
+    const snapshot = runtime.battle.createSnapshot(
+      1,
+      startedAtMs + graceMs + 1_000,
+    );
+    const seat = snapshot.payload.allies.find(
+      (ally) => ally.id === 'human:a',
+    );
+    assert.ok(seat);
+    // isBot 仍为 false，只是多了托管标记，客户端据此显示「托管中」。
+    assert.equal(seat.isBot, false);
+    assert.equal(seat.autopilot, true);
+  });
+
+  it('宽限期内重连取消倒计时，人回来后不再被托管', () => {
+    const startedAtMs = 1_000_000;
+    const graceMs = config.gameplay.server.reconnectGraceSec * 1000;
+    const { runtime, autopilotEngaged } = createHarness(
+      [{ seatIndex: 0, playerId: 'human:a', playerName: '玩家一' }],
+      startedAtMs,
+    );
+
+    runtime.markDisconnected('human:a', startedAtMs);
+    // 还没超时就回来了，markReconnected 返回 false（本来就没被托管）。
+    assert.equal(runtime.markReconnected('human:a'), false);
+    assert.equal(runtime.isAwaitingReconnect('human:a'), false);
+
+    runtime.step(1, 0.05, startedAtMs + graceMs + 5_000);
+
+    assert.equal(runtime.battle.isAutopilot('human:a'), false);
+    assert.equal(autopilotEngaged.length, 0);
+  });
+
+  it('超时被托管后重连，能接回原席位并收回控制权', () => {
+    const startedAtMs = 1_000_000;
+    const graceMs = config.gameplay.server.reconnectGraceSec * 1000;
+    const { runtime } = createHarness(
+      [
+        { seatIndex: 0, playerId: 'human:a', playerName: '玩家一' },
+        { seatIndex: 1, playerId: 'human:b', playerName: '玩家二' },
+      ],
+      startedAtMs,
+    );
+
+    runtime.markDisconnected('human:a', startedAtMs);
+    runtime.step(1, 0.05, startedAtMs + graceMs + 1_000);
+    assert.equal(runtime.battle.isAutopilot('human:a'), true);
+    const hpDuringAutopilot = runtime.battle.hpForPlayer('human:a');
+
+    // 人回来了，从 AI 手里接回控制权。
+    assert.equal(runtime.markReconnected('human:a'), true);
+    assert.equal(runtime.battle.isAutopilot('human:a'), false);
+    // 血量延续托管期间的结果，不是重置成满血。
+    assert.equal(
+      runtime.battle.hpForPlayer('human:a'),
+      hpDuringAutopilot,
+    );
+    // 重复调用是幂等的。
+    assert.equal(runtime.markReconnected('human:a'), false);
+  });
+
+  it('托管期间的击杀仍记在这名真人头上，不算 AI 队友战绩', () => {
+    const startedAtMs = 1_000_000;
+    const graceMs = config.gameplay.server.reconnectGraceSec * 1000;
+    const { runtime } = createHarness(
+      [{ seatIndex: 0, playerId: 'human:a', playerName: '玩家一' }],
+      startedAtMs,
+    );
+
+    runtime.markDisconnected('human:a', startedAtMs);
+
+    // 推进到托管生效并持续跑一段时间，让托管 AI 有机会开火。
+    let nowMs = startedAtMs + graceMs + 1_000;
+    for (let tick = 1; tick <= 400; tick += 1) {
+      runtime.step(tick, 0.05, nowMs);
+      nowMs += 50;
+      if (runtime.matchEnded) {
+        break;
+      }
+    }
+
+    assert.equal(runtime.battle.isAutopilot('human:a'), true);
+    // 托管确实在打：命中或未命中都会被计分器记成这个人开的枪。
+    const scoreboard = runtime.battle.createScoreboard(
+      (nowMs - startedAtMs) / 1000,
+    );
+    const entry = scoreboard.find(
+      (row) => row.occupantId === 'human:a',
+    );
+    assert.ok(entry);
+    assert.equal(entry.isBot, false);
+    assert.ok(
+      entry.shotsFired > 0,
+      '托管期间应当有开火记录，实际为 0',
+    );
   });
 
   it('没有真人时拒绝创建战斗', () => {

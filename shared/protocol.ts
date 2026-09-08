@@ -303,6 +303,11 @@ export interface RoomSeatState {
   readonly isBot: boolean;
   readonly alive: boolean;
   readonly routeId: RouteId;
+  /**
+   * 真人席位掉线超时后由 AI 托管中（PRD 7.3）。
+   * isBot 仍为 false —— 席位归属没变，人回来就能接回去。
+   */
+  readonly autopilot?: boolean;
 }
 
 export interface RoomStatePayload {
@@ -343,6 +348,8 @@ export interface AllyState {
   /** @deprecated 随身血包已立即生效；服务端保留字段仅用于旧客户端类型兼容且不再发送。 */
   readonly medkitEndsAtMs?: number;
   readonly mountedMgId?: string;
+  /** 真人席位当前由 AI 托管（掉线超时），客户端可加托管标记（PRD 7.3）。 */
+  readonly autopilot?: boolean;
   readonly weapon: WeaponState;
 }
 
