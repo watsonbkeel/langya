@@ -76,7 +76,11 @@ import {
   type MachineGunConfig,
   type MachineGunPlacement,
 } from '../combat/machine-gun-controller';
-import { SoloRoom, type SoloRoomConfig } from '../room/solo-room';
+import {
+  SoloRoom,
+  type HumanSeatAssignment,
+  type SoloRoomConfig,
+} from '../room/solo-room';
 import {
   ScoreTracker,
   type ScoreTrackerConfig,
@@ -199,11 +203,17 @@ export interface M2BattleSessionOptions<
   readonly config: M2BattleConfig<TRouteId, TEnemyType>;
   readonly random: RandomSource;
   readonly supplyRandom: RandomSource;
+  /**
+   * 多人开局时的真人席位表。省略时退化为单人（仅 playerId 一人）。
+   * v1.0 不允许中途加入，所以名单在开局时就固定下来。
+   */
+  readonly humans?: readonly HumanSeatAssignment[];
 }
 
 interface MutablePlayer {
   readonly id: string;
   readonly name: string;
+  readonly seatIndex: number;
   readonly maxHp: number;
   hp: number;
   position: Vector3;
@@ -227,8 +237,17 @@ interface EnemyRuntime<TRouteId extends string, TEnemyType extends string> {
 }
 
 interface PendingGrenade {
+  /** 投掷者的 playerId，用于把炸死的杀敌数记在正确的人头上。 */
+  readonly thrownBy: string;
   readonly impactPosition: Vector3;
   readonly detonatesAtMs: number;
+}
+
+/** 供敌人 AI 选靶用的友方目标快照。 */
+interface FriendlyTarget {
+  readonly id: string;
+  readonly position: Vector3;
+  readonly alive: boolean;
 }
 
 export type M2BattleEvent<TRouteId extends RouteId> =
@@ -268,6 +287,9 @@ export class M2BattleSession<
 
   private readonly config: M2BattleConfig<TRouteId, TEnemyType>;
   private readonly random: RandomSource;
+  /** 全部真人参战者，按 playerId 索引；单人模式下只有一项。 */
+  private readonly players = new Map<string, MutablePlayer>();
+  /** 本会话的首个真人（单人模式即唯一真人），供既有单人 API 复用。 */
   private readonly player: MutablePlayer;
   private readonly allies: AllyAgent<TRouteId>[] = [];
   private readonly enemies: EnemyRuntime<TRouteId, TEnemyType>[] = [];
@@ -281,6 +303,8 @@ export class M2BattleSession<
   private readonly machineGunController: MachineGunController;
   private readonly weaponRacks: readonly WeaponRackItemState[];
   private readonly pendingGrenades: PendingGrenade[] = [];
+  /** 复用缓冲：避免每 tick 为敌人选靶重新分配数组。 */
+  private readonly friendlyTargetBuffer: FriendlyTarget[] = [];
   private enemySequence = 0;
   private elapsedSec = 0;
   private startedAtMs: number | undefined;
@@ -294,44 +318,55 @@ export class M2BattleSession<
       playerId: options.playerId,
       playerName: options.playerName,
       config: options.config.room,
+      ...(options.humans === undefined ? {} : { humans: options.humans }),
     });
     const guardPositions = this.createInitialGuardPositions();
     const playerHeightM =
       (options.config.enemyHitbox.torsoStartM +
         options.config.enemyHitbox.headStartM) /
       2;
-    const playerSeat = this.room.seats.find(
-      (seat) => seat.occupant.id === options.playerId,
-    );
-    if (!playerSeat) {
-      throw new Error('单人房间缺少真人席位');
+    // 所有真人席位统一建模：单人时只有一个，联机时最多五个。
+    // 每个真人各自持有血量、位置、弹药与背包，互不共享。
+    for (const seat of this.room.seats) {
+      if (seat.occupant.isBot) {
+        continue;
+      }
+      const guardPosition = guardPositions.get(seat.index);
+      if (!guardPosition) {
+        throw new Error(`真人席位 ${seat.index} 缺少防守位置`);
+      }
+      this.players.set(seat.occupant.id, {
+        id: seat.occupant.id,
+        name: seat.occupant.displayName,
+        seatIndex: seat.index,
+        maxHp: options.config.player.maxHp,
+        hp: options.config.player.initialHp,
+        position: {
+          ...guardPosition,
+          y: playerHeightM,
+        },
+        aimYaw: 0,
+        aimPitch: 0,
+        isCrouch: false,
+        moveDirX: 0,
+        moveDirY: 0,
+        weapons: new PlayerWeaponInventory(
+          options.config.playerWeapons,
+          options.config.playerWeapon.weaponId,
+        ),
+        grenadesRemaining:
+          options.config.player.defaultLoadout.throwableCount,
+        medkitsRemaining: options.config.player.medkitCount,
+      });
     }
-    const playerPosition = guardPositions.get(playerSeat.index);
-    if (!playerPosition) {
-      throw new Error('真人席位缺少防守位置');
+
+    const primaryPlayer =
+      this.players.get(options.playerId) ??
+      [...this.players.values()][0];
+    if (!primaryPlayer) {
+      throw new Error('房间缺少真人席位');
     }
-    this.player = {
-      id: options.playerId,
-      name: options.playerName,
-      maxHp: options.config.player.maxHp,
-      hp: options.config.player.initialHp,
-      position: {
-        ...playerPosition,
-        y: playerHeightM,
-      },
-      aimYaw: 0,
-      aimPitch: 0,
-      isCrouch: false,
-      moveDirX: 0,
-      moveDirY: 0,
-      weapons: new PlayerWeaponInventory(
-        options.config.playerWeapons,
-        options.config.playerWeapon.weaponId,
-      ),
-      grenadesRemaining:
-        options.config.player.defaultLoadout.throwableCount,
-      medkitsRemaining: options.config.player.medkitCount,
-    };
+    this.player = primaryPlayer;
 
     for (const seat of this.room.seats) {
       if (!seat.occupant.isBot) {
@@ -377,9 +412,7 @@ export class M2BattleSession<
         occupantId: seat.occupant.id,
         seatIndex: seat.index,
         heroName: seat.heroName,
-        displayName: seat.occupant.isBot
-          ? seat.occupant.displayName
-          : options.playerName,
+        displayName: seat.occupant.displayName,
         isBot: seat.occupant.isBot,
       })),
     );
@@ -420,8 +453,32 @@ export class M2BattleSession<
     return this.enemies.length;
   }
 
+  /** 全部真人的 playerId（按席位序）。 */
+  get humanPlayerIds(): readonly string[] {
+    return [...this.players.values()]
+      .sort((first, second) => first.seatIndex - second.seatIndex)
+      .map((participant) => participant.id);
+  }
+
+  hasPlayer(playerId: string): boolean {
+    return this.players.has(playerId);
+  }
+
+  /** 取真人参战者，不存在则抛错（调用方应先用 hasPlayer 判断）。 */
+  private requirePlayer(playerId: string): MutablePlayer {
+    const participant = this.players.get(playerId);
+    if (!participant) {
+      throw new Error(`房间内不存在真人 ${playerId}`);
+    }
+    return participant;
+  }
+
   get playerKills(): number {
     return this.getKillsFor(this.player.id);
+  }
+
+  killsForPlayer(playerId: string): number {
+    return this.getKillsFor(playerId);
   }
 
   get allyKills(): readonly number[] {
@@ -445,9 +502,23 @@ export class M2BattleSession<
     return this.player.hp > 0;
   }
 
+  hpForPlayer(playerId: string): number {
+    return this.players.get(playerId)?.hp ?? 0;
+  }
+
+  isPlayerAlive(playerId: string): boolean {
+    return (this.players.get(playerId)?.hp ?? 0) > 0;
+  }
+
   get aliveDefenderCount(): number {
+    let aliveHumans = 0;
+    for (const participant of this.players.values()) {
+      if (participant.hp > 0) {
+        aliveHumans += 1;
+      }
+    }
     return (
-      (this.player.hp > 0 ? 1 : 0) +
+      aliveHumans +
       this.allies.reduce(
         (count, ally) => count + (ally.isAlive ? 1 : 0),
         0,
@@ -463,11 +534,22 @@ export class M2BattleSession<
     return this.player.position;
   }
 
+  positionForPlayer(playerId: string): Vector3 | undefined {
+    return this.players.get(playerId)?.position;
+  }
+
   get playerWeaponState(): WeaponState {
     return this.getPlayerWeaponState();
   }
 
-  applyInput(message: InputStateMessage): boolean {
+  applyInput(
+    message: InputStateMessage,
+    playerId: string = this.player.id,
+  ): boolean {
+    const participant = this.players.get(playerId);
+    if (!participant) {
+      return false;
+    }
     const { payload } = message;
     if (
       payload.aimPitch < this.config.player.aimPitchMinDeg ||
@@ -480,16 +562,16 @@ export class M2BattleSession<
     const moveScale = moveLength > 1 ? 1 / moveLength : 1;
     const movementLocked =
       this.machineGunController.locksMovement &&
-      this.machineGunController.getMounted(this.player.id) !== undefined;
-    this.player.moveDirX = movementLocked
+      this.machineGunController.getMounted(participant.id) !== undefined;
+    participant.moveDirX = movementLocked
       ? 0
       : payload.moveDir.x * moveScale;
-    this.player.moveDirY = movementLocked
+    participant.moveDirY = movementLocked
       ? 0
       : payload.moveDir.y * moveScale;
-    this.player.aimYaw = payload.aimYaw;
-    this.player.aimPitch = payload.aimPitch;
-    this.player.isCrouch = movementLocked ? false : payload.isCrouch;
+    participant.aimYaw = payload.aimYaw;
+    participant.aimPitch = payload.aimPitch;
+    participant.isCrouch = movementLocked ? false : payload.isCrouch;
     return true;
   }
 
@@ -623,14 +705,29 @@ export class M2BattleSession<
     return id;
   }
 
-  reload(message: ReloadMessage, nowMs: number): void {
-    if (this.machineGunController.getMounted(this.player.id)) {
+  reload(
+    message: ReloadMessage,
+    nowMs: number,
+    playerId: string = this.player.id,
+  ): void {
+    const participant = this.players.get(playerId);
+    if (!participant) {
       return;
     }
-    this.player.weapons.reload(message.payload.weaponId, nowMs);
+    if (this.machineGunController.getMounted(participant.id)) {
+      return;
+    }
+    participant.weapons.reload(message.payload.weaponId, nowMs);
   }
 
-  resupplyPlayerAmmo(nowMs: number): boolean {
+  resupplyPlayerAmmo(
+    nowMs: number,
+    playerId: string = this.player.id,
+  ): boolean {
+    const participant = this.players.get(playerId);
+    if (!participant) {
+      return false;
+    }
     if (
       this.lastPlayerResupplyAtMs !== undefined &&
       nowMs - this.lastPlayerResupplyAtMs <
@@ -638,7 +735,7 @@ export class M2BattleSession<
     ) {
       return false;
     }
-    if (!this.player.weapons.resupplyCurrent()) {
+    if (!participant.weapons.resupplyCurrent()) {
       return false;
     }
     this.lastPlayerResupplyAtMs = nowMs;
@@ -647,50 +744,66 @@ export class M2BattleSession<
 
   switchPlayerWeapon(
     weaponId: string,
+    playerId: string = this.player.id,
   ): ActionRejectReason | undefined {
-    if (this.player.hp === 0) {
-      return 'dead';
-    }
-    if (this.machineGunController.getMounted(this.player.id)) {
+    const participant = this.players.get(playerId);
+    if (!participant) {
       return 'invalid_state';
     }
-    return this.player.weapons.switchTo(weaponId);
-  }
-
-  usePlayerMedkit(): boolean {
-    return this.tryUsePlayerMedkit() === undefined;
-  }
-
-  tryUsePlayerMedkit(): ActionRejectReason | undefined {
-    if (this.player.hp === 0) {
+    if (participant.hp === 0) {
       return 'dead';
     }
-    if (this.player.medkitsRemaining === 0) {
+    if (this.machineGunController.getMounted(participant.id)) {
+      return 'invalid_state';
+    }
+    return participant.weapons.switchTo(weaponId);
+  }
+
+  usePlayerMedkit(playerId: string = this.player.id): boolean {
+    return this.tryUsePlayerMedkit(playerId) === undefined;
+  }
+
+  tryUsePlayerMedkit(
+    playerId: string = this.player.id,
+  ): ActionRejectReason | undefined {
+    const participant = this.players.get(playerId);
+    if (!participant) {
+      return 'invalid_state';
+    }
+    if (participant.hp === 0) {
+      return 'dead';
+    }
+    if (participant.medkitsRemaining === 0) {
       return 'no_resource';
     }
     if (
-      this.player.hp >
-      this.player.maxHp - this.config.medkit.carriedHeal
+      participant.hp >
+      participant.maxHp - this.config.medkit.carriedHeal
     ) {
       return 'unavailable';
     }
-    this.player.medkitsRemaining -= 1;
-    this.player.hp = Math.min(
-      this.player.maxHp,
-      this.player.hp + this.config.medkit.carriedHeal,
+    participant.medkitsRemaining -= 1;
+    participant.hp = Math.min(
+      participant.maxHp,
+      participant.hp + this.config.medkit.carriedHeal,
     );
-    this.scoreTracker.recordMedkitUsed(this.player.id);
+    this.scoreTracker.recordMedkitUsed(participant.id);
     return undefined;
   }
 
   pickupItem(
     itemId: string,
     nowMs: number,
+    playerId: string = this.player.id,
   ): ActionRejectReason | undefined {
-    if (this.player.hp === 0) {
+    const participant = this.players.get(playerId);
+    if (!participant) {
+      return 'invalid_state';
+    }
+    if (participant.hp === 0) {
       return 'dead';
     }
-    if (this.machineGunController.getMounted(this.player.id)) {
+    if (this.machineGunController.getMounted(participant.id)) {
       return 'invalid_state';
     }
 
@@ -699,12 +812,12 @@ export class M2BattleSession<
     );
     if (rack) {
       if (
-        distanceBetween(this.player.position, rack.position) >
+        distanceBetween(participant.position, rack.position) >
         this.config.arena.itemPickupRangeM
       ) {
         return 'out_of_range';
       }
-      return this.player.weapons.pickup(rack.weaponId);
+      return participant.weapons.pickup(rack.weaponId);
     }
 
     const supply = this.supplyDropManager
@@ -713,12 +826,12 @@ export class M2BattleSession<
     if (!supply) {
       return 'invalid_target';
     }
-    if (this.player.hp === this.player.maxHp) {
+    if (participant.hp === participant.maxHp) {
       return 'unavailable';
     }
     const result = this.supplyDropManager.pickup(
       itemId,
-      this.player.position,
+      participant.position,
       this.config.arena.itemPickupRangeM,
       this.config.medkit.airdropHeal,
       nowMs,
@@ -727,30 +840,35 @@ export class M2BattleSession<
       return result.reason;
     }
 
-    this.player.hp = Math.min(
-      this.player.maxHp,
-      this.player.hp + result.heal,
+    participant.hp = Math.min(
+      participant.maxHp,
+      participant.hp + result.heal,
     );
-    this.scoreTracker.recordMedkitUsed(this.player.id);
+    this.scoreTracker.recordMedkitUsed(participant.id);
     return undefined;
   }
 
   throwGrenade(
     message: ThrowGrenadeMessage,
     nowMs: number,
+    playerId: string = this.player.id,
   ): ActionRejectReason | undefined {
-    if (this.player.hp === 0) {
-      return 'dead';
-    }
-    if (this.machineGunController.getMounted(this.player.id)) {
+    const participant = this.players.get(playerId);
+    if (!participant) {
       return 'invalid_state';
     }
-    if (this.player.grenadesRemaining === 0) {
+    if (participant.hp === 0) {
+      return 'dead';
+    }
+    if (this.machineGunController.getMounted(participant.id)) {
+      return 'invalid_state';
+    }
+    if (participant.grenadesRemaining === 0) {
       return 'no_resource';
     }
     const { originPos, dirVec, force } = message.payload;
     if (
-      distanceBetween(originPos, this.player.position) >
+      distanceBetween(originPos, participant.position) >
       this.config.validation.fireOriginToleranceM
     ) {
       return 'out_of_range';
@@ -767,8 +885,9 @@ export class M2BattleSession<
       return 'invalid_target';
     }
 
-    this.player.grenadesRemaining -= 1;
+    participant.grenadesRemaining -= 1;
     this.pendingGrenades.push({
+      thrownBy: participant.id,
       impactPosition: calculateGrenadeImpact(
         originPos,
         dirVec,
@@ -783,38 +902,49 @@ export class M2BattleSession<
 
   mountMachineGun(
     mgId: string,
+    playerId: string = this.player.id,
   ): ActionRejectReason | undefined {
-    if (this.player.hp === 0) {
+    const participant = this.players.get(playerId);
+    if (!participant) {
+      return 'invalid_state';
+    }
+    if (participant.hp === 0) {
       return 'dead';
     }
     const rejectReason = this.machineGunController.mount(
       mgId,
-      this.player.id,
+      participant.id,
       false,
-      this.player.position,
+      participant.position,
       this.config.arena.machineGunMountRangeM,
     );
     if (rejectReason !== undefined) {
       return rejectReason;
     }
 
-    const mounted = this.machineGunController.getMounted(this.player.id);
+    const mounted = this.machineGunController.getMounted(participant.id);
     if (!mounted) {
       throw new Error(`重机枪 ${mgId} 挂载成功后缺少状态`);
     }
-    this.player.position = mounted.position;
-    this.player.aimYaw = mounted.baseYaw;
-    this.player.moveDirX = 0;
-    this.player.moveDirY = 0;
-    this.player.isCrouch = false;
+    participant.position = mounted.position;
+    participant.aimYaw = mounted.baseYaw;
+    participant.moveDirX = 0;
+    participant.moveDirY = 0;
+    participant.isCrouch = false;
     return undefined;
   }
 
-  unmountMachineGun(): ActionRejectReason | undefined {
-    if (this.player.hp === 0) {
+  unmountMachineGun(
+    playerId: string = this.player.id,
+  ): ActionRejectReason | undefined {
+    const participant = this.players.get(playerId);
+    if (!participant) {
+      return 'invalid_state';
+    }
+    if (participant.hp === 0) {
       return 'dead';
     }
-    return this.machineGunController.unmount(this.player.id);
+    return this.machineGunController.unmount(participant.id);
   }
 
   createScoreboard(
@@ -829,16 +959,29 @@ export class M2BattleSession<
     return this.scoreTracker.selectMvpPlayerId(endedAtSec);
   }
 
-  fire(message: FireMessage, nowMs: number): M2FireResolution {
+  fire(
+    message: FireMessage,
+    nowMs: number,
+    playerId: string = this.player.id,
+  ): M2FireResolution {
     const { payload } = message;
-    if (this.player.hp === 0) {
+    const participant = this.players.get(playerId);
+    if (!participant) {
       return this.rejectFire(message, 'dead');
     }
+    if (participant.hp === 0) {
+      return this.rejectFire(message, 'dead', undefined, participant);
+    }
     if (
-      distanceBetween(payload.originPos, this.player.position) >
+      distanceBetween(payload.originPos, participant.position) >
       this.config.validation.fireOriginToleranceM
     ) {
-      return this.rejectFire(message, 'invalid_origin');
+      return this.rejectFire(
+        message,
+        'invalid_origin',
+        undefined,
+        participant,
+      );
     }
     const magnitude = vectorMagnitude(payload.dirVec);
     if (
@@ -846,10 +989,15 @@ export class M2BattleSession<
       Math.abs(magnitude - 1) >
         this.config.validation.directionMagnitudeTolerance
     ) {
-      return this.rejectFire(message, 'invalid_direction');
+      return this.rejectFire(
+        message,
+        'invalid_direction',
+        undefined,
+        participant,
+      );
     }
 
-    const mounted = this.machineGunController.getMounted(this.player.id);
+    const mounted = this.machineGunController.getMounted(participant.id);
     let isMachineGun = false;
     let damageForHit: (
       hitPart: 'head' | 'torso' | 'limb',
@@ -863,7 +1011,7 @@ export class M2BattleSession<
     if (mounted) {
       const aim = directionToAim(payload.dirVec);
       const fireState = this.machineGunController.fire(
-        this.player.id,
+        participant.id,
         payload.weaponId,
         aim.yaw,
         aim.pitch,
@@ -884,19 +1032,29 @@ export class M2BattleSession<
         );
     } else {
       if (
-        payload.weaponId !== this.player.weapons.currentWeaponId
+        payload.weaponId !== participant.weapons.currentWeaponId
       ) {
-        return this.rejectFire(message, 'invalid_weapon');
+        return this.rejectFire(
+          message,
+          'invalid_weapon',
+          undefined,
+          participant,
+        );
       }
-      const fireState = this.player.weapons.fire(
+      const fireState = participant.weapons.fire(
         payload.weaponId,
         nowMs,
       );
       if (!fireState.accepted) {
-        return this.rejectFire(message, fireState.reason);
+        return this.rejectFire(
+          message,
+          fireState.reason,
+          undefined,
+          participant,
+        );
       }
-      const weaponConfig = this.player.weapons.currentConfig;
-      ammoState = this.getAmmoState();
+      const weaponConfig = participant.weapons.currentConfig;
+      ammoState = this.getAmmoState(participant);
       damageForHit = (hitPart, distanceM) =>
         calculateDamage(
           {
@@ -920,7 +1078,7 @@ export class M2BattleSession<
       this.config.enemyHitbox,
     );
     if (!hit) {
-      this.scoreTracker.recordShot(this.player.id, {
+      this.scoreTracker.recordShot(participant.id, {
         hit: false,
         damage: 0,
         isKill: false,
@@ -936,7 +1094,7 @@ export class M2BattleSession<
       (candidate) => candidate.agent.id === hit.targetId,
     );
     if (!enemy || enemy.hp <= 0) {
-      this.scoreTracker.recordShot(this.player.id, {
+      this.scoreTracker.recordShot(participant.id, {
         hit: false,
         damage: 0,
         isKill: false,
@@ -955,7 +1113,7 @@ export class M2BattleSession<
     if (isKill) {
       enemy.agent.markDead();
     }
-    this.scoreTracker.recordShot(this.player.id, {
+    this.scoreTracker.recordShot(participant.id, {
       hit: true,
       damage: hpBeforeDamage - enemy.hp,
       isKill,
@@ -985,7 +1143,7 @@ export class M2BattleSession<
               type: SERVER_MESSAGE_TYPES.enemyDied,
               payload: {
                 enemyId: enemy.agent.id,
-                killerId: this.player.id,
+                killerId: participant.id,
                 killerIsBot: false,
               },
             },
@@ -999,33 +1157,39 @@ export class M2BattleSession<
     serverTimeMs: number,
     matchProgress?: MatchProgressState,
   ): WorldSnapshotMessage {
-    const playerSeat = this.getSeatByOccupantId(this.player.id);
-    const mountedMachineGun =
-      this.machineGunController.getMounted(this.player.id);
+    // PRD 8.2：真人与 AI 队友统一放进 allies[]，用 isBot 区分，
+    // 客户端渲染代码单人/联机完全复用。
     const allies: AllyState[] = [
-      {
-        id: this.player.id,
-        isBot: false,
-        seatIndex: playerSeat.index,
-        heroName: playerSeat.heroName,
-        routeId: findNearestRoute(
-          this.player.position,
-          this.config.routes,
-        ),
-        hp: this.player.hp,
-        maxHp: this.player.maxHp,
-        position: this.player.position,
-        aimYaw: this.player.aimYaw,
-        aimPitch: this.player.aimPitch,
-        isCrouch: this.player.isCrouch,
-        availableWeaponIds: this.player.weapons.availableWeaponIds,
-        grenadesRemaining: this.player.grenadesRemaining,
-        medkitsRemaining: this.player.medkitsRemaining,
-        ...(mountedMachineGun === undefined
-          ? {}
-          : { mountedMgId: mountedMachineGun.id }),
-        weapon: this.getPlayerWeaponState(),
-      },
+      ...[...this.players.values()]
+        .sort((first, second) => first.seatIndex - second.seatIndex)
+        .map((participant) => {
+          const seat = this.getSeatByOccupantId(participant.id);
+          const mountedMachineGun =
+            this.machineGunController.getMounted(participant.id);
+          return {
+            id: participant.id,
+            isBot: false,
+            seatIndex: seat.index,
+            heroName: seat.heroName,
+            routeId: findNearestRoute(
+              participant.position,
+              this.config.routes,
+            ),
+            hp: participant.hp,
+            maxHp: participant.maxHp,
+            position: participant.position,
+            aimYaw: participant.aimYaw,
+            aimPitch: participant.aimPitch,
+            isCrouch: participant.isCrouch,
+            availableWeaponIds: participant.weapons.availableWeaponIds,
+            grenadesRemaining: participant.grenadesRemaining,
+            medkitsRemaining: participant.medkitsRemaining,
+            ...(mountedMachineGun === undefined
+              ? {}
+              : { mountedMgId: mountedMachineGun.id }),
+            weapon: this.getPlayerWeaponState(participant),
+          };
+        }),
       ...this.allies.map((ally) => {
         const seat = this.getSeatByOccupantId(ally.id);
         return {
@@ -1089,15 +1253,19 @@ export class M2BattleSession<
     const seats = this.room.seats
       .map((seat) => {
         if (!seat.occupant.isBot) {
+          const participant = this.players.get(seat.occupant.id);
+          if (!participant) {
+            throw new Error(`席位 ${seat.index} 缺少真人参战者`);
+          }
           return {
             seatIndex: seat.index,
             heroName: seat.heroName,
             occupantId: seat.occupant.id,
-            displayName: this.player.name,
+            displayName: participant.name,
             isBot: false,
-            alive: this.player.hp > 0,
+            alive: participant.hp > 0,
             routeId: findNearestRoute(
-              this.player.position,
+              participant.position,
               this.config.routes,
             ),
           };
@@ -1284,32 +1452,34 @@ export class M2BattleSession<
       targetPosition,
     );
 
-    if (shot.targetId === this.player.id) {
-      if (this.player.hp === 0) {
+    // 命中真人：按 targetId 找到具体是哪一名，而不是假定只有一个玩家。
+    const targetParticipant = this.players.get(shot.targetId);
+    if (targetParticipant) {
+      if (targetParticipant.hp === 0) {
         return [];
       }
-      const hpBeforeDamage = this.player.hp;
-      this.player.hp = Math.max(0, this.player.hp - damage);
+      const hpBeforeDamage = targetParticipant.hp;
+      targetParticipant.hp = Math.max(0, targetParticipant.hp - damage);
       this.scoreTracker.recordDamageTaken(
-        this.player.id,
-        hpBeforeDamage - this.player.hp,
+        targetParticipant.id,
+        hpBeforeDamage - targetParticipant.hp,
       );
-      if (this.player.hp === 0) {
-        this.scoreTracker.markDead(this.player.id, this.elapsedSec);
-        this.machineGunController.unmount(this.player.id);
+      if (targetParticipant.hp === 0) {
+        this.scoreTracker.markDead(targetParticipant.id, this.elapsedSec);
+        this.machineGunController.unmount(targetParticipant.id);
       }
       return [
         {
           type: 'ally_damaged',
-          allyId: this.player.id,
-          hp: this.player.hp,
+          allyId: targetParticipant.id,
+          hp: targetParticipant.hp,
           fromDir,
         },
-        ...(this.player.hp === 0
+        ...(targetParticipant.hp === 0
           ? [
               {
                 type: 'ally_died' as const,
-                allyId: this.player.id,
+                allyId: targetParticipant.id,
                 isBot: false,
                 killerType: shot.enemyType,
               },
@@ -1395,7 +1565,7 @@ export class M2BattleSession<
         enemy.hp = Math.max(0, enemy.hp - hit.damage);
         const isKill = enemy.hp === 0;
         this.scoreTracker.recordDamage(
-          this.player.id,
+          grenade.thrownBy,
           hpBeforeDamage - enemy.hp,
           isKill,
           false,
@@ -1408,7 +1578,7 @@ export class M2BattleSession<
         events.push({
           type: 'enemy_died',
           enemyId: enemy.agent.id,
-          killerId: this.player.id,
+          killerId: grenade.thrownBy,
           killerIsBot: false,
         });
       }
@@ -1416,23 +1586,34 @@ export class M2BattleSession<
     return events;
   }
 
+  /** 逐帧推进全部真人的武器冷却与位移。 */
   private updatePlayer(deltaSec: number, nowMs: number): void {
-    this.player.weapons.update(nowMs);
-    if (this.player.hp === 0) {
+    for (const participant of this.players.values()) {
+      this.updateParticipant(participant, deltaSec, nowMs);
+    }
+  }
+
+  private updateParticipant(
+    participant: MutablePlayer,
+    deltaSec: number,
+    nowMs: number,
+  ): void {
+    participant.weapons.update(nowMs);
+    if (participant.hp === 0) {
       return;
     }
     if (
       this.machineGunController.locksMovement &&
-      this.machineGunController.getMounted(this.player.id)
+      this.machineGunController.getMounted(participant.id)
     ) {
-      this.player.moveDirX = 0;
-      this.player.moveDirY = 0;
-      this.player.isCrouch = false;
+      participant.moveDirX = 0;
+      participant.moveDirY = 0;
+      participant.isCrouch = false;
       return;
     }
 
-    const yawRad = (this.player.aimYaw * Math.PI) / 180;
-    const speed = this.player.isCrouch
+    const yawRad = (participant.aimYaw * Math.PI) / 180;
+    const speed = participant.isCrouch
       ? this.config.player.crouchSpeed
       : this.config.player.moveSpeed;
     const rightX = Math.cos(yawRad);
@@ -1442,21 +1623,21 @@ export class M2BattleSession<
     const halfWidth = this.config.arena.widthM / 2;
     const halfDepth = this.config.arena.depthM / 2;
 
-    this.player.position = {
+    participant.position = {
       x: clamp(
-        this.player.position.x +
-          (rightX * this.player.moveDirX +
-            forwardX * this.player.moveDirY) *
+        participant.position.x +
+          (rightX * participant.moveDirX +
+            forwardX * participant.moveDirY) *
             speed *
             deltaSec,
         -halfWidth,
         halfWidth,
       ),
-      y: this.player.position.y,
+      y: participant.position.y,
       z: clamp(
-        this.player.position.z +
-          (rightZ * this.player.moveDirX +
-            forwardZ * this.player.moveDirY) *
+        participant.position.z +
+          (rightZ * participant.moveDirX +
+            forwardZ * participant.moveDirY) *
             speed *
             deltaSec,
         -halfDepth,
@@ -1468,11 +1649,13 @@ export class M2BattleSession<
   private rejectFire(
     message: FireMessage,
     rejectReason: FireRejectReason,
-    ammoState: Pick<
-      WeaponState,
-      'magazineAmmo' | 'reserveAmmo'
-    > = this.getFireAmmoState(message.payload.weaponId),
+    ammoState?: Pick<WeaponState, 'magazineAmmo' | 'reserveAmmo'>,
+    participant: MutablePlayer = this.player,
   ): M2FireResolution {
+    ammoState ??= this.getFireAmmoState(
+      message.payload.weaponId,
+      participant,
+    );
     return {
       result: {
         type: SERVER_MESSAGE_TYPES.fireResult,
@@ -1511,19 +1694,27 @@ export class M2BattleSession<
     };
   }
 
-  private getFriendlyTargets() {
-    return [
-      {
-        id: this.player.id,
-        position: this.player.position,
-        alive: this.player.hp > 0,
-      },
-      ...this.allies.map((ally) => ({
+  /**
+   * 日军可攻击的目标 = 全部真人 + 全部 AI 队友。
+   * 复用同一个数组缓冲，避免 20Hz 主循环每 tick 重新分配（AGENTS.md 性能红线）。
+   */
+  private getFriendlyTargets(): readonly FriendlyTarget[] {
+    this.friendlyTargetBuffer.length = 0;
+    for (const participant of this.players.values()) {
+      this.friendlyTargetBuffer.push({
+        id: participant.id,
+        position: participant.position,
+        alive: participant.hp > 0,
+      });
+    }
+    for (const ally of this.allies) {
+      this.friendlyTargetBuffer.push({
         id: ally.id,
         position: ally.position,
         alive: ally.isAlive,
-      })),
-    ];
+      });
+    }
+    return this.friendlyTargetBuffer;
   }
 
   private getEnemyTargets() {
@@ -1624,8 +1815,9 @@ export class M2BattleSession<
   }
 
   private getFriendlyPosition(allyId: string): Vector3 | undefined {
-    if (allyId === this.player.id) {
-      return this.player.hp > 0 ? this.player.position : undefined;
+    const participant = this.players.get(allyId);
+    if (participant) {
+      return participant.hp > 0 ? participant.position : undefined;
     }
     const ally = this.allies.find(
       (candidate) => candidate.id === allyId && candidate.isAlive,
@@ -1636,16 +1828,17 @@ export class M2BattleSession<
   private getFriendlyExposure(allyId: string): number | undefined {
     const coverExposure =
       this.config.defenderCoverExposureMultiplier;
-    if (allyId === this.player.id) {
-      if (this.player.hp === 0) {
+    const participant = this.players.get(allyId);
+    if (participant) {
+      if (participant.hp === 0) {
         return undefined;
       }
-      if (this.machineGunController.getMounted(this.player.id)) {
+      if (this.machineGunController.getMounted(participant.id)) {
         return (
           coverExposure * this.machineGunController.hitboxMultiplier
         );
       }
-      return this.player.isCrouch
+      return participant.isCrouch
         ? coverExposure *
             this.config.player.crouchHitboxMultiplier
         : coverExposure;
@@ -1668,11 +1861,10 @@ export class M2BattleSession<
     );
   }
 
-  private getAmmoState(): Pick<
-    WeaponState,
-    'magazineAmmo' | 'reserveAmmo'
-  > {
-    const state = this.player.weapons.currentState;
+  private getAmmoState(
+    participant: MutablePlayer = this.player,
+  ): Pick<WeaponState, 'magazineAmmo' | 'reserveAmmo'> {
+    const state = participant.weapons.currentState;
     return {
       magazineAmmo: state.magazineAmmo,
       reserveAmmo: state.reserveAmmo,
@@ -1681,19 +1873,22 @@ export class M2BattleSession<
 
   private getFireAmmoState(
     weaponId: string,
+    participant: MutablePlayer = this.player,
   ): Pick<WeaponState, 'magazineAmmo' | 'reserveAmmo'> {
-    const mounted = this.machineGunController.getMounted(this.player.id);
+    const mounted = this.machineGunController.getMounted(participant.id);
     if (mounted && weaponId === mounted.weaponId) {
       return {
         magazineAmmo: mounted.beltAmmo,
         reserveAmmo: 0,
       };
     }
-    return this.getAmmoState();
+    return this.getAmmoState(participant);
   }
 
-  private getPlayerWeaponState(): WeaponState {
-    return this.player.weapons.toProtocolState();
+  private getPlayerWeaponState(
+    participant: MutablePlayer = this.player,
+  ): WeaponState {
+    return participant.weapons.toProtocolState();
   }
 
   private getAllyWeaponState(ally: AllyAgent<TRouteId>): WeaponState {
