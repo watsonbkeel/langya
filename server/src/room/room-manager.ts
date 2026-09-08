@@ -35,6 +35,16 @@ export class RoomManager<TRouteId extends RouteId> {
     return this.rooms.get(roomCode.toUpperCase());
   }
 
+  findByReconnectToken(
+    reconnectToken: string,
+  ): MultiplayerRoom<TRouteId> | undefined {
+    return this.listActive().find((room) =>
+      room.seats.some(
+        (seat) => seat.occupant?.reconnectToken === reconnectToken,
+      ),
+    );
+  }
+
   delete(roomCode: string): boolean {
     return this.rooms.delete(roomCode.toUpperCase());
   }

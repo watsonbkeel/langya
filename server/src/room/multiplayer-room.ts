@@ -1,6 +1,11 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 
-import type { RouteId, RoomStatus } from '../../../shared/protocol';
+import {
+  SERVER_MESSAGE_TYPES,
+  type RoomStateMessage,
+  type RouteId,
+  type RoomStatus,
+} from '../../../shared/protocol';
 
 export interface MultiplayerRoomConfig<TRouteId extends RouteId> {
   readonly seatCount: number;
@@ -53,7 +58,7 @@ export interface MultiplayerRoomOptions<TRouteId extends RouteId> {
  */
 export class MultiplayerRoom<TRouteId extends RouteId> {
   readonly id: string;
-  readonly hostId: string;
+  hostId: string;
   readonly seats: readonly MultiplayerSeat<TRouteId>[];
 
   private currentStatus: RoomStatus = 'forming';
@@ -113,6 +118,9 @@ export class MultiplayerRoom<TRouteId extends RouteId> {
       id: playerId,
       connected: true,
     };
+    if (seat.index === 0) {
+      this.hostId = playerId;
+    }
     return {
       accepted: true,
       seatIndex: seat.index,
@@ -157,6 +165,25 @@ export class MultiplayerRoom<TRouteId extends RouteId> {
 
   markEnded(): void {
     this.currentStatus = 'ended';
+  }
+
+  toRoomState(): RoomStateMessage {
+    return {
+      type: SERVER_MESSAGE_TYPES.roomState,
+      payload: {
+        roomId: this.id,
+        status: this.currentStatus,
+        seats: this.seats.map((seat) => ({
+          seatIndex: seat.index,
+          heroName: seat.heroName,
+          occupantId: seat.occupant?.id ?? seat.botId,
+          displayName: seat.occupant?.displayName ?? seat.heroName,
+          isBot: seat.occupant === null,
+          alive: true,
+          routeId: seat.routeId,
+        })),
+      },
+    };
   }
 
   findSeat(playerId: string): MultiplayerSeat<TRouteId> | undefined {

@@ -18,6 +18,8 @@ import {
   type MatchProgressState,
   type MatchStartMessage,
   type PongMessage,
+  type RoomAction,
+  type RoomActionResultMessage,
   type ServerMessage,
   type SnapshotMessage,
   type SupplyDropMessage,
@@ -53,6 +55,8 @@ import {
   WebSocketSendMonitor,
 } from './websocket-observability';
 import type { WaveScheduler } from '../wave/wave-scheduler';
+import { RoomManager } from '../room/room-manager';
+import type { MultiplayerRoom } from '../room/multiplayer-room';
 
 interface ClientSession {
   readonly id: string;
@@ -68,6 +72,8 @@ interface ClientSession {
   heartbeatAlive: boolean;
   lastInboundAtMs?: number;
   lastInboundMessageType?: string;
+  roomCode?: string;
+  reconnectToken?: string;
 }
 
 export class GameWebSocketServer {
@@ -76,6 +82,7 @@ export class GameWebSocketServer {
   private readonly reportRepository: MatchReportRepository;
   private readonly clients = new Map<WebSocket, ClientSession>();
   private readonly sendMonitor: WebSocketSendMonitor;
+  private readonly roomManager: RoomManager<M2RouteId>;
   private heartbeatInterval: ReturnType<typeof setInterval> | undefined;
   private snapshotSequence = 0;
 
@@ -90,6 +97,13 @@ export class GameWebSocketServer {
       runtimeConfig.wsBackpressureWarnBytes,
       runtimeConfig.wsBackpressureLogIntervalMs,
     );
+    this.roomManager = new RoomManager({
+      seatCount: projectConfig.allies.seatCount,
+      heroNames: projectConfig.allies.heroNames,
+      playerDefaultSeat: projectConfig.allies.playerDefaultSeat,
+      playerRoute: this.findPrimaryRoute(),
+      defaultAssignment: projectConfig.allies.deployment.defaultAssignment,
+    });
     this.httpServer = createServer((request, response) => {
       if (request.url === '/healthz') {
         response.writeHead(200, { 'content-type': 'application/json' });
@@ -194,6 +208,28 @@ export class GameWebSocketServer {
       session.lastInboundMessageType = message.type;
 
       switch (message.type) {
+        case CLIENT_MESSAGE_TYPES.createRoom:
+          this.handleCreateRoom(session, message.payload.playerName);
+          return;
+        case CLIENT_MESSAGE_TYPES.joinRoom:
+          this.handleJoinRoom(
+            session,
+            message.payload.roomCode,
+            message.payload.playerName,
+          );
+          return;
+        case CLIENT_MESSAGE_TYPES.quickMatch:
+          this.handleQuickMatch(session, message.payload.playerName);
+          return;
+        case CLIENT_MESSAGE_TYPES.playerReady:
+          this.handlePlayerReady(session);
+          return;
+        case CLIENT_MESSAGE_TYPES.startMatch:
+          this.handleStartMatch(session);
+          return;
+        case CLIENT_MESSAGE_TYPES.reconnect:
+          this.handleReconnect(session, message.payload.reconnectToken);
+          return;
         case CLIENT_MESSAGE_TYPES.join:
           if (session.joined) {
             socket.close(1008, '不能重复加入房间');
@@ -431,6 +467,13 @@ export class GameWebSocketServer {
         reason: decodeCloseReason(reason),
       });
       session.loop?.stop();
+      if (session.roomCode) {
+        const room = this.roomManager.get(session.roomCode);
+        if (room) {
+          room.markDisconnected(session.id);
+          this.broadcastRoomState(room);
+        }
+      }
       this.clients.delete(socket);
       this.broadcastSnapshots();
     });
@@ -440,6 +483,234 @@ export class GameWebSocketServer {
         ...describeWebSocketError(error),
       });
     });
+  }
+
+  private handleCreateRoom(session: ClientSession, playerName: string): void {
+    if (session.joined || session.roomCode) {
+      this.sendRoomActionResult(session, 'create_room', false, 'invalid_state');
+      return;
+    }
+    session.playerName = playerName.trim();
+    const room = this.roomManager.create(session.id, session.playerName);
+    this.attachRoomSession(session, room);
+    this.sendRoomActionResult(
+      session,
+      'create_room',
+      true,
+      undefined,
+      room.id,
+      session.reconnectToken,
+    );
+    this.broadcastRoomState(room);
+  }
+
+  private handleJoinRoom(
+    session: ClientSession,
+    roomCode: string,
+    playerName: string,
+  ): void {
+    if (session.joined || session.roomCode) {
+      this.sendRoomActionResult(session, 'join_room', false, 'invalid_state');
+      return;
+    }
+    const room = this.roomManager.get(roomCode);
+    if (!room) {
+      this.sendRoomActionResult(session, 'join_room', false, 'invalid_room');
+      return;
+    }
+    const result = room.createHuman(session.id, playerName.trim());
+    if (!result.accepted) {
+      this.sendRoomActionResult(
+        session,
+        'join_room',
+        false,
+        result.reason === 'room_full' ? 'room_full' : result.reason,
+      );
+      return;
+    }
+    session.playerName = playerName.trim();
+    this.attachRoomSession(session, room);
+    this.sendRoomActionResult(
+      session,
+      'join_room',
+      true,
+      undefined,
+      room.id,
+      result.reconnectToken,
+    );
+    this.broadcastRoomState(room);
+  }
+
+  private handleQuickMatch(
+    session: ClientSession,
+    playerName: string,
+  ): void {
+    if (session.joined || session.roomCode) {
+      this.sendRoomActionResult(session, 'quick_match', false, 'invalid_state');
+      return;
+    }
+    const room = this.roomManager
+      .listActive()
+      .find((candidate) =>
+        candidate.status === 'forming' &&
+        candidate.seats.some((seat) => seat.occupant === null),
+      ) ?? this.roomManager.create(session.id, playerName.trim());
+    if (room.hostId !== session.id) {
+      const result = room.createHuman(session.id, playerName.trim());
+      if (!result.accepted) {
+        this.sendRoomActionResult(
+          session,
+          'quick_match',
+          false,
+          result.reason === 'room_full' ? 'room_full' : result.reason,
+        );
+        return;
+      }
+      if (result.reconnectToken !== undefined) {
+        session.reconnectToken = result.reconnectToken;
+      }
+    }
+    session.playerName = playerName.trim();
+    this.attachRoomSession(session, room);
+    this.sendRoomActionResult(
+      session,
+      'quick_match',
+      true,
+      undefined,
+      room.id,
+      session.reconnectToken,
+    );
+    this.broadcastRoomState(room);
+  }
+
+  private handlePlayerReady(session: ClientSession): void {
+    const room = this.getSessionRoom(session);
+    if (!room) {
+      this.sendRoomActionResult(session, 'player_ready', false, 'invalid_state');
+      return;
+    }
+    const result = room.setReady(session.id, true);
+    this.sendRoomActionResult(
+      session,
+      'player_ready',
+      result.accepted,
+      result.reason === 'already_started' ? 'already_started' : result.reason,
+    );
+    this.broadcastRoomState(room);
+  }
+
+  private handleStartMatch(session: ClientSession): void {
+    const room = this.getSessionRoom(session);
+    if (!room) {
+      this.sendRoomActionResult(session, 'start_match', false, 'invalid_state');
+      return;
+    }
+    const result = room.start(session.id);
+    this.sendRoomActionResult(
+      session,
+      'start_match',
+      result.accepted,
+      result.reason === 'not_host' ? 'not_host' : result.reason,
+    );
+    if (result.accepted) {
+      this.broadcastRoomState(room);
+    }
+  }
+
+  private handleReconnect(
+    session: ClientSession,
+    reconnectToken: string,
+  ): void {
+    if (session.joined || session.roomCode) {
+      this.sendRoomActionResult(session, 'reconnect', false, 'invalid_state');
+      return;
+    }
+    const room = this.roomManager.findByReconnectToken(reconnectToken);
+    if (!room) {
+      this.sendRoomActionResult(session, 'reconnect', false, 'invalid_token');
+      return;
+    }
+    const result = room.reconnect(session.id, reconnectToken);
+    if (!result.accepted) {
+      this.sendRoomActionResult(session, 'reconnect', false, 'invalid_token');
+      return;
+    }
+    const reconnectedOccupant = room.findSeat(session.id)?.occupant;
+    if (reconnectedOccupant) {
+      session.playerName = reconnectedOccupant.displayName;
+    }
+    if (result.reconnectToken !== undefined) {
+      session.reconnectToken = result.reconnectToken;
+    }
+    this.attachRoomSession(session, room);
+    this.sendRoomActionResult(
+      session,
+      'reconnect',
+      true,
+      undefined,
+      room.id,
+      result.reconnectToken,
+    );
+    this.broadcastRoomState(room);
+  }
+
+  private attachRoomSession(
+    session: ClientSession,
+    room: MultiplayerRoom<M2RouteId>,
+  ): void {
+    session.roomCode = room.id;
+    const reconnectToken = room.findSeat(session.id)?.occupant?.reconnectToken;
+    if (reconnectToken !== undefined) {
+      session.reconnectToken = reconnectToken;
+    }
+  }
+
+  private getSessionRoom(
+    session: ClientSession,
+  ): MultiplayerRoom<M2RouteId> | undefined {
+    return session.roomCode
+      ? this.roomManager.get(session.roomCode)
+      : undefined;
+  }
+
+  private broadcastRoomState(room: MultiplayerRoom<M2RouteId>): void {
+    const message = room.toRoomState();
+    for (const client of this.clients.values()) {
+      if (client.roomCode === room.id) {
+        this.send(client.socket, message);
+      }
+    }
+  }
+
+  private sendRoomActionResult(
+    session: ClientSession,
+    action: RoomAction,
+    accepted: boolean,
+    rejectReason?: RoomActionResultMessage['payload']['rejectReason'],
+    roomCode?: string,
+    reconnectToken?: string,
+  ): void {
+    const payload: RoomActionResultMessage['payload'] = accepted
+      ? {
+          action,
+          accepted: true,
+          ...(roomCode === undefined ? {} : { roomCode }),
+          ...(reconnectToken === undefined ? {} : { reconnectToken }),
+        }
+      : {
+          action,
+          accepted: false,
+          rejectReason: rejectReason ?? 'invalid_state',
+        };
+    this.send(session.socket, {
+      type: SERVER_MESSAGE_TYPES.roomActionResult,
+      payload,
+    });
+  }
+
+  private findPrimaryRoute(): M2RouteId {
+    const routeIds = Object.keys(this.projectConfig.waves.routes) as M2RouteId[];
+    return routeIds[0] ?? 'A';
   }
 
   private startHeartbeat(): void {

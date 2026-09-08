@@ -70,10 +70,21 @@ desktop.ini
 coverage/
 stats.json
 simulate-*.json
+output/
+.playwright-cli/
+playwright-report/
+test-results/
+
+# ===== 文档备份副本（本地临时，不入库）=====
+*.bak
+*.bak-*
 
 # ===== 工具本地状态 =====
 .workbuddy/
 .codex/
+
+# ===== 误建的重复 Cocos 工程（正式工程是 client/，此目录待确认删除）=====
+langya/
 
 # ===== 保留（防止被上面规则误伤）=====
 !shared/config/
