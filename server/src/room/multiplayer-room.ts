@@ -16,7 +16,14 @@ export interface MultiplayerRoomConfig<TRouteId extends RouteId> {
 }
 
 export interface HumanOccupant {
+  /**
+   * 稳定的战斗身份，开局后不再变化。
+   * 断线重连会换一条 WebSocket 连接，但席位上的人还是同一个，
+   * 所以战斗会话里的 playerId 必须用这个，不能用连接 id。
+   */
   readonly id: string;
+  /** 当前占用这个席位的 WebSocket 连接 id，重连后会换。 */
+  connectionId: string;
   readonly displayName: string;
   readonly reconnectToken: string;
   connected: boolean;
@@ -90,7 +97,8 @@ export class MultiplayerRoom<TRouteId extends RouteId> {
     }
     const reconnectToken = createReconnectToken();
     seat.occupant = {
-      id: playerId,
+      id: createPlayerId(),
+      connectionId: playerId,
       displayName: playerName,
       reconnectToken,
       connected: true,
@@ -113,9 +121,10 @@ export class MultiplayerRoom<TRouteId extends RouteId> {
     if (!seat || !seat.occupant) {
       return { accepted: false, reason: 'invalid_token' };
     }
+    // 只换连接 id，保留稳定的战斗身份，这样重连后能接回原席位的血量、弹药和战绩。
     seat.occupant = {
       ...seat.occupant,
-      id: playerId,
+      connectionId: playerId,
       connected: true,
     };
     if (seat.index === 0) {
@@ -176,6 +185,7 @@ export class MultiplayerRoom<TRouteId extends RouteId> {
         seats: this.seats.map((seat) => ({
           seatIndex: seat.index,
           heroName: seat.heroName,
+          // 用稳定战斗身份，保证与战斗快照 allies[] 的 allyId 对得上。
           occupantId: seat.occupant?.id ?? seat.botId,
           displayName: seat.occupant?.displayName ?? seat.heroName,
           isBot: seat.occupant === null,
@@ -186,12 +196,46 @@ export class MultiplayerRoom<TRouteId extends RouteId> {
     };
   }
 
-  findSeat(playerId: string): MultiplayerSeat<TRouteId> | undefined {
+  /** 按当前 WebSocket 连接 id 查席位。 */
+  findSeat(connectionId: string): MultiplayerSeat<TRouteId> | undefined {
+    return this.seats.find(
+      (seat) => seat.occupant?.connectionId === connectionId,
+    );
+  }
+
+  /** 按稳定战斗身份查席位，用于把战斗事件对回到席位。 */
+  findSeatByPlayerId(
+    playerId: string,
+  ): MultiplayerSeat<TRouteId> | undefined {
     return this.seats.find((seat) => seat.occupant?.id === playerId);
   }
 
-  private findHuman(playerId: string): HumanOccupant | undefined {
-    return this.findSeat(playerId)?.occupant ?? undefined;
+  /** 开局时的真人席位表，直接交给战斗会话。 */
+  listHumanSeats(): readonly {
+    readonly seatIndex: number;
+    readonly playerId: string;
+    readonly playerName: string;
+  }[] {
+    const humans: {
+      seatIndex: number;
+      playerId: string;
+      playerName: string;
+    }[] = [];
+    for (const seat of this.seats) {
+      if (!seat.occupant) {
+        continue;
+      }
+      humans.push({
+        seatIndex: seat.index,
+        playerId: seat.occupant.id,
+        playerName: seat.occupant.displayName,
+      });
+    }
+    return humans;
+  }
+
+  private findHuman(connectionId: string): HumanOccupant | undefined {
+    return this.findSeat(connectionId)?.occupant ?? undefined;
   }
 }
 
@@ -218,7 +262,8 @@ function createSeats<TRouteId extends RouteId>(
       routeId,
       occupant: isHostSeat
         ? {
-            id: options.hostId,
+            id: createPlayerId(),
+            connectionId: options.hostId,
             displayName: options.hostName,
             reconnectToken: createReconnectToken(),
             connected: true,
@@ -232,6 +277,11 @@ function createSeats<TRouteId extends RouteId>(
 
 function createReconnectToken(): string {
   return `${randomUUID()}${randomBytes(8).toString('hex')}`;
+}
+
+/** 席位上的稳定战斗身份，与 WebSocket 连接 id 无关。 */
+function createPlayerId(): string {
+  return `human:${randomUUID()}`;
 }
 
 function validateConfig<TRouteId extends RouteId>(

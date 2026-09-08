@@ -81,6 +81,9 @@ describe('MultiplayerRoom', () => {
     assert.equal(room.markDisconnected('player-2'), true);
     assert.equal(room.findSeat('player-2')?.occupant?.connected, false);
 
+    const battlePlayerId = room.findSeat('player-2')?.occupant?.id;
+    assert.ok(battlePlayerId);
+
     const reconnect = room.reconnect('player-2-new-connection', token);
     assert.equal(reconnect.accepted, true);
     assert.equal(
@@ -88,5 +91,34 @@ describe('MultiplayerRoom', () => {
       true,
     );
     assert.equal(room.seats[1]?.occupant?.displayName, '玩家二');
+    // 重连换的是连接 id，战斗身份必须保持不变，才能接回原席位的血量与战绩。
+    assert.equal(room.seats[1]?.occupant?.id, battlePlayerId);
+    assert.equal(
+      room.findSeatByPlayerId(battlePlayerId)?.index,
+      1,
+    );
+  });
+
+  it('列出真人席位表供战斗会话开局使用', () => {
+    const room = new MultiplayerRoom({
+      roomCode: 'AB12',
+      hostId: 'player-1',
+      hostName: '玩家一',
+      config,
+    });
+    room.createHuman('player-2', '玩家二');
+
+    const humans = room.listHumanSeats();
+    assert.equal(humans.length, 2);
+    assert.deepEqual(
+      humans.map((human) => human.seatIndex),
+      [0, 1],
+    );
+    assert.deepEqual(
+      humans.map((human) => human.playerName),
+      ['玩家一', '玩家二'],
+    );
+    // 战斗身份不能等于连接 id
+    assert.notEqual(humans[0]?.playerId, 'player-1');
   });
 });

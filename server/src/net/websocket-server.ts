@@ -15,35 +15,26 @@ import {
   type EnemyDiedMessage,
   type FireMessage,
   type MatchEndMessage,
-  type MatchProgressState,
-  type MatchStartMessage,
   type PongMessage,
   type RoomAction,
   type RoomActionResultMessage,
   type ServerMessage,
   type SnapshotMessage,
   type SupplyDropMessage,
-  type WaveStartMessage,
 } from '../../../shared/protocol';
 import type { ProjectConfig } from '../config/project-config';
 import type { RuntimeConfig } from '../config/runtime-config';
 import { MatchReportRepository } from '../db/match-report-repository';
-import { GameLoop } from '../game/game-loop';
-import {
-  determineMatchEnd,
-  type MatchEndState,
-} from '../game/match-lifecycle';
 import { findPlayerWeaponConfig } from '../game/m1-battle-factory';
-import {
-  createM3BattleRuntime,
-  type M2EnemyType,
-  type M2RouteId,
-} from '../game/m2-battle-factory';
+import type { M2RouteId } from '../game/m2-battle-factory';
 import {
   type M2BattleEvent,
-  type M2BattleSession,
   type M2FireResolution,
 } from '../game/m2-battle-session';
+import {
+  RoomBattleRuntime,
+  type RoomBattleEndInfo,
+} from '../game/room-battle-runtime';
 import { ClientTickTracker } from './client-tick-tracker';
 import { parseClientMessage } from './message-parser';
 import {
@@ -54,19 +45,16 @@ import {
   type WebSocketLogDetails,
   WebSocketSendMonitor,
 } from './websocket-observability';
-import type { WaveScheduler } from '../wave/wave-scheduler';
 import { RoomManager } from '../room/room-manager';
 import type { MultiplayerRoom } from '../room/multiplayer-room';
 
 interface ClientSession {
+  /** WebSocket 连接 id，重连后会变。 */
   readonly id: string;
   readonly socket: WebSocket;
   readonly tickTracker: ClientTickTracker;
-  battle?: M2BattleSession<M2RouteId, M2EnemyType>;
-  waveScheduler?: WaveScheduler<M2EnemyType, M2RouteId>;
-  matchStartedAtMs?: number;
-  matchEnded: boolean;
-  loop: GameLoop | undefined;
+  /** 稳定的战斗身份，重连后不变，用于向战斗会话报动作。 */
+  playerId?: string;
   playerName?: string;
   joined: boolean;
   heartbeatAlive: boolean;
@@ -83,6 +71,8 @@ export class GameWebSocketServer {
   private readonly clients = new Map<WebSocket, ClientSession>();
   private readonly sendMonitor: WebSocketSendMonitor;
   private readonly roomManager: RoomManager<M2RouteId>;
+  /** 房间码 -> 房间级战斗运行时。一个房间只有一份战斗。 */
+  private readonly battles = new Map<string, RoomBattleRuntime>();
   private heartbeatInterval: ReturnType<typeof setInterval> | undefined;
   private snapshotSequence = 0;
 
@@ -154,8 +144,11 @@ export class GameWebSocketServer {
 
   stop(): Promise<void> {
     this.stopHeartbeat();
+    for (const battle of this.battles.values()) {
+      battle.stop();
+    }
+    this.battles.clear();
     for (const client of this.clients.values()) {
-      client.loop?.stop();
       client.socket.close(1001, '服务器正在停止');
     }
 
@@ -178,8 +171,6 @@ export class GameWebSocketServer {
       id,
       socket,
       tickTracker: new ClientTickTracker(),
-      matchEnded: false,
-      loop: undefined,
       joined: false,
       heartbeatAlive: true,
     };
@@ -235,21 +226,9 @@ export class GameWebSocketServer {
             socket.close(1008, '不能重复加入房间');
             return;
           }
-          session.playerName = message.payload.playerName.trim();
-          this.startBattle(session);
-          session.joined = true;
-          session.loop?.start();
-          this.broadcastSnapshots();
-          this.send(session.socket, session.battle!.createRoomState());
-          this.sendMatchStart(session);
-          this.send(
-            session.socket,
-            session.battle!.createSnapshot(
-              session.loop?.currentTick ?? 0,
-              Date.now(),
-              this.createMatchProgress(session, Date.now()),
-            ),
-          );
+          // 快捷单人入口：自建一个只有自己的房间并立即开局。
+          // 铁律 3：单人也走服务器房间，只是其他席位全是 AI。
+          this.startSoloMatch(session, message.payload.playerName.trim());
           return;
         case CLIENT_MESSAGE_TYPES.ping: {
           const response: PongMessage = {
@@ -262,23 +241,20 @@ export class GameWebSocketServer {
           this.send(socket, response);
           return;
         }
-        case CLIENT_MESSAGE_TYPES.inputState:
+        case CLIENT_MESSAGE_TYPES.inputState: {
+          const context = this.getBattleContext(session);
           if (
-            !session.joined ||
-            session.matchEnded ||
-            !session.battle ||
+            !context ||
             !this.acceptClientTick(session, message.payload.clientTick) ||
-            !session.battle.applyInput(message)
+            !context.runtime.battle.applyInput(message, context.playerId)
           ) {
             socket.close(1008, '输入状态无效');
           }
           return;
-        case CLIENT_MESSAGE_TYPES.fire:
-          if (
-            !session.joined ||
-            session.matchEnded ||
-            !session.battle
-          ) {
+        }
+        case CLIENT_MESSAGE_TYPES.fire: {
+          const context = this.getBattleContext(session);
+          if (!context) {
             this.sendFireResolution(
               session,
               this.rejectFireBeforeJoin(message),
@@ -291,171 +267,91 @@ export class GameWebSocketServer {
           }
           this.sendFireResolution(
             session,
-            session.battle.fire(message, Date.now()),
+            context.runtime.battle.fire(
+              message,
+              Date.now(),
+              context.playerId,
+            ),
           );
           return;
-        case CLIENT_MESSAGE_TYPES.reload:
-          if (
-            session.joined &&
-            !session.matchEnded &&
-            session.battle
-          ) {
-            session.battle.reload(message, Date.now());
+        }
+        case CLIENT_MESSAGE_TYPES.reload: {
+          const context = this.getBattleContext(session);
+          if (context) {
+            context.runtime.battle.reload(
+              message,
+              Date.now(),
+              context.playerId,
+            );
           }
           return;
+        }
         case CLIENT_MESSAGE_TYPES.useMedkit:
-          if (
-            !session.joined ||
-            session.matchEnded ||
-            !session.battle
-          ) {
-            this.sendActionResult(
-              session,
-              message.payload.clientTick,
-              'use_medkit',
-              'invalid_state',
-            );
-            return;
-          }
-          if (!this.acceptClientTick(session, message.payload.clientTick)) {
-            socket.close(1008, 'clientTick 必须严格递增');
-            return;
-          }
-          this.sendActionResult(
+          this.handlePlayerAction(
             session,
             message.payload.clientTick,
             'use_medkit',
-            session.battle.tryUsePlayerMedkit(),
+            (runtime, playerId) =>
+              runtime.battle.tryUsePlayerMedkit(playerId),
           );
           return;
         case CLIENT_MESSAGE_TYPES.switchWeapon:
-          if (
-            !session.joined ||
-            session.matchEnded ||
-            !session.battle
-          ) {
-            this.sendActionResult(
-              session,
-              message.payload.clientTick,
-              'switch_weapon',
-              'invalid_state',
-            );
-            return;
-          }
-          if (!this.acceptClientTick(session, message.payload.clientTick)) {
-            socket.close(1008, 'clientTick 必须严格递增');
-            return;
-          }
-          this.sendActionResult(
+          this.handlePlayerAction(
             session,
             message.payload.clientTick,
             'switch_weapon',
-            session.battle.switchPlayerWeapon(
-              message.payload.weaponId,
-            ),
+            (runtime, playerId) =>
+              runtime.battle.switchPlayerWeapon(
+                message.payload.weaponId,
+                playerId,
+              ),
           );
           return;
         case CLIENT_MESSAGE_TYPES.pickup:
-          if (
-            !session.joined ||
-            session.matchEnded ||
-            !session.battle
-          ) {
-            this.sendActionResult(
-              session,
-              message.payload.clientTick,
-              'pickup',
-              'invalid_state',
-            );
-            return;
-          }
-          if (!this.acceptClientTick(session, message.payload.clientTick)) {
-            socket.close(1008, 'clientTick 必须严格递增');
-            return;
-          }
-          this.sendActionResult(
+          this.handlePlayerAction(
             session,
             message.payload.clientTick,
             'pickup',
-            session.battle.pickupItem(
-              message.payload.itemId,
-              Date.now(),
-            ),
+            (runtime, playerId) =>
+              runtime.battle.pickupItem(
+                message.payload.itemId,
+                Date.now(),
+                playerId,
+              ),
           );
           return;
         case CLIENT_MESSAGE_TYPES.throwGrenade:
-          if (
-            !session.joined ||
-            session.matchEnded ||
-            !session.battle
-          ) {
-            this.sendActionResult(
-              session,
-              message.payload.clientTick,
-              'throw_grenade',
-              'invalid_state',
-            );
-            return;
-          }
-          if (!this.acceptClientTick(session, message.payload.clientTick)) {
-            socket.close(1008, 'clientTick 必须严格递增');
-            return;
-          }
-          this.sendActionResult(
+          this.handlePlayerAction(
             session,
             message.payload.clientTick,
             'throw_grenade',
-            session.battle.throwGrenade(message, Date.now()),
+            (runtime, playerId) =>
+              runtime.battle.throwGrenade(
+                message,
+                Date.now(),
+                playerId,
+              ),
           );
           return;
         case CLIENT_MESSAGE_TYPES.mountMg:
-          if (
-            !session.joined ||
-            session.matchEnded ||
-            !session.battle
-          ) {
-            this.sendActionResult(
-              session,
-              message.payload.clientTick,
-              'mount_mg',
-              'invalid_state',
-            );
-            return;
-          }
-          if (!this.acceptClientTick(session, message.payload.clientTick)) {
-            socket.close(1008, 'clientTick 必须严格递增');
-            return;
-          }
-          this.sendActionResult(
+          this.handlePlayerAction(
             session,
             message.payload.clientTick,
             'mount_mg',
-            session.battle.mountMachineGun(message.payload.mgId),
+            (runtime, playerId) =>
+              runtime.battle.mountMachineGun(
+                message.payload.mgId,
+                playerId,
+              ),
           );
           return;
         case CLIENT_MESSAGE_TYPES.unmountMg:
-          if (
-            !session.joined ||
-            session.matchEnded ||
-            !session.battle
-          ) {
-            this.sendActionResult(
-              session,
-              message.payload.clientTick,
-              'unmount_mg',
-              'invalid_state',
-            );
-            return;
-          }
-          if (!this.acceptClientTick(session, message.payload.clientTick)) {
-            socket.close(1008, 'clientTick 必须严格递增');
-            return;
-          }
-          this.sendActionResult(
+          this.handlePlayerAction(
             session,
             message.payload.clientTick,
             'unmount_mg',
-            session.battle.unmountMachineGun(),
+            (runtime, playerId) =>
+              runtime.battle.unmountMachineGun(playerId),
           );
           return;
       }
@@ -466,15 +362,16 @@ export class GameWebSocketServer {
         code,
         reason: decodeCloseReason(reason),
       });
-      session.loop?.stop();
+      this.clients.delete(socket);
       if (session.roomCode) {
         const room = this.roomManager.get(session.roomCode);
         if (room) {
           room.markDisconnected(session.id);
           this.broadcastRoomState(room);
         }
+        // 房间里没人在线了就停掉主循环，避免空房间白烧 CPU。
+        this.stopBattleIfRoomEmpty(session.roomCode);
       }
-      this.clients.delete(socket);
       this.broadcastSnapshots();
     });
 
@@ -612,9 +509,13 @@ export class GameWebSocketServer {
       result.accepted,
       result.reason === 'not_host' ? 'not_host' : result.reason,
     );
-    if (result.accepted) {
-      this.broadcastRoomState(room);
+    if (!result.accepted) {
+      return;
     }
+    // 开局时席位归属固定（PRD 11.2：v1.0 不允许中途加入），
+    // 以此为准创建房间唯一的一份战斗。
+    this.startRoomBattle(room);
+    this.broadcastRoomState(room);
   }
 
   private handleReconnect(
@@ -652,6 +553,33 @@ export class GameWebSocketServer {
       result.reconnectToken,
     );
     this.broadcastRoomState(room);
+    this.resumeBattleForSession(session, room);
+  }
+
+  /** 重连回一局进行中的战斗：补发开局播报、房间状态与当前快照。 */
+  private resumeBattleForSession(
+    session: ClientSession,
+    room: MultiplayerRoom<M2RouteId>,
+  ): void {
+    const runtime = this.battles.get(room.id);
+    if (!runtime || runtime.matchEnded) {
+      return;
+    }
+    session.joined = true;
+    // 重连是新的 WebSocket 连接，客户端 tick 会从头开始，
+    // 沿用旧的递增校验会把人挡在门外。
+    session.tickTracker.reset();
+    this.send(session.socket, runtime.createMatchStart());
+    this.send(session.socket, runtime.battle.createRoomState());
+    const nowMs = Date.now();
+    this.send(
+      session.socket,
+      runtime.battle.createSnapshot(
+        runtime.currentTick,
+        nowMs,
+        runtime.createMatchProgress(nowMs),
+      ),
+    );
   }
 
   private attachRoomSession(
@@ -659,10 +587,14 @@ export class GameWebSocketServer {
     room: MultiplayerRoom<M2RouteId>,
   ): void {
     session.roomCode = room.id;
-    const reconnectToken = room.findSeat(session.id)?.occupant?.reconnectToken;
-    if (reconnectToken !== undefined) {
-      session.reconnectToken = reconnectToken;
+    const occupant = room.findSeat(session.id)?.occupant;
+    if (!occupant) {
+      return;
     }
+    session.reconnectToken = occupant.reconnectToken;
+    // 记住稳定战斗身份：后续所有战斗动作都用它定位到席位，
+    // 重连换了连接 id 也能接回原来那个人。
+    session.playerId = occupant.id;
   }
 
   private getSessionRoom(
@@ -752,116 +684,162 @@ export class GameWebSocketServer {
     }
   }
 
-  private startBattle(session: ClientSession): void {
-    const startedAtMs = Date.now();
-    const runtime = createM3BattleRuntime(
-      this.projectConfig,
-      session.id,
-      session.playerName ?? session.id,
-      startedAtMs,
-    );
-    session.battle = runtime.battle;
-    session.waveScheduler = runtime.waveScheduler;
-    session.matchStartedAtMs = runtime.startedAtMs;
-    session.matchEnded = false;
-    session.loop = new GameLoop({
-      tickRateHz: runtime.tickRateHz,
-      onTick: ({ tick, deltaSec }) => {
-        const battle = session.battle;
-        const waveScheduler = session.waveScheduler;
-        const matchStartedAtMs = session.matchStartedAtMs;
-        if (
-          !session.joined ||
-          !battle ||
-          !waveScheduler ||
-          matchStartedAtMs === undefined
-        ) {
-          return;
-        }
-
-        const tickNowMs = Date.now();
-        const elapsedMs = tickNowMs - matchStartedAtMs;
-        const waveUpdate = waveScheduler.update(
-          elapsedMs,
-          battle.aliveEnemyCount,
-        );
-        for (const planned of waveUpdate.enemiesToSpawn) {
-          battle.spawnEnemy(
-            planned.enemyType,
-            planned.routeId,
-            planned.accuracy,
-            tickNowMs,
-          );
-        }
-        for (const wave of waveUpdate.waveStarts) {
-          const message: WaveStartMessage = {
-            type: SERVER_MESSAGE_TYPES.waveStart,
-            payload: {
-              waveIndex: wave.waveIndex,
-              enemyCount: wave.enemyCount,
-              totalWaves: this.projectConfig.waves.waves.length,
-              startedAtMs: matchStartedAtMs + wave.startedAtMs,
-            },
-          };
-          this.send(session.socket, message);
-        }
-        const events = battle.update(deltaSec, tick, tickNowMs);
-        this.sendBattleEvents(session, events);
-        const progress = this.createMatchProgress(session, tickNowMs);
-        const outcome = determineMatchEnd({
-          elapsedSec: elapsedMs / 1000,
-          durationSec:
-            this.projectConfig.gameplay.match.durationSec,
-          allowOvertimeSpawn:
-            this.projectConfig.gameplay.match.allowOvertimeSpawn,
-          pendingEnemyCount: waveScheduler.getProgress(elapsedMs)
-            .pendingEnemies,
-          playerAlive: battle.playerAlive,
-          aliveDefenderCount: battle.aliveDefenderCount,
-        });
-        if (outcome) {
-          this.finishMatch(
-            session,
-            tick,
-            tickNowMs,
-            progress,
-            outcome,
-          );
-          return;
-        }
-        this.send(
-          session.socket,
-          battle.createSnapshot(
-            tick,
-            tickNowMs,
-            progress,
-          ),
-        );
-      },
-    });
-  }
-
-  private sendMatchStart(session: ClientSession): void {
-    const startedAtMs = session.matchStartedAtMs;
-    if (startedAtMs === undefined) {
+  /**
+   * 单人快捷入口：自建一个只有自己的房间并立刻开局。
+   * 铁律 3：单人也走服务器房间，只是其余席位全是 AI。
+   */
+  private startSoloMatch(session: ClientSession, playerName: string): void {
+    session.playerName = playerName;
+    const room = this.roomManager.create(session.id, playerName);
+    this.attachRoomSession(session, room);
+    room.start(session.id);
+    const runtime = this.startRoomBattle(room);
+    if (!runtime) {
       return;
     }
-    const message: MatchStartMessage = {
-      type: SERVER_MESSAGE_TYPES.matchStart,
-      payload: {
-        matchId: session.battle?.room.id ?? `${session.id}:solo`,
-        startedAtMs,
-        deployEndsAtMs:
-          startedAtMs +
-          this.projectConfig.gameplay.match.deployPhaseSec * 1000,
-        endsAtMs:
-          startedAtMs +
-          this.projectConfig.gameplay.match.durationSec * 1000,
-        totalWaves: this.projectConfig.waves.waves.length,
-        totalEnemies: this.projectConfig.waves.totalEnemies,
+    session.joined = true;
+    this.broadcastSnapshots();
+    this.send(session.socket, runtime.battle.createRoomState());
+    this.send(session.socket, runtime.createMatchStart());
+    const nowMs = Date.now();
+    this.send(
+      session.socket,
+      runtime.battle.createSnapshot(
+        runtime.currentTick,
+        nowMs,
+        runtime.createMatchProgress(nowMs),
+      ),
+    );
+  }
+
+  /**
+   * 为房间建立唯一的一份战斗运行时并启动 20Hz 主循环。
+   * 同房成员共享世界状态、波次调度和计分，不再各打各的。
+   */
+  private startRoomBattle(
+    room: MultiplayerRoom<M2RouteId>,
+  ): RoomBattleRuntime | undefined {
+    const existing = this.battles.get(room.id);
+    if (existing) {
+      return existing;
+    }
+
+    const humans = room.listHumanSeats();
+    if (humans.length === 0) {
+      return undefined;
+    }
+
+    const runtime = new RoomBattleRuntime({
+      roomId: room.id,
+      projectConfig: this.projectConfig,
+      humans,
+      startedAtMs: Date.now(),
+      broadcast: (message) => {
+        this.broadcastToRoom(room.id, message);
       },
-    };
-    this.send(session.socket, message);
+      onEvents: (events) => {
+        this.broadcastBattleEvents(room.id, events);
+      },
+      onMatchEnd: (info) => {
+        this.finishRoomMatch(room, info);
+      },
+    });
+    this.battles.set(room.id, runtime);
+
+    // 开局播报统一发一次，之后所有成员共享同一份快照流。
+    const matchStart = runtime.createMatchStart();
+    for (const client of this.clients.values()) {
+      if (client.roomCode !== room.id) {
+        continue;
+      }
+      client.joined = true;
+      this.send(client.socket, matchStart);
+    }
+    runtime.start();
+    return runtime;
+  }
+
+  /** 取会话所在房间的战斗上下文，含稳定战斗身份。 */
+  private getBattleContext(
+    session: ClientSession,
+  ):
+    | {
+        readonly runtime: RoomBattleRuntime;
+        readonly playerId: string;
+      }
+    | undefined {
+    if (!session.joined || !session.roomCode || !session.playerId) {
+      return undefined;
+    }
+    const runtime = this.battles.get(session.roomCode);
+    if (!runtime || runtime.matchEnded) {
+      return undefined;
+    }
+    if (!runtime.battle.hasPlayer(session.playerId)) {
+      return undefined;
+    }
+    return { runtime, playerId: session.playerId };
+  }
+
+  /** 玩家动作的统一处理：状态校验 + tick 校验 + 结果回执。 */
+  private handlePlayerAction(
+    session: ClientSession,
+    clientTick: number,
+    action: ActionType,
+    execute: (
+      runtime: RoomBattleRuntime,
+      playerId: string,
+    ) => ActionRejectReason | undefined,
+  ): void {
+    const context = this.getBattleContext(session);
+    if (!context) {
+      this.sendActionResult(session, clientTick, action, 'invalid_state');
+      return;
+    }
+    if (!this.acceptClientTick(session, clientTick)) {
+      session.socket.close(1008, 'clientTick 必须严格递增');
+      return;
+    }
+    this.sendActionResult(
+      session,
+      clientTick,
+      action,
+      execute(context.runtime, context.playerId),
+    );
+  }
+
+  /**
+   * 房间内已无在线连接时停掉战斗主循环。
+   * 断线玩家的席位由 AI 顶上继续打（PRD 11.2），
+   * 但如果全房都掉线了就没有观众，继续跑纯属浪费 CPU。
+   */
+  private stopBattleIfRoomEmpty(roomCode: string): void {
+    const runtime = this.battles.get(roomCode);
+    if (!runtime) {
+      return;
+    }
+    for (const client of this.clients.values()) {
+      if (client.roomCode === roomCode) {
+        return;
+      }
+    }
+    runtime.stop();
+    this.battles.delete(roomCode);
+    const room = this.roomManager.get(roomCode);
+    if (room) {
+      room.markEnded();
+    }
+  }
+
+  private broadcastToRoom(
+    roomCode: string,
+    message: ServerMessage,
+  ): void {
+    for (const client of this.clients.values()) {
+      if (client.roomCode === roomCode && client.joined) {
+        this.send(client.socket, message);
+      }
+    }
   }
 
   private sendActionResult(
@@ -892,85 +870,52 @@ export class GameWebSocketServer {
     this.send(session.socket, message);
   }
 
-  private finishMatch(
-    session: ClientSession,
-    tick: number,
-    endedAtMs: number,
-    progress: MatchProgressState,
-    outcome: MatchEndState,
+  /** 一局结束：落库战报，向全房广播终局快照与战报。 */
+  private finishRoomMatch(
+    room: MultiplayerRoom<M2RouteId>,
+    info: RoomBattleEndInfo,
   ): void {
-    const battle = session.battle;
-    const startedAtMs = session.matchStartedAtMs;
-    if (!battle || startedAtMs === undefined || session.matchEnded) {
+    const runtime = this.battles.get(room.id);
+    if (!runtime) {
       return;
     }
-
-    session.matchEnded = true;
-    battle.endMatch();
-    const endedAtSec = Math.max(0, (endedAtMs - startedAtMs) / 1000);
-    const scoreboard = battle.createScoreboard(endedAtSec);
-    const mvpPlayerId = battle.selectMvpPlayerId(endedAtSec);
-    const finalProgress: MatchProgressState = {
-      ...progress,
-      phase: 'ended',
-    };
+    const endedAtSec = Math.max(
+      0,
+      (info.endedAtMs - runtime.startedAtMs) / 1000,
+    );
+    const scoreboard = runtime.battle.createScoreboard(endedAtSec);
+    const mvpPlayerId = runtime.battle.selectMvpPlayerId(endedAtSec);
     const message: MatchEndMessage = {
       type: SERVER_MESSAGE_TYPES.matchEnd,
       payload: {
-        matchId: battle.room.id,
-        result: outcome.result,
-        reason: outcome.reason,
-        endedAtMs,
+        matchId: runtime.battle.room.id,
+        result: info.outcome.result,
+        reason: info.outcome.reason,
+        endedAtMs: info.endedAtMs,
         scoreboard,
         ...(mvpPlayerId === undefined ? {} : { mvpPlayerId }),
-        spawnedEnemies: finalProgress.spawnedEnemies,
-        defeatedEnemies: finalProgress.defeatedEnemies,
-        totalEnemies: finalProgress.totalEnemies,
+        spawnedEnemies: info.progress.spawnedEnemies,
+        defeatedEnemies: info.progress.defeatedEnemies,
+        totalEnemies: info.progress.totalEnemies,
       },
     };
     this.reportRepository.save({
       ...message.payload,
-      startedAtMs,
+      startedAtMs: runtime.startedAtMs,
     });
 
-    this.send(session.socket, battle.createRoomState());
-    this.send(
-      session.socket,
-      battle.createSnapshot(tick, endedAtMs, finalProgress),
-    );
-    this.send(session.socket, message);
-    session.loop?.stop();
-  }
-
-  private createMatchProgress(
-    session: ClientSession,
-    nowMs: number,
-  ): MatchProgressState {
-    const battle = session.battle;
-    const waveScheduler = session.waveScheduler;
-    const startedAtMs = session.matchStartedAtMs;
-    if (!battle || !waveScheduler || startedAtMs === undefined) {
-      throw new Error('比赛进度只能在战斗创建后生成');
-    }
-    const progress = waveScheduler.getProgress(nowMs - startedAtMs);
-    const defeatedEnemies =
-      battle.totalEnemyCount - battle.aliveEnemyCount;
-    return {
-      startedAtMs,
-      endsAtMs:
-        startedAtMs +
-        this.projectConfig.gameplay.match.durationSec * 1000,
-      phase: progress.phase,
-      currentWaveIndex: progress.currentWaveIndex,
-      totalWaves: this.projectConfig.waves.waves.length,
-      spawnedEnemies: progress.spawnedEnemies,
-      defeatedEnemies,
-      remainingEnemies: Math.max(
-        0,
-        progress.totalEnemies - defeatedEnemies,
+    this.broadcastToRoom(room.id, runtime.battle.createRoomState());
+    this.broadcastToRoom(
+      room.id,
+      runtime.battle.createSnapshot(
+        info.tick,
+        info.endedAtMs,
+        info.progress,
       ),
-      totalEnemies: progress.totalEnemies,
-    };
+    );
+    this.broadcastToRoom(room.id, message);
+    room.markEnded();
+    this.battles.delete(room.id);
   }
 
   private acceptClientTick(
@@ -1011,8 +956,9 @@ export class GameWebSocketServer {
     };
   }
 
-  private sendBattleEvents(
-    session: ClientSession,
+  /** 把一个 tick 产生的战斗事件广播给全房。 */
+  private broadcastBattleEvents(
+    roomCode: string,
     events: readonly M2BattleEvent<M2RouteId>[],
   ): void {
     let roomStateChanged = false;
@@ -1027,7 +973,7 @@ export class GameWebSocketServer {
               killerIsBot: event.killerIsBot,
             },
           };
-          this.send(session.socket, message);
+          this.broadcastToRoom(roomCode, message);
           break;
         }
         case 'ally_callout': {
@@ -1039,7 +985,7 @@ export class GameWebSocketServer {
               text: event.text,
             },
           };
-          this.send(session.socket, message);
+          this.broadcastToRoom(roomCode, message);
           break;
         }
         case 'ally_damaged': {
@@ -1051,7 +997,7 @@ export class GameWebSocketServer {
               fromDir: event.fromDir,
             },
           };
-          this.send(session.socket, message);
+          this.broadcastToRoom(roomCode, message);
           break;
         }
         case 'ally_died': {
@@ -1063,7 +1009,7 @@ export class GameWebSocketServer {
               killerType: event.killerType,
             },
           };
-          this.send(session.socket, message);
+          this.broadcastToRoom(roomCode, message);
           roomStateChanged = true;
           break;
         }
@@ -1080,7 +1026,7 @@ export class GameWebSocketServer {
               text: event.text,
             },
           };
-          this.send(session.socket, message);
+          this.broadcastToRoom(roomCode, message);
           break;
         }
         case 'fire_warning':
@@ -1089,8 +1035,9 @@ export class GameWebSocketServer {
       }
     }
 
-    if (roomStateChanged && session.battle) {
-      this.send(session.socket, session.battle.createRoomState());
+    const runtime = this.battles.get(roomCode);
+    if (roomStateChanged && runtime) {
+      this.broadcastToRoom(roomCode, runtime.battle.createRoomState());
     }
   }
 
@@ -1127,28 +1074,31 @@ export class GameWebSocketServer {
 
   private createLogContext(session: ClientSession): WebSocketLogContext {
     const nowMs = Date.now();
-    const startedAtMs = session.matchStartedAtMs;
-    const waveScheduler = session.waveScheduler;
+    const runtime = session.roomCode
+      ? this.battles.get(session.roomCode)
+      : undefined;
     let matchPhase = session.joined ? 'starting' : 'not_joined';
     let currentWaveIndex: number | null = null;
     let elapsedSec: number | null = null;
 
-    if (startedAtMs !== undefined && waveScheduler) {
-      const elapsedMs = Math.max(0, nowMs - startedAtMs);
-      const progress = waveScheduler.getProgress(elapsedMs);
-      matchPhase = session.matchEnded ? 'ended' : progress.phase;
-      currentWaveIndex = progress.currentWaveIndex;
-      elapsedSec = Math.round(elapsedMs / 100) / 10;
+    if (runtime) {
+      const described = runtime.describeProgress(nowMs);
+      matchPhase = described.phase;
+      currentWaveIndex = described.currentWaveIndex;
+      elapsedSec = described.elapsedSec;
     }
 
     return {
       clientId: session.id,
       joined: session.joined,
-      roomId: session.battle?.room.id ?? null,
+      roomId: session.roomCode ?? null,
       matchPhase,
       currentWaveIndex,
-      playerAlive: session.battle?.playerAlive ?? null,
-      matchEnded: session.matchEnded,
+      playerAlive:
+        runtime && session.playerId
+          ? runtime.battle.isPlayerAlive(session.playerId)
+          : null,
+      matchEnded: runtime?.matchEnded ?? false,
       elapsedSec,
       bufferedAmount: session.socket.bufferedAmount,
       lastInboundAtMs: session.lastInboundAtMs ?? null,

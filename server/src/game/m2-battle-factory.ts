@@ -5,6 +5,7 @@ import { SeededRandom } from '../ai/seeded-random';
 import type { ScoreTiebreakField } from '../score/score-tracker';
 import type { MachineGunConfig } from '../combat/machine-gun-controller';
 import { WaveScheduler } from '../wave/wave-scheduler';
+import type { HumanSeatAssignment } from '../room/solo-room';
 import { findPlayerWeaponConfig } from './m1-battle-factory';
 import {
   M2BattleSession,
@@ -28,6 +29,18 @@ export interface M2BattleRuntime {
 export interface M3BattleRuntime extends M2BattleRuntime {
   readonly startedAtMs: number;
   readonly waveScheduler: WaveScheduler<M2EnemyType, M2RouteId>;
+}
+
+/**
+ * 建立战斗运行时的可选覆盖项。
+ * 单人链路全部省略即可，行为与改造前一致；
+ * 多人房间开局时由房间层传入房间码与真人席位表。
+ */
+export interface BattleRuntimeOverrides {
+  /** 房间码。省略时退化为单人房间 `${playerId}:solo`。 */
+  readonly roomId?: string;
+  /** 开局时的真人席位表。v1.0 不允许中途加入，名单开局即固定。 */
+  readonly humans?: readonly HumanSeatAssignment[];
 }
 
 export function populateM2Battlefield(
@@ -75,6 +88,7 @@ export function createM2BattleRuntime(
   playerId: string,
   playerName: string,
   seed: number,
+  overrides: BattleRuntimeOverrides = {},
 ): M2BattleRuntime {
   const routes = createRouteLayouts(
     config.waves.routes,
@@ -158,12 +172,15 @@ export function createM2BattleRuntime(
   return {
     tickRateHz: config.gameplay.server.tickRateHz,
     battle: new M2BattleSession({
-      roomId: `${playerId}:solo`,
+      roomId: overrides.roomId ?? `${playerId}:solo`,
       playerId,
       playerName,
       config: battleConfig,
       random: new SeededRandom(seed),
       supplyRandom: new SeededRandom(seed + 2),
+      ...(overrides.humans === undefined
+        ? {}
+        : { humans: overrides.humans }),
     }),
   };
 }
@@ -173,12 +190,14 @@ export function createM3BattleRuntime(
   playerId: string,
   playerName: string,
   startedAtMs: number,
+  overrides: BattleRuntimeOverrides = {},
 ): M3BattleRuntime {
   const runtime = createM2BattleRuntime(
     config,
     playerId,
     playerName,
     startedAtMs,
+    overrides,
   );
   return {
     ...runtime,
