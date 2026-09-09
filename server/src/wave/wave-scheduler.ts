@@ -53,6 +53,12 @@ export class WaveScheduler<
   private nextSpawnIndex = 0;
   private nextWaveStartIndex = 0;
   private currentWaveIndex = 0;
+  /**
+   * 当前波被提前清空的时刻。
+   * 用于把「提前清波」也转成一段完整的间歇期，
+   * 让玩家有时间捡血包与空投，而不是被下一波瞬间接上。
+   */
+  private clearedAtMs: number | null = null;
 
   constructor(
     config: WaveSchedulerConfig<TEnemyType, TRouteId>,
@@ -118,11 +124,20 @@ export class WaveScheduler<
       this.currentWaveIndex,
     );
     const timeBasedPhase = this.findPhase(elapsedMs);
-    const phase =
+    let phase =
       currentWaveIndex > timeBasedCurrentWaveIndex &&
       timeBasedPhase !== 'ended'
         ? 'wave'
         : timeBasedPhase;
+
+    // 提前清波后的宽限期同样算「间歇」，HUD 才不会在无敌人时仍显示战斗中。
+    if (
+      phase === 'wave' &&
+      this.clearedAtMs !== null &&
+      elapsedMs - this.clearedAtMs < this.intermissionMs
+    ) {
+      phase = 'intermission';
+    }
 
     return {
       phase,
@@ -162,6 +177,8 @@ export class WaveScheduler<
     aliveEnemyCount: number,
   ): number | null {
     if (aliveEnemyCount > 0 || this.nextSpawnIndex === 0) {
+      // 场上还有敌人：清空计时作废，下次清空重新开始计时。
+      this.clearedAtMs = null;
       return null;
     }
 
@@ -175,6 +192,25 @@ export class WaveScheduler<
 
     const nextPlanned = this.plan[this.nextSpawnIndex];
     if (!nextPlanned || nextPlanned.spawnAtMs <= elapsedMs) {
+      // 已经到了计划投放时间，走正常时间线，无需强制提前。
+      this.clearedAtMs = null;
+      return null;
+    }
+
+    // 同一波剩余的班组照旧立刻补上：波内节奏不变，
+    // 否则「打完一个班组等 20 秒」会让战斗支离破碎。
+    if (nextPlanned.waveIndex === this.currentWaveIndex) {
+      this.clearedAtMs = null;
+      return nextPlanned.waveIndex;
+    }
+
+    // 只有跨波才给宽限：整波被提前打完后，
+    // 留出一个完整间歇期让玩家捡血包和空投，
+    // 而不是让下一波在最后一个敌人倒地的同一帧涌上来。
+    if (this.clearedAtMs === null) {
+      this.clearedAtMs = elapsedMs;
+    }
+    if (elapsedMs - this.clearedAtMs < this.intermissionMs) {
       return null;
     }
     return nextPlanned.waveIndex;

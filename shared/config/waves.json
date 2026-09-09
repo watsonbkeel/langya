@@ -62,7 +62,7 @@
       "comment": "最后总攻，突击兵比例大幅提升"
     }
   ],
-  "intermissionSec": 12,
+  "intermissionSec": 20,
   "routes": {
     "A": {
       "name": "正面陡坡",

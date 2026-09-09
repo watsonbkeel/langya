@@ -40,6 +40,19 @@ interface GroundBounds {
   readonly minZ: number;
   readonly maxZ: number;
 }
+/**
+ * 路线标记的宽度（米）与每段的填充比例。
+ *
+ * 原先是 arena 宽度 / 42（约 1.4m）的**实心不透明**长条，从山顶望下去
+ * 是三条贯穿整个坡面的大色块，喧宾夺主。现在收窄并留白，
+ * 配合半透明材质只留下「踩踏痕迹」级别的提示。
+ */
+const ROUTE_MARKER_WIDTH_M = 0.55;
+const ROUTE_MARKER_FILL_RATIO = 0.45;
+
+/** 路线标记的不透明度（0-255）。压低到让岩石地面清晰透出。 */
+const ROUTE_MARKER_OPACITY = 90;
+
 const TERRAIN_BACKDROP_HEIGHT_M = 16;
 const COVER_HEIGHT_M = 1.4;
 const MACHINE_GUN_NEST_HEIGHT_M = 2.15;
@@ -90,9 +103,10 @@ export class M4SceneDecorations {
       GROUND_UV_REPEAT,
     );
     this.routeMaterials = {
-      A: this.createColorMaterial('#8E734F'),
-      B: this.createColorMaterial('#667B70'),
-      C: this.createColorMaterial('#726A82'),
+      // 路线标记走半透明材质：只作路线提示，不喧宾夺主。
+      A: this.createRouteMaterial('#8E734F'),
+      B: this.createRouteMaterial('#667B70'),
+      C: this.createRouteMaterial('#726A82'),
     };
     this.terrainBackdropMaterial = createBillboardMaterial();
     this.groundTextureMaterial = this.createTextureMaterial();
@@ -209,9 +223,10 @@ export class M4SceneDecorations {
           x,
           terrainHeightAt(x, z) + 0.024,
           z,
-          width / 42,
+          ROUTE_MARKER_WIDTH_M,
           0.025,
-          routeDepth / segments,
+          // 段之间留白，形成断续的「踩踏痕迹」而不是一条整幅涂色带。
+          (routeDepth / segments) * ROUTE_MARKER_FILL_RATIO,
           this.routeMaterials[routeId],
         );
       }
@@ -387,6 +402,34 @@ export class M4SceneDecorations {
       defines: { USE_COLOR: true },
     });
     material.setProperty('mainColor', Color.fromHEX(new Color(), colorHex));
+    return material;
+  }
+
+  /**
+   * 半透明的路线标记材质。
+   *
+   * 与 createColorMaterial 的区别是开启了 alpha 混合，
+   * 让下方岩石地面的纹理透上来，避免整条路线变成一块纯色贴纸。
+   * BlendFactor 未包含在 `cc` 的公共类型导出中，这里沿用
+   * billboard.ts 里同一套引擎枚举序号：SRC_ALPHA=2、ONE_MINUS_SRC_ALPHA=4。
+   */
+  private createRouteMaterial(colorHex: string): Material {
+    const material = new Material();
+    material.initialize({
+      effectName: 'builtin-unlit',
+      defines: { USE_COLOR: true },
+    });
+    const color = Color.fromHEX(new Color(), colorHex);
+    color.a = ROUTE_MARKER_OPACITY;
+    material.setProperty('mainColor', color);
+    const target = material.passes[0]?.blendState.targets[0];
+    if (target) {
+      target.blend = true;
+      target.blendSrc = 2 as typeof target.blendSrc;
+      target.blendDst = 4 as typeof target.blendDst;
+      target.blendSrcAlpha = 1 as typeof target.blendSrcAlpha;
+      target.blendDstAlpha = 4 as typeof target.blendDstAlpha;
+    }
     return material;
   }
 

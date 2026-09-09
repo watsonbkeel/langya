@@ -125,21 +125,29 @@ describe('WaveScheduler', () => {
       1,
     );
 
-    const earlySecondWaveUpdate = scheduler.update(
-      secondWaveStartMs - 1000,
-      0,
+    // 清空当前波后先进入间歇期：玩家要有时间捡血包和空投，
+    // 下一波不能在最后一个敌人倒地的同一帧涌上来。
+    const intermissionMs = config.waves.intermissionSec * 1000;
+    const justClearedMs = firstWaveStartMs + 1000;
+    const duringGraceUpdate = scheduler.update(justClearedMs, 0);
+    assert.equal(duringGraceUpdate.waveStarts.length, 0);
+    assert.equal(duringGraceUpdate.enemiesToSpawn.length, 0);
+    assert.equal(
+      scheduler.getProgress(justClearedMs).phase,
+      'intermission',
     );
+
+    // 宽限期满后才提前投放下一波。
+    const afterGraceMs = justClearedMs + intermissionMs;
+    const earlySecondWaveUpdate = scheduler.update(afterGraceMs, 0);
     assert.equal(earlySecondWaveUpdate.waveStarts.length, 1);
     assert.equal(earlySecondWaveUpdate.waveStarts[0]?.waveIndex, 2);
     assert.equal(earlySecondWaveUpdate.enemiesToSpawn.length > 0, true);
     assert.equal(
-      scheduler.getProgress(secondWaveStartMs - 1000).currentWaveIndex,
+      scheduler.getProgress(afterGraceMs).currentWaveIndex,
       2,
     );
-    assert.equal(
-      scheduler.getProgress(secondWaveStartMs - 1000).phase,
-      'wave',
-    );
+    assert.equal(scheduler.getProgress(afterGraceMs).phase, 'wave');
   });
 
   it('波次事件只发送一次', () => {
