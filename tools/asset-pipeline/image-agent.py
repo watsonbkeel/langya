@@ -68,13 +68,18 @@ def download(url: str, destination: Path, api_key: str) -> None:
 
 
 def submit(item: dict[str, Any], base_url: str, model: str, api_key: str) -> str:
+    payload: dict[str, Any] = {
+        "model": model,
+        "prompt": item["prompt"],
+    }
+    # 可选：manifest 项可指定 size（如 "1536x1024"），用于天空全景等宽幅素材。
+    size = item.get("size")
+    if isinstance(size, str) and size:
+        payload["size"] = size
     response = request_json(
         f"{base_url}/images/generations",
         "POST",
-        {
-            "model": model,
-            "prompt": item["prompt"],
-        },
+        payload,
         api_key,
     )
     task_id = response.get("task_id")

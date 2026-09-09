@@ -1,0 +1,77 @@
+// 不吃场景雾的贴图 unlit。
+//
+// builtin-unlit 会走 CC_APPLY_FOG，而雾宏 CC_USE_FOG 是 pipeline 级
+// （program-lib.getGFXShader 会用 pipeline.macros 覆盖材质 defines），
+// 材质层面关不掉。天空球半径 380m、远山 300m 都在 fogEnd 之外，
+// 用 builtin-unlit 会被雾整片抹成雾色，天空贴图等于白画。
+// 天空/远山的「大气透视」改由代码按层手动混雾色（mainColor）。
+CCEffect %{
+  techniques:
+  - name: opaque
+    passes:
+    - vert: nofog-vs:vert
+      frag: nofog-fs:frag
+      properties: &props
+        mainTexture:    { value: grey }
+        tilingOffset:   { value: [1, 1, 0, 0] }
+        mainColor:      { value: [1, 1, 1, 1], linear: true, editor: { type: color } }
+        alphaThreshold: { value: 0.5, editor: { parent: USE_ALPHA_TEST } }
+  - name: transparent
+    passes:
+    - vert: nofog-vs:vert
+      frag: nofog-fs:frag
+      depthStencilState:
+        depthTest: true
+        depthWrite: false
+      blendState:
+        targets:
+        - blend: true
+          blendSrc: src_alpha
+          blendDst: one_minus_src_alpha
+          blendDstAlpha: one_minus_src_alpha
+      properties: *props
+}%
+
+CCProgram nofog-vs %{
+  precision highp float;
+  #include <legacy/input>
+  #include <builtin/uniforms/cc-global>
+  #include <legacy/decode-base>
+  #include <legacy/local-batch>
+
+  out vec2 v_uv;
+  uniform TexCoords {
+    vec4 tilingOffset;
+  };
+
+  vec4 vert () {
+    vec4 position;
+    CCVertInput(position);
+    mat4 matWorld;
+    CCGetWorldMatrix(matWorld);
+    v_uv = a_texCoord * tilingOffset.xy + tilingOffset.zw;
+    return cc_matProj * (cc_matView * matWorld) * position;
+  }
+}%
+
+CCProgram nofog-fs %{
+  precision highp float;
+  #include <legacy/output-standard>
+
+  in vec2 v_uv;
+  uniform sampler2D mainTexture;
+  uniform Constant {
+    vec4 mainColor;
+    float alphaThreshold;
+  };
+
+  vec4 frag () {
+    vec4 texColor = texture(mainTexture, v_uv);
+    texColor.rgb = SRGBToLinear(texColor.rgb);
+    vec4 o = mainColor * texColor;
+    #if USE_ALPHA_TEST
+      if (o.a < alphaThreshold) discard;
+    #endif
+    return CCFragOutput(o);
+  }
+}%

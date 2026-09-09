@@ -4,6 +4,7 @@ import {
   Layers,
   Node,
   Sprite,
+  SpriteFrame,
   tween,
   Tween,
   UIOpacity,
@@ -15,6 +16,45 @@ import type {
   WeaponsConfig,
 } from '../config/game-config';
 import { loadSpriteFrame } from '../core/billboard';
+
+/**
+ * 带手臂的第一视角整幅构图（由生图管线产出，已含倾角与透视）。
+ *
+ * 与裸枪贴图不同，这张图本身就是「玩家眼前看到的样子」：
+ * 手臂从屏幕底边伸出、枪身斜向左上。所以不再旋转，只做两件事：
+ * 1. 按屏高缩放，让图的底边贴屏幕底边（手臂不能悬空）；
+ * 2. 横向平移，把图内枪口点钉到准心旁。
+ * 枪口坐标由 tools/asset-pipeline 下的脚本扫描贴图实测，不要凭感觉填。
+ */
+interface HandsComposition {
+  /** 图高缩放后占设计屏高的比例。 */
+  readonly heightRatio: number;
+  /** idle 帧枪口在贴图内的归一化坐标（0..1，V 轴向下）。 */
+  readonly muzzleU: number;
+  readonly muzzleV: number;
+  /** 枪口相对准心的留白，正值向右/向上。 */
+  readonly muzzleGapXPx: number;
+  readonly muzzleGapYPx: number;
+  /**
+   * fire 帧相对 idle 帧的枪身位移（贴图像素，V 轴向下）。
+   * 生图两帧构图不会完全重合，用模板匹配算出来后在切帧时反向补偿，
+   * 否则开火一瞬间枪会「跳」一下。
+   */
+  readonly fireShiftXPx: number;
+  readonly fireShiftYPx: number;
+}
+
+const HANDS_COMPOSITIONS: Readonly<Record<string, HandsComposition>> = {
+  liaoshi13: {
+    heightRatio: 0.78,
+    muzzleU: 0.49,
+    muzzleV: 0.299,
+    muzzleGapXPx: 18,
+    muzzleGapYPx: -10,
+    fireShiftXPx: -82,
+    fireShiftYPx: -49,
+  },
+};
 
 /**
  * 手持武器（步枪 / 轻机枪）的第一视角构图。
@@ -154,6 +194,13 @@ export class WeaponView {
   private currentTiltDeg = -20;
   private isEmplacement = false;
   private isThrowable = false;
+  /** 当前武器走「带手臂整幅图」模式，开火时切帧而不是画枪口圆。 */
+  private handsIdleFrame: SpriteFrame | null = null;
+  private handsFireFrame: SpriteFrame | null = null;
+  private handsComposition: HandsComposition | null = null;
+  private handsScale = 1;
+  private readonly handsIdlePosition = new Vec3();
+  private handsFireTimer: ReturnType<typeof setTimeout> | null = null;
   private loadGeneration = 0;
   private audioContext: AudioContext | null = null;
 
@@ -233,6 +280,24 @@ export class WeaponView {
       this.weapons.player[weaponId] ?? this.weapons.emplacement[weaponId];
     const spritePath = weapon?.assets.firstPerson;
     const generation = ++this.loadGeneration;
+    this.clearHandsMode();
+    const handsPath = this.weapons.player[weaponId]?.assets.firstPersonHands;
+    const handsComposition = HANDS_COMPOSITIONS[weaponId];
+    if (
+      handsPath &&
+      handsComposition &&
+      !this.isEmplacement &&
+      !this.isThrowable
+    ) {
+      this.loadHandsMode(
+        weaponId,
+        handsPath,
+        this.weapons.player[weaponId]?.assets.firstPersonHandsFire,
+        handsComposition,
+        generation,
+      );
+      return;
+    }
     if (!spritePath) {
       this.weaponSpriteNode.active = false;
       this.placeholderGraphics.enabled = true;
@@ -266,6 +331,131 @@ export class WeaponView {
         this.placeholderGraphics.enabled = true;
       },
     );
+  }
+
+  // ------------------------------------------------------------ 带手臂模式
+
+  private loadHandsMode(
+    weaponId: string,
+    idlePath: string,
+    firePath: string | undefined,
+    composition: HandsComposition,
+    generation: number,
+  ): void {
+    loadSpriteFrame(
+      idlePath,
+      (frame) => {
+        if (
+          !this.root.isValid ||
+          generation !== this.loadGeneration ||
+          this.currentWeaponId !== weaponId
+        ) {
+          return;
+        }
+        this.handsIdleFrame = frame;
+        this.handsComposition = composition;
+        this.weaponSprite.spriteFrame = frame;
+        this.weaponSpriteNode.active = true;
+        this.placeholderGraphics.enabled = false;
+        // 整幅图自带倾角，根节点不再旋转；枪机与枪口圆也不要，图里都有。
+        this.currentTiltDeg = 0;
+        this.root.setRotationFromEuler(0, 0, 0);
+        this.bolt.active = false;
+        this.muzzleFlashNode.active = false;
+        this.layoutHands(composition, frame.rect.width, frame.rect.height);
+        if (firePath) {
+          loadSpriteFrame(firePath, (fireFrame) => {
+            if (
+              !this.root.isValid ||
+              generation !== this.loadGeneration ||
+              this.currentWeaponId !== weaponId
+            ) {
+              return;
+            }
+            this.handsFireFrame = fireFrame;
+          });
+        }
+      },
+      () => {
+        if (!this.root.isValid || generation !== this.loadGeneration) {
+          return;
+        }
+        this.weaponSpriteNode.active = false;
+        this.placeholderGraphics.enabled = true;
+      },
+    );
+  }
+
+  private clearHandsMode(): void {
+    if (this.handsFireTimer !== null) {
+      clearTimeout(this.handsFireTimer);
+      this.handsFireTimer = null;
+    }
+    this.handsIdleFrame = null;
+    this.handsFireFrame = null;
+    this.handsComposition = null;
+    this.weaponSpriteNode.setPosition(0, 0, 0);
+  }
+
+  /**
+   * 整幅图构图：底边贴屏幕底边，枪口横向对准心。
+   * 纵向不强行对准心——手臂悬空比枪口低几像素难看得多，
+   * 缩放比例由 heightRatio 控制枪口纵向落点。
+   */
+  private layoutHands(
+    composition: HandsComposition,
+    sourceWidth: number,
+    sourceHeight: number,
+  ): void {
+    const designHeight = this.presentation.designHeight;
+    const scale =
+      (designHeight * composition.heightRatio) / Math.max(1, sourceHeight);
+    this.handsScale = scale;
+    this.weaponSpriteNode.setScale(scale, scale, 1);
+    this.weaponSpriteNode.setPosition(0, 0, 0);
+    const scaledWidth = sourceWidth * scale;
+    const scaledHeight = sourceHeight * scale;
+    // 枪口相对图中心的偏移（屏幕 Y 轴向上）。
+    const muzzleLocalX = (composition.muzzleU - 0.5) * scaledWidth;
+    const muzzleLocalY = (0.5 - composition.muzzleV) * scaledHeight;
+    // 底边贴屏幕底边。
+    const centerY = -designHeight / 2 + scaledHeight / 2;
+    // 横向把枪口钉到准心旁；若纵向枪口离准心太远，就把图往上推一点。
+    const desiredMuzzleY = composition.muzzleGapYPx;
+    const muzzleY = centerY + muzzleLocalY;
+    const liftY = Math.max(0, desiredMuzzleY - muzzleY);
+    this.handsIdlePosition.set(
+      composition.muzzleGapXPx - muzzleLocalX,
+      centerY + liftY,
+      0,
+    );
+    this.basePosition.set(this.handsIdlePosition);
+    this.root.setPosition(this.basePosition);
+  }
+
+  private showHandsFireFrame(): void {
+    if (!this.handsFireFrame || !this.handsComposition) {
+      return;
+    }
+    if (this.handsFireTimer !== null) {
+      clearTimeout(this.handsFireTimer);
+    }
+    this.weaponSprite.spriteFrame = this.handsFireFrame;
+    // 反向补偿两帧构图差，让枪身在屏幕上不动；贴图 V 轴向下，屏幕 Y 向上。
+    this.weaponSpriteNode.setPosition(
+      -this.handsComposition.fireShiftXPx * this.handsScale,
+      this.handsComposition.fireShiftYPx * this.handsScale,
+      0,
+    );
+    const holdMs = Math.max(40, this.presentation.muzzleFlashSec * 1000);
+    this.handsFireTimer = setTimeout(() => {
+      this.handsFireTimer = null;
+      if (!this.root.isValid || !this.handsIdleFrame) {
+        return;
+      }
+      this.weaponSprite.spriteFrame = this.handsIdleFrame;
+      this.weaponSpriteNode.setPosition(0, 0, 0);
+    }, holdMs);
   }
 
   /**
@@ -422,6 +612,12 @@ export class WeaponView {
       })
       .start();
 
+    if (this.handsIdleFrame) {
+      this.showHandsFireFrame();
+      this.playPlaceholderSound();
+      return;
+    }
+
     // 只有手动枪机的步枪才有枪机行程；重机枪弹链供弹、手榴弹没有枪机。
     if (this.bolt.active) {
       this.bolt.setPosition(this.boltBasePosition);
@@ -470,6 +666,7 @@ export class WeaponView {
   }
 
   destroy(): void {
+    this.clearHandsMode();
     void this.audioContext?.close();
     this.audioContext = null;
     this.root.destroy();

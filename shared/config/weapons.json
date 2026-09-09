@@ -21,6 +21,8 @@
       "isDefault": true,
       "assets": {
         "firstPerson": "weapons/fp/liaoshi13",
+        "firstPersonHands": "weapons/fp/liaoshi13-hands",
+        "firstPersonHandsFire": "weapons/fp/liaoshi13-hands-fire",
         "icon": "weapons/icons/liaoshi13"
       }
     },

@@ -1,0 +1,67 @@
+[
+  {
+    "name": "sky-dawn-panorama",
+    "size": "1536x1024",
+    "prompt": "Use case: game skybox. Asset type: seamless 360-degree equirectangular panoramic sky. Primary request: early morning sky over the rugged Taihang mountains of northern China in late September, sun just above the eastern horizon at a low angle, warm golden light on the horizon fading into cool pale blue overhead, thin layers of morning mist and haze near the horizon, a few soft wispy high clouds, distant layered blue-grey mountain silhouettes along the entire horizon line. Style/medium: photorealistic matte painting. Composition/framing: equirectangular projection, horizon exactly at the vertical center, sky in the upper half, faint misty mountain ridges in the lower half, must tile seamlessly left-to-right. Lighting/mood: quiet dawn before a battle, solemn, clear air. Color palette: gold, peach, pale blue, misty grey-blue. Constraints: no text, no watermark, no people, no buildings, no lens flare, no sun disc drawn as a hard circle."
+  },
+  {
+    "name": "mountain-layer-far",
+    "size": "1536x1024",
+    "prompt": "Use case: game background layer. Asset type: wide 2.5D parallax mountain silhouette layer on transparent background. Primary request: a long row of distant Taihang mountain ridges of northern China, jagged rocky peaks, seen from a mountain top at dawn, heavily hazed by morning mist so the mountains read as soft blue-grey silhouettes with slightly lighter tops catching golden dawn light. Style/medium: photorealistic matte painting. Composition/framing: wide horizontal strip, mountains occupy the bottom 60 percent, the top 40 percent and everything above the ridge line is fully transparent, the bottom edge is a solid straight base line. Color palette: misty blue-grey, faint gold rim light. Constraints: transparent background above the ridges, no sky painted, no text, no watermark, no people, no buildings."
+  },
+  {
+    "name": "mountain-layer-near",
+    "size": "1536x1024",
+    "prompt": "Use case: game background layer. Asset type: wide 2.5D parallax mountain layer on transparent background. Primary request: a nearer range of rocky Taihang mountain slopes of northern China at dawn, grey-brown weathered rock, sparse dry autumn shrubs and scattered pine trees on the slopes, low-angle warm morning light from the right creating long shadows in the folds of the rock, light haze. Style/medium: photorealistic matte painting. Composition/framing: wide horizontal strip, mountains occupy the bottom 70 percent, everything above the ridge line is fully transparent, the bottom edge is a solid straight base line. Color palette: grey-brown rock, ochre dry grass, dark green pines, warm gold highlights. Constraints: transparent background above the ridges, no sky painted, no text, no watermark, no people, no buildings."
+  },
+  {
+    "name": "sandbag-wall-straight",
+    "prompt": "Use case: historical-scene. Asset type: 2.5D game environment prop cutout. Primary request: a straight section of a 1940s Chinese army field fortification made of stacked burlap sandbags, three rows high, weathered and dusty, a few loose stones and a wooden plank on top, viewed from directly in front at eye level. Style/medium: photorealistic historical concept art matching a clean game asset cutout. Composition/framing: centered, full object visible with generous margin, bottom edge sits on a clear ground contact line. Lighting/mood: low-angle warm morning sunlight from the upper right, soft shadow. Color palette: khaki burlap, dusty brown, grey stone. Constraints: transparent background, no text, no watermark, no people, no weapons."
+  },
+  {
+    "name": "sandbag-wall-corner",
+    "prompt": "Use case: historical-scene. Asset type: 2.5D game environment prop cutout. Primary request: an L-shaped corner section of a 1940s Chinese army field fortification made of stacked burlap sandbags, three rows high, weathered and dusty, a wooden ammunition crate leaning against it, viewed from the front at eye level. Style/medium: photorealistic historical concept art matching a clean game asset cutout. Composition/framing: centered, full object visible with generous margin, bottom edge sits on a clear ground contact line. Lighting/mood: low-angle warm morning sunlight from the upper right, soft shadow. Color palette: khaki burlap, dusty brown, dark wood. Constraints: transparent background, no text, no watermark, no people, no weapons."
+  },
+  {
+    "name": "wooden-fence-broken",
+    "prompt": "Use case: historical-scene. Asset type: 2.5D game environment prop cutout. Primary request: a short broken rural wooden fence of rough grey weathered timber posts and rails from a 1940s northern Chinese mountain village, one rail hanging loose, viewed from the front at eye level. Style/medium: photorealistic historical concept art matching a clean game asset cutout. Composition/framing: centered, full object visible with generous margin, bottom edge sits on a clear ground contact line. Lighting/mood: low-angle warm morning sunlight from the upper right. Color palette: grey weathered wood, dusty brown. Constraints: transparent background, no text, no watermark, no people."
+  },
+  {
+    "name": "wooden-fence-intact",
+    "prompt": "Use case: historical-scene. Asset type: 2.5D game environment prop cutout. Primary request: a short intact rural wooden fence section of rough grey weathered timber posts and two horizontal rails, bound with straw rope, from a 1940s northern Chinese mountain village, viewed from the front at eye level. Style/medium: photorealistic historical concept art matching a clean game asset cutout. Composition/framing: centered, full object visible with generous margin, bottom edge sits on a clear ground contact line. Lighting/mood: low-angle warm morning sunlight from the upper right. Color palette: grey weathered wood, straw yellow. Constraints: transparent background, no text, no watermark, no people."
+  },
+  {
+    "name": "dead-tree-tall",
+    "prompt": "Use case: historical-scene. Asset type: 2.5D game environment prop cutout. Primary request: a tall dead leafless tree of a northern Chinese mountain, twisted grey-brown trunk, bare crooked branches reaching upward, some bark peeling, viewed from the front. Style/medium: photorealistic historical concept art matching a clean game asset cutout. Composition/framing: centered, full tree from roots to top branches visible with generous margin, bottom edge sits on a clear ground contact line. Lighting/mood: low-angle warm morning sunlight from the upper right. Color palette: grey-brown bark. Constraints: transparent background, no leaves, no text, no watermark, no people."
+  },
+  {
+    "name": "dead-tree-short",
+    "prompt": "Use case: historical-scene. Asset type: 2.5D game environment prop cutout. Primary request: a short gnarled mountain pine tree clinging to rocky ground, dark green sparse needles, thick twisted trunk leaning to one side, typical of the Taihang mountains in northern China, viewed from the front. Style/medium: photorealistic historical concept art matching a clean game asset cutout. Composition/framing: centered, full tree from roots to top visible with generous margin, bottom edge sits on a clear ground contact line. Lighting/mood: low-angle warm morning sunlight from the upper right. Color palette: dark green needles, grey-brown bark. Constraints: transparent background, no text, no watermark, no people."
+  },
+  {
+    "name": "shrub-dry-a",
+    "prompt": "Use case: historical-scene. Asset type: 2.5D game environment prop cutout. Primary request: a clump of dry late-September mountain shrubs and tall dead grass of northern China, ochre and pale yellow, slightly wind-swept, viewed from the front at ground level. Style/medium: photorealistic historical concept art matching a clean game asset cutout. Composition/framing: centered, full clump visible with generous margin, bottom edge sits on a clear ground contact line. Lighting/mood: low-angle warm morning sunlight from the upper right, backlit glow on the grass tips. Color palette: ochre, straw yellow, dusty brown. Constraints: transparent background, no text, no watermark, no people."
+  },
+  {
+    "name": "shrub-dry-b",
+    "prompt": "Use case: historical-scene. Asset type: 2.5D game environment prop cutout. Primary request: a low wide clump of hardy mountain shrubs with small dark green and rust-red autumn leaves growing between rocks, typical of the Taihang mountains of northern China, viewed from the front at ground level. Style/medium: photorealistic historical concept art matching a clean game asset cutout. Composition/framing: centered, full clump visible with generous margin, bottom edge sits on a clear ground contact line. Lighting/mood: low-angle warm morning sunlight from the upper right. Color palette: dark green, rust red, grey rock. Constraints: transparent background, no text, no watermark, no people."
+  },
+  {
+    "name": "rock-pile-large",
+    "prompt": "Use case: historical-scene. Asset type: 2.5D game environment prop cutout. Primary request: a large pile of grey limestone boulders and broken rock slabs of the Taihang mountains, lichen patches, some dry grass growing between the stones, viewed from the front at eye level. Style/medium: photorealistic historical concept art matching a clean game asset cutout. Composition/framing: centered, full pile visible with generous margin, bottom edge sits on a clear ground contact line. Lighting/mood: low-angle warm morning sunlight from the upper right, strong shadows in the crevices. Color palette: grey limestone, ochre grass, pale lichen. Constraints: transparent background, no text, no watermark, no people."
+  },
+  {
+    "name": "rock-pile-small",
+    "prompt": "Use case: historical-scene. Asset type: 2.5D game environment prop cutout. Primary request: a small scattered group of grey limestone rocks and rubble of the Taihang mountains, a few tufts of dry grass, viewed from the front at ground level. Style/medium: photorealistic historical concept art matching a clean game asset cutout. Composition/framing: centered, full group visible with generous margin, bottom edge sits on a clear ground contact line. Lighting/mood: low-angle warm morning sunlight from the upper right. Color palette: grey limestone, ochre grass. Constraints: transparent background, no text, no watermark, no people."
+  },
+  {
+    "name": "fp-rifle-hands-idle",
+    "size": "1536x1024",
+    "prompt": "Use case: historical-scene. Asset type: first-person shooter game weapon view cutout. Primary request: first-person view of a 1930s Chinese Zhongzheng bolt-action rifle (Mauser style, dark walnut wood stock, blued steel barrel and bolt) held at the ready by a Chinese soldier, both hands visible: left hand supporting the fore-end, right hand on the grip, wearing blue-grey cloth uniform sleeves with cuffs, weapon extends from the lower right of the frame toward the upper center, muzzle pointing at the center of the frame, rifle butt going out of the frame at the bottom right. Style/medium: photorealistic game render, matching a clean asset cutout. Composition/framing: the rifle and forearms occupy the right two-thirds of the frame, everything else transparent. Lighting/mood: low-angle warm morning sunlight from the upper right, wood grain and metal highlights visible. Color palette: dark walnut, blued steel, blue-grey cloth. Constraints: transparent background, no scope, no text, no watermark, no face, no blood."
+  },
+  {
+    "name": "fp-rifle-hands-fire",
+    "size": "1536x1024",
+    "prompt": "Use case: historical-scene. Asset type: first-person shooter game weapon view cutout. Primary request: first-person view of a 1930s Chinese Zhongzheng bolt-action rifle (Mauser style, dark walnut wood stock, blued steel barrel and bolt) at the instant of firing, held by a Chinese soldier, both hands visible: left hand supporting the fore-end, right hand on the grip, wearing blue-grey cloth uniform sleeves with cuffs, the rifle recoiled slightly upward and back, a bright compact muzzle flash at the muzzle, weapon extends from the lower right of the frame toward the upper center, muzzle pointing at the center of the frame, rifle butt going out of the frame at the bottom right. Style/medium: photorealistic game render, matching a clean asset cutout. Composition/framing: the rifle and forearms occupy the right two-thirds of the frame, everything else transparent. Lighting/mood: low-angle warm morning sunlight from the upper right plus warm light from the muzzle flash on the hands and barrel. Color palette: dark walnut, blued steel, blue-grey cloth, orange-white flash. Constraints: transparent background, no scope, no text, no watermark, no face, no blood."
+  }
+]

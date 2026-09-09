@@ -35,6 +35,7 @@ import {
   type InteractionTarget,
 } from '../level/m3-world-interactions';
 import { M4SceneDecorations } from '../level/m4-scene-decorations';
+import { M7Environment } from '../level/m7-environment';
 import { M1Hud } from '../ui/m1-hud';
 import { RoomView } from '../ui/room-view';
 import { WeaponView } from '../weapon/weapon-view';
@@ -111,6 +112,7 @@ export class M1Game {
   private readonly netClient: NetClient;
   private readonly worldInteractions: M3WorldInteractions;
   private readonly sceneDecorations: M4SceneDecorations;
+  private readonly environment: M7Environment;
   private readonly pendingShots = new Map<number, number>();
   private readonly inputIntervalSec: number;
   private inputAccumulatorSec = 0;
@@ -271,6 +273,12 @@ export class M1Game {
       config.waves,
       config.presentation,
     );
+    this.environment = new M7Environment(
+      sceneRoot,
+      config.gameplay,
+      config.waves,
+      config.presentation.environment,
+    );
     this.controller = new FirstPersonController(
       sceneRoot,
       config.gameplay,
@@ -292,6 +300,7 @@ export class M1Game {
     this.allyRenderer.setCameraNode(this.controller.getCameraNode());
     this.worldInteractions.setCameraNode(this.controller.getCameraNode());
     this.sceneDecorations.setCameraNode(this.controller.getCameraNode());
+    this.environment.setCameraNode(this.controller.getCameraNode());
     this.netClient = new NetClient({
       onStatus: (status) => {
         this.connected = status.kind === 'connected';
@@ -617,6 +626,7 @@ export class M1Game {
     this.allyRenderer.update(deltaTime);
     this.worldInteractions.update();
     this.sceneDecorations.update();
+    this.environment.update();
     if (this.mountedMachineGun && this.controller.isFireHeld()) {
       const config =
         this.config.weapons.emplacement[this.mountedMachineGun.weaponId];
@@ -637,6 +647,7 @@ export class M1Game {
     this.enemyRenderer.destroy();
     this.worldInteractions.destroy();
     this.sceneDecorations.destroy();
+    this.environment.destroy();
     this.weaponView.destroy();
     this.hud.destroy();
     if (typeof window !== 'undefined') {

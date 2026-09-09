@@ -5,6 +5,7 @@ import {
   MeshRenderer,
   Node,
   primitives,
+  resources,
   utils,
 } from 'cc';
 
@@ -53,7 +54,6 @@ const ROUTE_MARKER_FILL_RATIO = 0.45;
 /** 路线标记的不透明度（0-255）。压低到让岩石地面清晰透出。 */
 const ROUTE_MARKER_OPACITY = 90;
 
-const TERRAIN_BACKDROP_HEIGHT_M = 16;
 const COVER_HEIGHT_M = 1.4;
 const MACHINE_GUN_NEST_HEIGHT_M = 2.15;
 
@@ -67,8 +67,7 @@ export class M4SceneDecorations {
   private readonly billboardMesh: Mesh;
   private readonly groundMesh: Mesh;
   private readonly routeMaterials: Readonly<Record<RouteId, Material>>;
-  private readonly terrainBackdropMaterial: Material;
-  private readonly groundTextureMaterial: Material;
+  private groundTextureMaterial: Material | null = null;
   private readonly machineGunNestMaterial: Material;
   private readonly coverMaterial: Material;
   private readonly crateMaterial: Material;
@@ -108,14 +107,11 @@ export class M4SceneDecorations {
       B: this.createRouteMaterial('#667B70'),
       C: this.createRouteMaterial('#726A82'),
     };
-    this.terrainBackdropMaterial = createBillboardMaterial();
-    this.groundTextureMaterial = this.createTextureMaterial();
     this.machineGunNestMaterial = createBillboardMaterial();
     this.coverMaterial = createBillboardMaterial();
     this.crateMaterial = createBillboardMaterial();
 
     this.createTexturedGround();
-    this.createTerrainBackdrop();
     this.createRouteMarkers();
     this.createCoverLine();
     this.createMachineGunNests();
@@ -141,8 +137,7 @@ export class M4SceneDecorations {
     this.boxMesh.destroy();
     this.billboardMesh.destroy();
     this.groundMesh.destroy();
-    this.terrainBackdropMaterial.destroy();
-    this.groundTextureMaterial.destroy();
+    this.groundTextureMaterial?.destroy();
     this.machineGunNestMaterial.destroy();
     this.coverMaterial.destroy();
     this.crateMaterial.destroy();
@@ -174,22 +169,12 @@ export class M4SceneDecorations {
     ground.setPosition(0, 0.012, 0);
     this.groundRenderer = ground.addComponent(MeshRenderer);
     this.groundRenderer.mesh = this.groundMesh;
-    this.groundRenderer.setSharedMaterial(this.groundTextureMaterial, 0);
+    // 材质在 loadSceneTextures 里异步就位（见 loadGroundMaterial 的说明）。
+    // 地面接收平面阴影，让掩体/树/角色在坡上有落脚感。
+    // cc.d.ts 声明为 number：ModelShadowReceivingMode.ON=1 / ModelShadowCastingMode.OFF=0
+    this.groundRenderer.receiveShadow = 1;
+    this.groundRenderer.shadowCastingMode = 0;
     this.groundRenderer.enabled = false;
-  }
-
-  private createTerrainBackdrop(): void {
-    const width = this.gameplay.arena.widthM;
-    const z = -this.maxRouteLengthM - this.gameplay.arena.depthM / 2;
-    this.createBillboardProp(
-      'TerrainBackdrop',
-      this.terrainBackdropMaterial,
-      0,
-      terrainHeightAt(0, z) + TERRAIN_BACKDROP_HEIGHT_M / 2 - 0.8,
-      z,
-      width * 2.5,
-      TERRAIN_BACKDROP_HEIGHT_M,
-    );
   }
 
   private createRouteMarkers(): void {
@@ -297,17 +282,15 @@ export class M4SceneDecorations {
   }
 
   private loadSceneTextures(): void {
-    this.loadBillboardTexture(
-      'scene/terrain-backdrop',
-      this.terrainBackdropMaterial,
-      (name) => name === 'TerrainBackdrop',
-    );
-    loadTexture('scene/rocky-ground', (texture) => {
-      if (!this.root.isValid || !this.groundRenderer) {
-        return;
-      }
-      this.groundTextureMaterial.setProperty('mainTexture', texture);
-      this.groundRenderer.enabled = true;
+    this.loadGroundMaterial((material) => {
+      loadTexture('scene/rocky-ground', (texture) => {
+        if (!this.root.isValid || !this.groundRenderer) {
+          return;
+        }
+        material.setProperty('mainTexture', texture);
+        this.groundRenderer.setSharedMaterial(material, 0);
+        this.groundRenderer.enabled = true;
+      });
     });
     this.loadBillboardTexture(
       'scene/mg-emplacement',
@@ -433,14 +416,34 @@ export class M4SceneDecorations {
     return material;
   }
 
-  private createTextureMaterial(): Material {
-    const material = new Material();
-    material.initialize({
-      effectName: 'builtin-unlit',
-      defines: { USE_TEXTURE: true },
+  /**
+   * 地面走 builtin-standard：吃方向光与环境光，坡面才有明暗，
+   * 「居高临下」的高低差才看得出来（M7 环境层之前全场 unlit，画面是平的）。
+   *
+   * ⚠️ 不能像 unlit 那样 `new Material().initialize({ effectName })`：
+   * Cocos 构建只打包被资产引用的 effect，代码里的字符串引用不算数，
+   * 线上包里根本没有 builtin-standard，初始化会崩在
+   * `localSetLayout of undefined`（2026-09-09 踩坑）。
+   * 所以真正的引用锚点是 `resources/scene/ground-standard.mtl`
+   * （USE_ALBEDO_MAP、roughness 0.95、metallic 0 都写在资产里），
+   * 这里只负责把它加载出来。加载失败则回退 unlit，宁可画面平也不能不出图。
+   */
+  private loadGroundMaterial(onReady: (material: Material) => void): void {
+    resources.load('scene/ground-standard', Material, (error, asset) => {
+      if (!this.root.isValid) {
+        return;
+      }
+      if (error || !asset) {
+        console.warn('[m4] 地面 standard 材质加载失败，回退 unlit', error);
+        this.groundTextureMaterial = createBillboardMaterial();
+      } else {
+        // 用实例而不是共享资产，避免 setProperty 污染资源缓存。
+        this.groundTextureMaterial = new Material();
+        this.groundTextureMaterial.copy(asset);
+        this.groundTextureMaterial.setProperty('mainColor', Color.WHITE);
+      }
+      onReady(this.groundTextureMaterial);
     });
-    material.setProperty('mainColor', Color.WHITE);
-    return material;
   }
 }
 

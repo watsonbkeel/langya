@@ -3,7 +3,7 @@
   "designHeight": 720,
   "cameraFovDeg": 70,
   "cameraNearM": 0.05,
-  "cameraFarM": 200,
+  "cameraFarM": 420,
   "cameraPositionSmoothing": 14,
   "mouseSensitivityDeg": 0.12,
   "pointerLockSettleSec": 0.5,
@@ -15,7 +15,65 @@
   "enemyEngageColor": "#B9A56A",
   "enemyHitColor": "#E8D08B",
   "fireWarningColor": "#FFB347",
-  "skyColor": "#53687A",
+  "skyColor": "#C9D3DC",
+  "environment": {
+    "skyPanorama": "scene/sky-dawn-panorama",
+    "skyDomeRadiusM": 380,
+    "skyDomeYawDeg": 75,
+    "skyDomeOffsetYM": -6,
+    "sunYawDeg": 215,
+    "sunPitchDeg": 14,
+    "sunColor": "#FFE2B8",
+    "sunIlluminance": 32000,
+    "ambientSkyColor": "#8FA6C4",
+    "ambientGroundColor": "#5A5246",
+    "ambientSkyIllum": 14000,
+    "fogColor": "#C7D2DA",
+    "fogStartM": 55,
+    "fogEndM": 260,
+    "shadowColor": "#1E2A3266",
+    "mountainLayers": [
+      {
+        "texture": "scene/mountain-layer-near",
+        "distanceM": 175,
+        "widthM": 360,
+        "heightM": 62,
+        "sinkM": 4,
+        "wrapCopies": 1
+      },
+      {
+        "texture": "scene/mountain-layer-far",
+        "distanceM": 300,
+        "widthM": 620,
+        "heightM": 95,
+        "sinkM": 6,
+        "wrapCopies": 1
+      }
+    ],
+    "props": {
+      "seed": 19410925,
+      "laneClearHalfWidthM": 2.6,
+      "summitClearDepthM": 9,
+      "items": [
+        { "texture": "scene/dead-tree-tall", "count": 10, "widthM": 4.2, "heightM": 6.5, "scaleJitter": 0.25, "sinkM": 0.15 },
+        { "texture": "scene/dead-tree-short", "count": 12, "widthM": 3.4, "heightM": 3.6, "scaleJitter": 0.25, "sinkM": 0.15 },
+        { "texture": "scene/shrub-dry-a", "count": 26, "widthM": 2.2, "heightM": 1.3, "scaleJitter": 0.3, "sinkM": 0.08 },
+        { "texture": "scene/shrub-dry-b", "count": 22, "widthM": 2.4, "heightM": 1.2, "scaleJitter": 0.3, "sinkM": 0.08 },
+        { "texture": "scene/rock-pile-large", "count": 9, "widthM": 3.6, "heightM": 2.2, "scaleJitter": 0.2, "sinkM": 0.12 },
+        { "texture": "scene/rock-pile-small", "count": 20, "widthM": 1.8, "heightM": 0.9, "scaleJitter": 0.3, "sinkM": 0.06 },
+        { "texture": "scene/wooden-fence-broken", "count": 4, "widthM": 3.2, "heightM": 1.4, "scaleJitter": 0.1, "sinkM": 0.08 },
+        { "texture": "scene/wooden-fence-intact", "count": 3, "widthM": 3.2, "heightM": 1.4, "scaleJitter": 0.1, "sinkM": 0.08 }
+      ],
+      "fortification": {
+        "straightTexture": "scene/sandbag-wall-straight",
+        "cornerTexture": "scene/sandbag-wall-corner",
+        "lineZM": -7.5,
+        "segmentWidthM": 4.2,
+        "heightM": 1.35,
+        "gapM": 3.2
+      }
+    }
+  },
   "entityPositionSmoothing": 12,
   "engageHeightScale": 0.82,
   "fireWarningSizeM": 0.45,

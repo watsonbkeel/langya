@@ -58,6 +58,13 @@ export interface WeaponPresentationConfig {
   readonly isThrowable?: boolean;
   readonly assets: {
     readonly firstPerson?: string;
+    /**
+     * 带手臂的第一视角整幅构图（已含倾角与透视）。有它时优先于
+     * firstPerson 裸枪；图内枪口位置由 HANDS_COMPOSITIONS 实测给出。
+     */
+    readonly firstPersonHands?: string;
+    /** 与 firstPersonHands 同坐标系的开火帧（自带枪口焰）。 */
+    readonly firstPersonHandsFire?: string;
     readonly icon?: string;
   };
 }
@@ -132,7 +139,88 @@ export interface EnemiesAssetsConfig {
   };
 }
 
+/**
+ * 环境层（M7 美术打磨）：天空穹顶、方向光、环境光、雾、远山视差与场景小件散布。
+ * 史实设定：1941-09-25 清晨接火，主光是低角度晨光，山地薄雾。
+ */
+export interface EnvironmentConfig {
+  /** 天空全景贴图（resources 相对路径，等距柱状投影）。 */
+  readonly skyPanorama: string;
+  /** 天空穹顶半径（米），必须小于 cameraFarM。 */
+  readonly skyDomeRadiusM: number;
+  /** 穹顶绕 Y 轴的旋转（度），用来把日出方向转到合适的方位。 */
+  readonly skyDomeYawDeg: number;
+  /** 天空穹顶垂直偏移（米）：负值把地平线压到山顶以下。 */
+  readonly skyDomeOffsetYM: number;
+  /** 太阳方位角与仰角（度）。仰角越小影子越长。 */
+  readonly sunYawDeg: number;
+  readonly sunPitchDeg: number;
+  readonly sunColor: string;
+  /** 方向光照度（lux），Cocos 默认 65000；清晨取低。 */
+  readonly sunIlluminance: number;
+  readonly ambientSkyColor: string;
+  readonly ambientGroundColor: string;
+  /** 环境光照度（lux）。 */
+  readonly ambientSkyIllum: number;
+  readonly fogColor: string;
+  readonly fogStartM: number;
+  readonly fogEndM: number;
+  /** 平面阴影颜色（含 alpha）。 */
+  readonly shadowColor: string;
+  /** 远山层：由近到远。 */
+  readonly mountainLayers: readonly MountainLayerConfig[];
+  /** 场景小件散布。 */
+  readonly props: PropScatterConfig;
+}
+
+export interface MountainLayerConfig {
+  readonly texture: string;
+  /** 距离山顶的纵深（米，正值，实际放在 -z）。 */
+  readonly distanceM: number;
+  readonly widthM: number;
+  readonly heightM: number;
+  /** 底边相对地平线的下沉（米），避免底边露出硬线。 */
+  readonly sinkM: number;
+  /** 左右各复制一份形成环绕（0 = 不复制）。 */
+  readonly wrapCopies: number;
+}
+
+export interface PropScatterConfig {
+  /** 确定性随机种子，保证多端看到同一布局。 */
+  readonly seed: number;
+  /** 路线中心线两侧不摆小件的半宽（米），避免挡住敌人冲锋路径。 */
+  readonly laneClearHalfWidthM: number;
+  /** 山顶阵地内不摆小件的纵深（米）。 */
+  readonly summitClearDepthM: number;
+  readonly items: readonly PropItemConfig[];
+  /** 阵地前沿工事线。 */
+  readonly fortification: FortificationConfig;
+}
+
+export interface PropItemConfig {
+  readonly texture: string;
+  readonly count: number;
+  readonly widthM: number;
+  readonly heightM: number;
+  /** 尺寸随机抖动比例（0.2 = ±20%）。 */
+  readonly scaleJitter: number;
+  /** 底边埋入地面的深度（米），避免悬空。 */
+  readonly sinkM: number;
+}
+
+export interface FortificationConfig {
+  readonly straightTexture: string;
+  readonly cornerTexture: string;
+  /** 工事线距山顶的纵深（米）。 */
+  readonly lineZM: number;
+  readonly segmentWidthM: number;
+  readonly heightM: number;
+  /** 工事段之间的缺口宽度（米），留给玩家和路线穿过。 */
+  readonly gapM: number;
+}
+
 export interface PresentationConfig {
+  readonly environment: EnvironmentConfig;
   readonly designWidth: number;
   readonly designHeight: number;
   readonly cameraFovDeg: number;
@@ -457,6 +545,74 @@ function isEnemiesAssetsConfig(value: unknown): value is EnemiesAssetsConfig {
   });
 }
 
+function isMountainLayerConfig(value: unknown): value is MountainLayerConfig {
+  return (
+    isRecord(value) &&
+    typeof value.texture === 'string' &&
+    isFiniteNumber(value.distanceM) &&
+    isFiniteNumber(value.widthM) &&
+    isFiniteNumber(value.heightM) &&
+    isFiniteNumber(value.sinkM) &&
+    isFiniteNumber(value.wrapCopies)
+  );
+}
+
+function isPropItemConfig(value: unknown): value is PropItemConfig {
+  return (
+    isRecord(value) &&
+    typeof value.texture === 'string' &&
+    isFiniteNumber(value.count) &&
+    isFiniteNumber(value.widthM) &&
+    isFiniteNumber(value.heightM) &&
+    isFiniteNumber(value.scaleJitter) &&
+    isFiniteNumber(value.sinkM)
+  );
+}
+
+function isFortificationConfig(value: unknown): value is FortificationConfig {
+  return (
+    isRecord(value) &&
+    typeof value.straightTexture === 'string' &&
+    typeof value.cornerTexture === 'string' &&
+    isFiniteNumber(value.lineZM) &&
+    isFiniteNumber(value.segmentWidthM) &&
+    isFiniteNumber(value.heightM) &&
+    isFiniteNumber(value.gapM)
+  );
+}
+
+function isEnvironmentConfig(value: unknown): value is EnvironmentConfig {
+  if (!isRecord(value) || !isRecord(value.props)) {
+    return false;
+  }
+  const props = value.props;
+  return (
+    typeof value.skyPanorama === 'string' &&
+    isFiniteNumber(value.skyDomeRadiusM) &&
+    isFiniteNumber(value.skyDomeYawDeg) &&
+    isFiniteNumber(value.skyDomeOffsetYM) &&
+    isFiniteNumber(value.sunYawDeg) &&
+    isFiniteNumber(value.sunPitchDeg) &&
+    typeof value.sunColor === 'string' &&
+    isFiniteNumber(value.sunIlluminance) &&
+    typeof value.ambientSkyColor === 'string' &&
+    typeof value.ambientGroundColor === 'string' &&
+    isFiniteNumber(value.ambientSkyIllum) &&
+    typeof value.fogColor === 'string' &&
+    isFiniteNumber(value.fogStartM) &&
+    isFiniteNumber(value.fogEndM) &&
+    typeof value.shadowColor === 'string' &&
+    Array.isArray(value.mountainLayers) &&
+    value.mountainLayers.every(isMountainLayerConfig) &&
+    isFiniteNumber(props.seed) &&
+    isFiniteNumber(props.laneClearHalfWidthM) &&
+    isFiniteNumber(props.summitClearDepthM) &&
+    Array.isArray(props.items) &&
+    props.items.every(isPropItemConfig) &&
+    isFortificationConfig(props.fortification)
+  );
+}
+
 function isPresentationConfig(value: unknown): value is PresentationConfig {
   if (!isRecord(value)) {
     return false;
@@ -467,6 +623,7 @@ function isPresentationConfig(value: unknown): value is PresentationConfig {
   );
   return (
     hasNumbers &&
+    isEnvironmentConfig(value.environment) &&
     typeof value.groundColor === 'string' &&
     typeof value.allyColor === 'string' &&
     typeof value.allyEngageColor === 'string' &&
