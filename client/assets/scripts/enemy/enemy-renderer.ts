@@ -36,6 +36,8 @@ import {
 export class EnemyRenderer {
   private readonly worldRoot: Node;
   private readonly boxMesh: Mesh;
+  /** 山顶兜底底板的网格（贴合高度场，见 createGround 的说明）。 */
+  private groundMesh: Mesh | null = null;
   private readonly enemyMaterial: Material;
   private readonly engageMaterial: Material;
   private readonly hitMaterial: Material;
@@ -251,6 +253,8 @@ export class EnemyRenderer {
     this.targetScales.clear();
     this.pool.length = 0;
     this.worldRoot.destroy();
+    this.groundMesh?.destroy();
+    this.groundMesh = null;
     this.enemyMaterial.destroy();
     this.engageMaterial.destroy();
     this.hitMaterial.destroy();
@@ -265,21 +269,25 @@ export class EnemyRenderer {
   private createGround(): void {
     const ground = new Node('Plateau');
     ground.setParent(this.worldRoot);
-    // 山顶阵地平台：arena 范围（z 约 -10..+10）恰好落在高度场的山顶平段上，
-    // 因此直接取中心点的地面高度，把板子埋在地表下方做厚度，
-    // 而不是停在 y=0（那是山脚高度，会浮在半空中）。
-    ground.setPosition(
-      0,
-      terrainHeightAt(0, 0) - this.presentation.groundThicknessM,
-      0,
-    );
-    ground.setScale(
+    // ⚠️ 这块板子只是「M4 岩石地面贴图还没加载完」时的兜底底色，
+    // 真正的地面是 M4SceneDecorations 里贴合高度场的 RockyGround 网格。
+    //
+    // 历史 bug（2026-09-09 修复）：这里曾经是一块**水平**平板，
+    // 中心取 terrainHeightAt(0, 0)（山顶中线 = 20m），
+    // 但高度场有横向山脊衰减（RIDGE_FALLOFF_M），x=±30 处只有 17.89m，
+    // 于是平板两侧比真实地形高出 2.06m，而玩家眼高仅 1.7m
+    // —— 结果就是从山顶望出去，这块板的边缘糊满上半屏幕的一大片军绿。
+    //
+    // 修法：改成贴合高度场的网格，并整体下沉一个厚度，
+    // 保证它永远躲在真实地面之下，只在贴图缺失时透出底色。
+    this.groundMesh = createTerrainPatchMesh(
       this.gameplay.arena.widthM,
-      this.presentation.groundThicknessM,
       this.gameplay.arena.depthM,
+      -this.presentation.groundThicknessM,
     );
+    ground.setPosition(0, 0, 0);
     const renderer = ground.addComponent(MeshRenderer);
-    renderer.mesh = this.boxMesh;
+    renderer.mesh = this.groundMesh;
     renderer.setSharedMaterial(
       this.createMaterial(this.presentation.groundColor),
       0,
@@ -460,4 +468,63 @@ export class EnemyRenderer {
     shadow?.setRotationFromEuler(0, 0, 0);
     shadow?.setScale(1.25, 0.02, 0.75);
   }
+}
+
+/** 兜底底板的采样边长（米）。只是底色垫片，不需要 M4 地面那么密。 */
+const GROUND_PATCH_SEGMENT_SIZE_M = 4;
+
+/**
+ * 生成一块贴合地形高度场的山顶底板网格（世界坐标，节点不再缩放）。
+ *
+ * 每个顶点的 y 都取自 `terrainHeightAt` 再加 `heightOffsetM`（传负值即下沉），
+ * 因此这块板子会完整跟随山脊的横向衰减，
+ * 不会像旧的水平平板那样在两侧翘起来挡住玩家视野。
+ */
+function createTerrainPatchMesh(
+  widthM: number,
+  depthM: number,
+  heightOffsetM: number,
+): Mesh {
+  const halfWidth = widthM / 2;
+  const halfDepth = depthM / 2;
+  const segmentsX = Math.max(
+    1,
+    Math.round(widthM / GROUND_PATCH_SEGMENT_SIZE_M),
+  );
+  const segmentsZ = Math.max(
+    1,
+    Math.round(depthM / GROUND_PATCH_SEGMENT_SIZE_M),
+  );
+
+  const positions: number[] = [];
+  const normals: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+
+  for (let row = 0; row <= segmentsZ; row += 1) {
+    const vRatio = row / segmentsZ;
+    const z = -halfDepth + depthM * vRatio;
+    for (let column = 0; column <= segmentsX; column += 1) {
+      const uRatio = column / segmentsX;
+      const x = -halfWidth + widthM * uRatio;
+      positions.push(x, terrainHeightAt(x, z) + heightOffsetM, z);
+      // 兜底底板用纯色材质，法线只需朝上占位。
+      normals.push(0, 1, 0);
+      uvs.push(uRatio, vRatio);
+    }
+  }
+
+  const stride = segmentsX + 1;
+  for (let row = 0; row < segmentsZ; row += 1) {
+    for (let column = 0; column < segmentsX; column += 1) {
+      const topLeft = row * stride + column;
+      const topRight = topLeft + 1;
+      const bottomLeft = topLeft + stride;
+      const bottomRight = bottomLeft + 1;
+      indices.push(topLeft, bottomLeft, topRight);
+      indices.push(topRight, bottomLeft, bottomRight);
+    }
+  }
+
+  return utils.createMesh({ positions, normals, uvs, indices });
 }
