@@ -20,8 +20,17 @@ import type {
   WavesConfig,
 } from '../config/game-config';
 
-/** 大厅当前停留的界面。战斗开始后整个大厅节点隐藏。 */
-export type RoomViewStage = 'entry' | 'joining' | 'room' | 'hidden';
+/**
+ * 大厅当前停留的界面。战斗开始后整个大厅节点隐藏。
+ * briefing 是进游戏的第一屏：历史背景 + 任务目标 + 操作提示 + 动员，
+ * 玩家点「接受任务」后才到 entry 选进入方式。
+ */
+export type RoomViewStage =
+  | 'briefing'
+  | 'entry'
+  | 'joining'
+  | 'room'
+  | 'hidden';
 
 export interface RoomViewHandlers {
   readonly onSoloStart: () => void;
@@ -52,6 +61,7 @@ export class RoomView {
   private readonly routeNames: Readonly<Record<RouteId, string>>;
   private readonly handlers: RoomViewHandlers;
 
+  private readonly briefingPanel: Node;
   private readonly entryPanel: Node;
   private readonly joinPanel: Node;
   private readonly roomPanel: Node;
@@ -67,6 +77,8 @@ export class RoomView {
   private readonly reconnectLabel: Label;
 
   private stage: RoomViewStage = 'entry';
+  /** 动员页只看一次；没看完之前，所有回 entry 的请求都停在动员页。 */
+  private briefingAccepted = false;
   private codeInput = '';
   private isHost = false;
   private keyHandler: ((event: KeyboardEvent) => void) | null = null;
@@ -117,10 +129,13 @@ export class RoomView {
       'RoomReconnect',
       '',
       line,
-      new Vec3(0, -gap * 4, 0),
+      // 放到动员页按钮下方，重连提示在任何阶段都不压正文。
+      new Vec3(0, -gap * 7.2, 0),
       '#D9B86C',
     );
 
+    this.briefingPanel = this.createPanel('RoomBriefingPanel');
+    this.buildBriefingPanel(waves);
     this.entryPanel = this.createPanel('RoomEntryPanel');
     this.joinPanel = this.createPanel('RoomJoinPanel');
     this.roomPanel = this.createPanel('RoomSeatPanel');
@@ -195,12 +210,18 @@ export class RoomView {
     return this.stage;
   }
 
-  setStage(stage: RoomViewStage): void {
+  setStage(requested: RoomViewStage): void {
+    // 还没接受任务就不让进大厅；重连直接进战斗（hidden）不受影响。
+    const stage: RoomViewStage =
+      requested === 'entry' && !this.briefingAccepted ? 'briefing' : requested;
     this.stage = stage;
     this.root.active = stage !== 'hidden';
+    this.briefingPanel.active = stage === 'briefing';
     this.entryPanel.active = stage === 'entry';
     this.joinPanel.active = stage === 'joining';
     this.roomPanel.active = stage === 'room';
+    this.titleLabel.node.active = stage !== 'briefing';
+    this.hintLabel.node.active = stage !== 'briefing';
     if (stage === 'entry') {
       this.titleLabel.string = '狼牙山五壮士 · 集结';
       this.hintLabel.string = '选择进入方式';
@@ -277,6 +298,126 @@ export class RoomView {
     const who = seat.isBot ? 'AI 队友' : seat.displayName;
     const mine = !seat.isBot && seat.occupantId === selfId ? '（你）' : '';
     return `${seat.seatIndex + 1}. ${seat.heroName} · ${who}${mine} · 守 ${route}`;
+  }
+
+  /**
+   * 开场动员页。数字（分钟、波数、敌军总数、补给窗口）全部从 waves.json 读，
+   * 改配置不用改文案。
+   */
+  private buildBriefingPanel(waves: WavesConfig): void {
+    const panel = this.briefingPanel;
+    const p = this.presentation;
+    const body = p.hudFontSizePx;
+    const minutes = Math.round(waves.matchDurationSec / 60);
+    const routeList =
+      `${waves.routes.A.name} / ${waves.routes.B.name} / ${waves.routes.C.name}`;
+
+    this.createLabel(
+      panel,
+      'BriefingTitle',
+      '狼牙山五壮士',
+      p.reportTitleFontSizePx,
+      new Vec3(0, 200, 0),
+      '#F4E8C1',
+    );
+    this.createLabel(
+      panel,
+      'BriefingDate',
+      '1941 年 9 月 25 日 · 河北易县 · 棋盘陀',
+      body,
+      new Vec3(0, 158, 0),
+      '#C8F4FF',
+    );
+
+    const story = [
+      '日军三千五百余人合围狼牙山，主力部队和数万乡亲正在转移。',
+      '七连六班五名战士奉命断后，把敌人引上棋盘陀绝顶——你就是其中之一。',
+    ];
+    story.forEach((text, index) => {
+      this.createLabel(
+        panel,
+        `BriefingStory${index}`,
+        text,
+        body,
+        new Vec3(0, 112 - index * 28, 0),
+        '#DDE7EA',
+      );
+    });
+
+    this.createLabel(
+      panel,
+      'BriefingTaskTitle',
+      '作战任务',
+      body,
+      new Vec3(0, 42, 0),
+      '#FFD56A',
+    );
+    const tasks = [
+      `① 坚守棋盘陀 ${minutes} 分钟，顶住 ${waves.waves.length} 波、共 ${waves.totalEnemies} 名敌军`,
+      `② 三条上山路：${routeList}，队友分守，哪里吃紧你就去哪里`,
+      `③ 波次之间有 ${waves.intermissionSec} 秒补给窗口，抓紧捡弹药、补血包、上重机枪`,
+    ];
+    tasks.forEach((text, index) => {
+      this.createLabel(
+        panel,
+        `BriefingTask${index}`,
+        text,
+        body,
+        new Vec3(0, 12 - index * 28, 0),
+        '#DDE7EA',
+      );
+    });
+
+    this.createLabel(
+      panel,
+      'BriefingControls',
+      'WASD 移动 · 鼠标瞄准 · 左键射击 · R 换弹 · Q 换枪 · G 手榴弹 · H 血包 · F 上重机枪 / 拾取',
+      p.helpFontSizePx,
+      new Vec3(0, -84, 0),
+      '#8FA3AD',
+    );
+
+    this.createLabel(
+      panel,
+      'BriefingRally0',
+      '身后是转移中的乡亲和大部队，退无可退。',
+      p.reportLineFontSizePx,
+      new Vec3(0, -130, 0),
+      '#FFD56A',
+    );
+    this.createLabel(
+      panel,
+      'BriefingRally1',
+      '子弹打光就用石头——这座山，一定要拿下！',
+      p.reportLineFontSizePx,
+      new Vec3(0, -162, 0),
+      '#FFD56A',
+    );
+
+    this.createButton(
+      panel,
+      'BriefingAcceptButton',
+      '接受任务，上山！',
+      new Vec3(0, -236, 0),
+      '#D9B86C',
+      () => this.acceptBriefing(),
+    );
+    this.createLabel(
+      panel,
+      'BriefingKeyHint',
+      '按回车 / 空格也可继续',
+      p.helpFontSizePx,
+      new Vec3(0, -272, 0),
+      '#8FA3AD',
+    );
+  }
+
+  private acceptBriefing(): void {
+    if (this.briefingAccepted) {
+      return;
+    }
+    this.briefingAccepted = true;
+    this.setStage('entry');
   }
 
   private buildEntryPanel(): void {
@@ -356,6 +497,12 @@ export class RoomView {
       return;
     }
     this.keyHandler = (event: KeyboardEvent) => {
+      if (this.stage === 'briefing') {
+        if (event.key === 'Enter' || event.key === ' ') {
+          this.acceptBriefing();
+        }
+        return;
+      }
       if (this.stage !== 'joining') {
         return;
       }

@@ -68,6 +68,11 @@ export interface WeaponsConfig {
 
 export interface WavesConfig {
   readonly maxAliveEnemies: number;
+  /** 下面四项只用于开场动员文案，数值以服务端为准。 */
+  readonly totalEnemies: number;
+  readonly matchDurationSec: number;
+  readonly intermissionSec: number;
+  readonly waves: ReadonlyArray<{ readonly index: number }>;
   readonly routes: Readonly<
     Record<
       RouteId,
@@ -384,6 +389,10 @@ function isWavesConfig(value: unknown): value is WavesConfig {
   if (
     !isRecord(value) ||
     !isFiniteNumber(value.maxAliveEnemies) ||
+    !isFiniteNumber(value.totalEnemies) ||
+    !isFiniteNumber(value.matchDurationSec) ||
+    !isFiniteNumber(value.intermissionSec) ||
+    !Array.isArray(value.waves) ||
     !isRecord(value.routes)
   ) {
     return false;

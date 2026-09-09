@@ -350,9 +350,19 @@ export class M1Hud {
     this.fadeLabel(this.messageLabel, this.presentation.helpVisibleSec);
   }
 
+  /** 开局进入战斗时的动员横幅，接在大厅动员页之后，部署期先定位。 */
+  showBattleCry(deployPhaseSec: number): void {
+    this.waveBannerLabel.color = Color.fromHEX(new Color(), '#FFD56A');
+    this.waveBannerLabel.string =
+      `五壮士就位 · 敌军 ${deployPhaseSec} 秒后上山 · 守住棋盘陀！`;
+    this.fadeLabel(this.waveBannerLabel, this.presentation.supplyBannerSec);
+  }
+
   showWaveStart(waveIndex: number, totalWaves: number): void {
     this.waveBannerLabel.color = Color.fromHEX(new Color(), '#FFD56A');
-    this.waveBannerLabel.string = `第 ${waveIndex} 波进攻开始  /  共 ${totalWaves} 波`;
+    const rally = WAVE_RALLY[Math.min(waveIndex, WAVE_RALLY.length) - 1] ?? '';
+    this.waveBannerLabel.string =
+      `第 ${waveIndex} 波进攻开始  /  共 ${totalWaves} 波${rally ? `\n${rally}` : ''}`;
     this.fadeLabel(this.waveBannerLabel, this.presentation.waveBannerSec);
     // 先用短促程序音效占位，待正式战鼓素材补齐后替换。
     this.playCalloutSound();
@@ -971,6 +981,14 @@ export class M1Hud {
     node.layer = Layers.Enum.UI_2D;
   }
 }
+
+/** 每波开始时跟在波次标题下的一句动员，按波递进，最后一波最重。 */
+const WAVE_RALLY: readonly string[] = [
+  '敌人在试探，稳住阵脚，看准了再打',
+  '敌人加大了攻势，监住三条路，哪里吃紧去哪里',
+  '乡亲和大部队还在转移，一步也不能退！',
+  '最后一波！子弹打光就用石头——拿下这座山！',
+];
 
 function formatTime(totalSec: number): string {
   const minutes = Math.floor(totalSec / 60);

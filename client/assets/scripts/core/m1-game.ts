@@ -828,9 +828,15 @@ export class M1Game {
     this.publishDebugState();
   }
 
-  private onMatchStart(_message: MatchStartMessage): void {
+  private onMatchStart(message: MatchStartMessage): void {
     this.matchPhase = 'deploy';
     this.enterCombat();
+    const payload = message.payload;
+    const deploySec = Math.max(
+      0,
+      Math.round((payload.deployEndsAtMs - payload.startedAtMs) / 1000),
+    );
+    this.hud.showBattleCry(deploySec);
     this.publishDebugState();
   }
 
