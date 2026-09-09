@@ -66,6 +66,9 @@ export class M1Hud {
   private readonly interactionLabel: Label;
   private readonly inventoryLabel: Label;
   private readonly machineGunLabel: Label;
+  private readonly disconnectOverlay: Node;
+  private readonly disconnectTitleLabel: Label;
+  private readonly disconnectDetailLabel: Label;
   private readonly gameplay: GameplayConfig;
   private readonly weapons: WeaponsConfig;
   private readonly allyLabels = new Map<number, Label>();
@@ -258,6 +261,54 @@ export class M1Hud {
       presentation.medkitGlowColor,
     );
     this.createCrosshair();
+    // 断网遮罩最后创建，排在所有 HUD 兄弟节点之后才能压在最上层。
+    this.disconnectOverlay = new Node('DisconnectOverlay');
+    this.setUiLayer(this.disconnectOverlay);
+    this.disconnectOverlay.setParent(this.root);
+    const dim = this.disconnectOverlay.addComponent(Graphics);
+    dim.fillColor = new Color(24, 48, 64, presentation.disconnectOverlayOpacity);
+    dim.rect(
+      -presentation.designWidth / 2,
+      -presentation.designHeight / 2,
+      presentation.designWidth,
+      presentation.designHeight,
+    );
+    dim.fill();
+    this.disconnectTitleLabel = this.createOverlayLabel(
+      this.disconnectOverlay,
+      'DisconnectTitle',
+      presentation.reportTitleFontSizePx,
+      presentation.disconnectBannerOffsetYPx,
+      '#FFD56A',
+    );
+    this.disconnectDetailLabel = this.createOverlayLabel(
+      this.disconnectOverlay,
+      'DisconnectDetail',
+      presentation.reportLineFontSizePx,
+      presentation.disconnectBannerOffsetYPx - presentation.reportLineGapPx * 1.4,
+      '#C8F4FF',
+    );
+    this.disconnectOverlay.active = false;
+  }
+
+  /**
+   * 战斗阶段的醒目断网遮罩。大厅在战斗中是隐藏的，角落小字玩家根本
+   * 注意不到，所以掉线要压一层半透明底并把标题放到屏幕中央。
+   */
+  showDisconnectBanner(title: string, detail: string): void {
+    this.disconnectTitleLabel.string = title;
+    this.disconnectDetailLabel.string = detail;
+    this.disconnectOverlay.active = true;
+  }
+
+  updateDisconnectDetail(detail: string): void {
+    if (this.disconnectOverlay.active) {
+      this.disconnectDetailLabel.string = detail;
+    }
+  }
+
+  hideDisconnectBanner(): void {
+    this.disconnectOverlay.active = false;
   }
 
   renderConnection(status: ConnectionStatus): void {
@@ -494,10 +545,14 @@ export class M1Hud {
     this.createRestartButton(report);
   }
 
-  updateAllies(allies: readonly AllyState[]): void {
+  /**
+   * 队友面板：真人战友与 AI 队友一起列，按席位排序，自己不列
+   *（自己的血量弹药已在左下角）。真人没有 aiState，状态列显示托管/战斗中。
+   */
+  updateAllies(allies: readonly AllyState[], playerId: string | null): void {
     this.allyIds.clear();
     const bots = allies
-      .filter((ally) => ally.isBot)
+      .filter((ally) => ally.id !== playerId)
       .slice()
       .sort((first, second) => first.seatIndex - second.seatIndex);
     for (let index = 0; index < bots.length; index += 1) {
@@ -523,7 +578,11 @@ export class M1Hud {
       }
       const state = ally.hp <= 0
         ? '阵亡'
-        : this.describeAllyState(ally.aiState);
+        : ally.isBot
+          ? this.describeAllyState(ally.aiState)
+          : ally.autopilot
+            ? '托管中'
+            : '战友';
       label.string = `${ally.heroName}  ${ally.hp}/${ally.maxHp}  ${ally.routeId}路  ${state}`;
       if (ally.hp <= 0 || !this.flashingAllies.has(ally.id)) {
         label.color = Color.fromHEX(
@@ -880,6 +939,28 @@ export class M1Hud {
     text.horizontalAlign = Label.HorizontalAlign.CENTER;
     text.verticalAlign = Label.VerticalAlign.CENTER;
     text.color = Color.fromHEX(new Color(), '#183040');
+  }
+
+  private createOverlayLabel(
+    parent: Node,
+    name: string,
+    fontSize: number,
+    y: number,
+    colorHex: string,
+  ): Label {
+    const node = new Node(name);
+    this.setUiLayer(node);
+    node.setParent(parent);
+    node.setPosition(0, y, 0);
+    const label = node.addComponent(Label);
+    label.string = '';
+    label.fontSize = fontSize;
+    label.lineHeight = fontSize * 1.3;
+    label.horizontalAlign = Label.HorizontalAlign.CENTER;
+    label.verticalAlign = Label.VerticalAlign.CENTER;
+    label.overflow = Label.Overflow.NONE;
+    label.color = Color.fromHEX(new Color(), colorHex);
+    return label;
   }
 
   private createDamageVignette(): UIOpacity {

@@ -16,10 +16,15 @@ export interface GameplayConfig {
   };
   readonly server: {
     readonly tickRateHz: number;
+    /** 掉线后服务端保留席位的时长，客户端只用来在断网遮罩上显示倒计时。 */
+    readonly reconnectGraceSec: number;
   };
   readonly combat: {
     readonly enemyHitboxRadiusM: number;
     readonly enemyHitboxHeightM: number;
+    /** 服务端真人眼高 = (torso + head) / 2，客户端落地、观战都用同一算法。 */
+    readonly headHitboxStartM: number;
+    readonly torsoHitboxStartM: number;
   };
   readonly arena: {
     readonly widthM: number;
@@ -34,6 +39,17 @@ export interface GameplayConfig {
     readonly durationSec: number;
     readonly deployPhaseSec: number;
   };
+}
+
+/**
+ * 真人玩家的眼高。服务端 m2-battle-session 以 (torso + head) / 2 建模真人
+ * 位置（position 即眼睛），客户端把眼位落到脚底、或把脚底抬到眼位都走这里，
+ * 保证两边口径一致，别再各自写 hitboxHeight / 2 之类的近似。
+ */
+export function playerEyeHeightM(gameplay: GameplayConfig): number {
+  return (
+    (gameplay.combat.torsoHitboxStartM + gameplay.combat.headHitboxStartM) / 2
+  );
 }
 
 export interface WeaponPresentationConfig {
@@ -194,6 +210,9 @@ export interface PresentationConfig {
   readonly reportLineFontSizePx: number;
   readonly reportLineGapPx: number;
   readonly reportFirstLineOffsetYPx: number;
+  /** 战斗中断网遮罩：半透明底的不透明度（0-255）与标题纵向位置。 */
+  readonly disconnectOverlayOpacity: number;
+  readonly disconnectBannerOffsetYPx: number;
   readonly weaponOffsetXPx: number;
   readonly weaponOffsetYPx: number;
   readonly weaponLengthPx: number;
@@ -285,6 +304,8 @@ const PRESENTATION_NUMBER_KEYS = [
   'reportLineFontSizePx',
   'reportLineGapPx',
   'reportFirstLineOffsetYPx',
+  'disconnectOverlayOpacity',
+  'disconnectBannerOffsetYPx',
   'weaponOffsetXPx',
   'weaponOffsetYPx',
   'weaponLengthPx',
@@ -337,8 +358,11 @@ function isGameplayConfig(value: unknown): value is GameplayConfig {
     typeof player.defaultLoadout.primary === 'string' &&
     typeof player.defaultLoadout.throwable === 'string' &&
     isFiniteNumber(server.tickRateHz) &&
+    isFiniteNumber(server.reconnectGraceSec) &&
     isFiniteNumber(combat.enemyHitboxRadiusM) &&
     isFiniteNumber(combat.enemyHitboxHeightM) &&
+    isFiniteNumber(combat.headHitboxStartM) &&
+    isFiniteNumber(combat.torsoHitboxStartM) &&
     isFiniteNumber(arena.widthM) &&
     isFiniteNumber(arena.depthM) &&
     isFiniteNumber(arena.itemPickupRangeM) &&

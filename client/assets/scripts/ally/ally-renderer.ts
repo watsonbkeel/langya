@@ -14,6 +14,7 @@ import type {
   AllyAiState,
   AllyState,
 } from '../../../../shared/protocol';
+import { playerEyeHeightM } from '../config/game-config';
 import type {
   GameplayConfig,
   PresentationConfig,
@@ -28,6 +29,17 @@ import {
   loadTexture,
   spriteStatePath,
 } from '../core/billboard';
+
+interface HumanTrace {
+  magazineAmmo: number;
+  x: number;
+  z: number;
+  firedUntilMs: number;
+  movedUntilMs: number;
+}
+
+/** 两帧之间位移平方超过此值才算「在跑」，滤掉服务端浮点抖动。 */
+const HUMAN_MOVE_EPSILON_M2 = 0.02 * 0.02;
 
 export class AllyRenderer {
   private readonly root: Node;
@@ -57,6 +69,9 @@ export class AllyRenderer {
   private readonly targetScales = new Map<string, Vec3>();
   private readonly interpolationPosition = new Vec3();
   private readonly interpolationScale = new Vec3();
+  // 其他真人玩家没有 aiState，表现状态从连续快照推导：
+  // 弹匣数下降 = 刚开火；位置有位移 = 在跑动；否则守备。
+  private readonly humanTraces = new Map<string, HumanTrace>();
 
   constructor(
     sceneRoot: Node,
@@ -152,9 +167,11 @@ export class AllyRenderer {
     hiddenAllyId: string | null = null,
   ): void {
     const visibleIds = new Set<string>();
+    const nowMs = Date.now();
     for (const ally of allies) {
+      // 自己（第一视角）与正在被观战的那名队友不画；其余真人与 AI 队友
+      // 统一走同一条渲染管线（PRD 8.2：allies[] 用 isBot 区分）。
       if (
-        !ally.isBot ||
         ally.id === playerId ||
         ally.id === hiddenAllyId ||
         ally.hp <= 0
@@ -169,7 +186,7 @@ export class AllyRenderer {
         this.nodes.set(ally.id, node);
         this.heroNameByNode.set(ally.id, ally.heroName);
       }
-      this.applyState(node, ally, isNew);
+      this.applyState(node, ally, isNew, nowMs);
     }
 
     for (const [allyId, node] of this.nodes) {
@@ -179,6 +196,7 @@ export class AllyRenderer {
         this.heroNameByNode.delete(allyId);
         this.targetPositions.delete(allyId);
         this.targetScales.delete(allyId);
+        this.humanTraces.delete(allyId);
         node.destroy();
       }
     }
@@ -247,6 +265,7 @@ export class AllyRenderer {
     this.states.clear();
     this.targetPositions.clear();
     this.targetScales.clear();
+    this.humanTraces.clear();
     this.root.destroy();
     this.allyMaterial.destroy();
     this.engageMaterial.destroy();
@@ -304,10 +323,18 @@ export class AllyRenderer {
     return material;
   }
 
-  private applyState(node: Node, ally: AllyState, immediate: boolean): void {
+  private applyState(
+    node: Node,
+    ally: AllyState,
+    immediate: boolean,
+    nowMs: number,
+  ): void {
     const baseHeight = this.gameplay.combat.enemyHitboxHeightM;
+    const state = ally.isBot
+      ? ally.aiState
+      : this.deriveHumanState(ally, nowMs);
     const heightScale =
-      ally.isCrouch || ally.aiState === 'engage'
+      ally.isCrouch || state === 'engage'
         ? this.presentation.engageHeightScale
         : 1;
     const height = baseHeight * heightScale;
@@ -318,7 +345,12 @@ export class AllyRenderer {
       this.targetPositions.set(ally.id, position);
     }
     // 根节点原点固定在脚底，碰撞盒与立绘均在本地上移半个身高。
-    position.set(ally.position.x, ally.position.y, ally.position.z);
+    // AI 队友的 position 已是脚底；真人的 position 是眼睛（服务端按眼高
+    // 建模，与观战取眼位对称），落地要减回一个眼高。
+    const footY = ally.isBot
+      ? ally.position.y
+      : ally.position.y - this.humanEyeHeightM();
+    position.set(ally.position.x, footY, ally.position.z);
     let scale = this.targetScales.get(ally.id);
     if (!scale) {
       scale = new Vec3();
@@ -330,17 +362,64 @@ export class AllyRenderer {
       node.setScale(scale);
     }
 
-    if (ally.aiState && this.states.get(ally.id) !== ally.aiState) {
+    if (state && this.states.get(ally.id) !== state) {
       this.getPlaceholderRenderer(node)
         ?.setSharedMaterial(
-          ally.aiState === 'engage'
+          state === 'engage'
             ? this.engageMaterial
             : this.allyMaterial,
           0,
         );
-      this.states.set(ally.id, ally.aiState);
-      this.updateBillboardState(node, ally.aiState, ally.heroName);
+      this.states.set(ally.id, state);
+      this.updateBillboardState(node, state, ally.heroName);
     }
+  }
+
+  /** 真人眼高：与服务端建模、m1-game 观战取眼位保持同一口径。 */
+  private humanEyeHeightM(): number {
+    return playerEyeHeightM(this.gameplay);
+  }
+
+  /**
+   * 协议里没有「别人开枪了」的广播，但每帧快照都带弹匣数与位置：
+   * 弹匣变少（且不是在换弹）就是刚开了火，位移超过阈值就是在跑。
+   * 开火表现保持 hitFeedbackSec，避免 20Hz 下一帧闪一下看不见。
+   */
+  private deriveHumanState(ally: AllyState, nowMs: number): AllyAiState {
+    let trace = this.humanTraces.get(ally.id);
+    if (!trace) {
+      trace = {
+        magazineAmmo: ally.weapon.magazineAmmo,
+        x: ally.position.x,
+        z: ally.position.z,
+        firedUntilMs: 0,
+        movedUntilMs: 0,
+      };
+      this.humanTraces.set(ally.id, trace);
+      return 'guard';
+    }
+    const holdMs = this.presentation.hitFeedbackSec * 1000;
+    if (
+      !ally.weapon.isReloading &&
+      ally.weapon.magazineAmmo < trace.magazineAmmo
+    ) {
+      trace.firedUntilMs = nowMs + holdMs;
+    }
+    trace.magazineAmmo = ally.weapon.magazineAmmo;
+    const dx = ally.position.x - trace.x;
+    const dz = ally.position.z - trace.z;
+    if (dx * dx + dz * dz > HUMAN_MOVE_EPSILON_M2) {
+      trace.movedUntilMs = nowMs + holdMs;
+    }
+    trace.x = ally.position.x;
+    trace.z = ally.position.z;
+    if (nowMs < trace.firedUntilMs) {
+      return 'engage';
+    }
+    if (nowMs < trace.movedUntilMs) {
+      return 'reassign';
+    }
+    return 'guard';
   }
 
   private getPlaceholderRenderer(node: Node): MeshRenderer | null {

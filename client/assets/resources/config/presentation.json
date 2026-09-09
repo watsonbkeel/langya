@@ -76,6 +76,8 @@
   "reportLineFontSizePx": 24,
   "reportLineGapPx": 42,
   "reportFirstLineOffsetYPx": 45,
+  "disconnectOverlayOpacity": 200,
+  "disconnectBannerOffsetYPx": 40,
   "weaponOffsetXPx": 480,
   "weaponOffsetYPx": -320,
   "weaponLengthPx": 220,

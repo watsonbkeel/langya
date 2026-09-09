@@ -24,6 +24,7 @@ import type {
   WorldSnapshotMessage,
   WaveStartMessage,
 } from '../../../../shared/protocol';
+import { playerEyeHeightM } from '../config/game-config';
 import type { M1GameConfig } from '../config/game-config';
 import { AllyRenderer } from '../ally/ally-renderer';
 import { EnemyRenderer } from '../enemy/enemy-renderer';
@@ -41,6 +42,8 @@ import { WeaponView } from '../weapon/weapon-view';
 /** 重连凭证存在会话级存储：刷新页面能回原席位，关掉标签页则不保留。 */
 const RECONNECT_TOKEN_KEY = 'langyashan.reconnectToken';
 const PLAYER_NAME_KEY = 'langyashan.playerName';
+/** 掉线后重试连接的间隔；太短会在服务器重启期间刷成风暴。 */
+const RECONNECT_RETRY_DELAY_MS = 2000;
 
 interface M1DebugState {
   readonly connected: boolean;
@@ -168,6 +171,10 @@ export class M1Game {
   private isHost = false;
   private matchStarted = false;
   private reconnectPending = false;
+  /** 战斗中掉线的时间点，用来在断网遮罩上显示重连剩余秒数。 */
+  private combatDisconnectedAtMs: number | null = null;
+  private battleCryShown = false;
+  private reconnectRetryTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly playerName: string;
 
   constructor(canvas: Node, config: M1GameConfig) {
@@ -295,6 +302,9 @@ export class M1Game {
           this.lastDisconnectCode = status.code;
           this.lastDisconnectReason = status.reason;
           this.onDisconnected(status.code);
+        } else if (status.kind === 'error') {
+          // 取地址失败不会触发 close，重连循环要在这里补上。
+          this.onConnectError();
         }
         this.hud.renderConnection(status);
         this.publishDebugState();
@@ -355,8 +365,13 @@ export class M1Game {
     if (token) {
       this.reconnectPending = true;
       this.reconnectToken = token;
-      this.roomView.setStage('entry');
-      this.roomView.setReconnectNotice('检测到未结束的战斗，正在尝试重连…');
+      if (this.matchStarted) {
+        // 战斗中掉线又连上了：大厅保持隐藏，只更新遮罩上的进度。
+        this.hud.updateDisconnectDetail('已连上服务器，正在恢复阵地…');
+      } else {
+        this.roomView.setStage('entry');
+        this.roomView.setReconnectNotice('检测到未结束的战斗，正在尝试重连…');
+      }
       this.netClient.reconnect(token);
       this.publishDebugState();
       return;
@@ -370,16 +385,97 @@ export class M1Game {
     // 1008 是服务器主动踢人（限流 / 非法输入），重连没有意义。
     if (code === 1008 || this.matchEnded) {
       this.clearStoredToken();
+      if (this.matchStarted && !this.matchEnded) {
+        this.controller.setLobbyMode(true);
+        this.hud.showDisconnectBanner(
+          '连接已断开',
+          '服务器结束了这次连接，请刷新页面重新进入',
+        );
+      }
       return;
     }
     if (!this.reconnectToken) {
+      if (this.matchStarted) {
+        this.controller.setLobbyMode(true);
+        this.hud.showDisconnectBanner('连接已断开', '请刷新页面重新进入');
+      }
       return;
     }
     this.reconnectPending = true;
-    this.roomView.setStage('entry');
-    this.roomView.setReconnectNotice('连接中断，正在重连…');
     this.controller.setLobbyMode(true);
-    void this.netClient.connect();
+    if (this.matchStarted) {
+      // 战斗阶段大厅是隐藏的，角落小字玩家看不到；
+      // 用醒目遮罩告诉他阵地还给他留着（PRD 7.3 的重连宽限）。
+      if (this.combatDisconnectedAtMs === null) {
+        this.combatDisconnectedAtMs = performance.now();
+      }
+      this.hud.showDisconnectBanner('连接中断', this.describeReconnectGrace());
+    } else {
+      this.roomView.setStage('entry');
+      this.roomView.setReconnectNotice('连接中断，正在重连…');
+    }
+    this.scheduleReconnect();
+  }
+
+  /** 拿不到服务器地址时不会有 close 事件，重连循环要靠这里续上。 */
+  private onConnectError(): void {
+    if (this.reconnectPending && this.reconnectToken && !this.matchEnded) {
+      this.scheduleReconnect();
+    }
+  }
+
+  /**
+   * 重连按固定间隔重试，不立刻发起：服务器不在时紧接着的 error/close
+   * 会把连接请求打成死循环。
+   */
+  private scheduleReconnect(): void {
+    if (this.reconnectRetryTimer !== null) {
+      return;
+    }
+    this.reconnectRetryTimer = setTimeout(() => {
+      this.reconnectRetryTimer = null;
+      if (this.reconnectPending && this.reconnectToken && !this.matchEnded) {
+        void this.netClient.connect();
+      }
+    }, RECONNECT_RETRY_DELAY_MS);
+  }
+
+  private cancelScheduledReconnect(): void {
+    if (this.reconnectRetryTimer !== null) {
+      clearTimeout(this.reconnectRetryTimer);
+      this.reconnectRetryTimer = null;
+    }
+  }
+
+  private describeReconnectGrace(): string {
+    const graceSec = this.config.gameplay.server.reconnectGraceSec;
+    if (this.combatDisconnectedAtMs === null) {
+      return `正在重连… 阵地为你保留 ${graceSec} 秒`;
+    }
+    const elapsedSec = (performance.now() - this.combatDisconnectedAtMs) / 1000;
+    const remainingSec = Math.ceil(graceSec - elapsedSec);
+    if (remainingSec > 0) {
+      return `正在重连… 阵地为你保留 ${remainingSec} 秒`;
+    }
+    return '仍在重连… 战友已暂时替你守住阵地，连上即可收回';
+  }
+
+  /** 重连成功（无论是刷新页面回来还是战斗中掉线）后的统一收尾。 */
+  private onReconnected(): void {
+    this.reconnectPending = false;
+    this.cancelScheduledReconnect();
+    this.combatDisconnectedAtMs = null;
+    // 服务端紧接着会补发 match_start，那是接续不是开局，动员横幅不再喊。
+    this.battleCryShown = true;
+    this.roomView.setReconnectNotice('');
+    this.hud.hideDisconnectBanner();
+    if (this.matchStarted) {
+      this.roomView.setStage('hidden');
+      this.controller.setLobbyMode(false);
+      this.hud.setCombatFocus(false, '已回到阵地 · 点击画面继续战斗');
+      return;
+    }
+    this.enterCombat();
   }
 
   private onRoomActionResult(message: RoomActionResultMessage): void {
@@ -389,9 +485,18 @@ export class M1Game {
       if (payload.action === 'reconnect') {
         // 凭证失效就别再重试了，清掉回大厅重新进。
         this.clearStoredToken();
+        this.combatDisconnectedAtMs = null;
         this.roomView.setReconnectNotice('');
-        this.roomView.setStage('entry');
-        this.roomView.setHint('上一局已经结束，请重新选择进入方式');
+        if (this.matchStarted) {
+          // 战斗中掉线太久，那一局已经收了；战场画面没意义，给出明确出路。
+          this.hud.showDisconnectBanner(
+            '这一局已经结束',
+            '掉线超过保留时间，请刷新页面重新集结',
+          );
+        } else {
+          this.roomView.setStage('entry');
+          this.roomView.setHint('上一局已经结束，请重新选择进入方式');
+        }
       } else {
         this.roomView.showRejectReason(payload);
       }
@@ -421,9 +526,7 @@ export class M1Game {
       this.roomView.setStage('room');
       this.roomView.setHint('已进入房间，等待房主开始');
     } else if (payload.action === 'reconnect') {
-      this.reconnectPending = false;
-      this.roomView.setReconnectNotice('');
-      this.enterCombat();
+      this.onReconnected();
     } else if (payload.action === 'player_ready') {
       this.roomView.setHint('已准备，等待房主开始');
     }
@@ -476,6 +579,7 @@ export class M1Game {
   private clearStoredToken(): void {
     this.reconnectToken = null;
     this.reconnectPending = false;
+    this.cancelScheduledReconnect();
     if (typeof window !== 'undefined') {
       window.sessionStorage?.removeItem(RECONNECT_TOKEN_KEY);
     }
@@ -488,6 +592,10 @@ export class M1Game {
       this.fps = Math.round(this.fpsFrames / this.fpsElapsedSec);
       this.fpsElapsedSec = 0;
       this.fpsFrames = 0;
+      // 断网遮罩的倒计时借用这个每秒一次的节拍刷新，不再另开计时器。
+      if (this.combatDisconnectedAtMs !== null && this.reconnectPending) {
+        this.hud.updateDisconnectDetail(this.describeReconnectGrace());
+      }
       this.publishDebugState();
     }
     this.controller.update(deltaTime);
@@ -520,6 +628,7 @@ export class M1Game {
   }
 
   destroy(): void {
+    this.cancelScheduledReconnect();
     this.netClient.setOpenHandler(null);
     this.netClient.disconnect();
     this.roomView.destroy();
@@ -582,7 +691,7 @@ export class M1Game {
       this.playerId,
       this.spectatingAllyId,
     );
-    this.hud.updateAllies(message.payload.allies);
+    this.hud.updateAllies(message.payload.allies, this.playerId);
     this.hud.updateRouteThreat(
       message.payload.enemies,
       message.payload.serverTimeMs,
@@ -829,14 +938,20 @@ export class M1Game {
   }
 
   private onMatchStart(message: MatchStartMessage): void {
+    // 重连时服务端会补发一次 match_start；那不是新开局，
+    // 不能把部署期动员再喊一遍误导玩家。开局顺序是 room_state(active)
+    // 先于 match_start，所以不能拿 matchStarted 判断，单独记一个标志。
     this.matchPhase = 'deploy';
     this.enterCombat();
-    const payload = message.payload;
-    const deploySec = Math.max(
-      0,
-      Math.round((payload.deployEndsAtMs - payload.startedAtMs) / 1000),
-    );
-    this.hud.showBattleCry(deploySec);
+    if (!this.battleCryShown) {
+      this.battleCryShown = true;
+      const payload = message.payload;
+      const deploySec = Math.max(
+        0,
+        Math.round((payload.deployEndsAtMs - payload.startedAtMs) / 1000),
+      );
+      this.hud.showBattleCry(deploySec);
+    }
     this.publishDebugState();
   }
 
@@ -909,12 +1024,16 @@ export class M1Game {
     this.hud.setCombatFocus(true);
     const current = allies.find(
       (ally) =>
-        ally.isBot &&
-        ally.hp > 0 &&
+        this.canSpectate(ally) &&
         ally.id === this.spectatingAllyId,
     );
-    const target = current ?? allies.find((ally) => ally.isBot && ally.hp > 0);
+    const target = current ?? allies.find((ally) => this.canSpectate(ally));
     this.applySpectatorTarget(target);
+  }
+
+  /** 观战候选：除自己以外所有还活着的队友，真人和 AI 都可以跟。 */
+  private canSpectate(ally: AllyState): boolean {
+    return ally.id !== this.playerId && ally.hp > 0;
   }
 
   private cycleSpectator(): void {
@@ -922,7 +1041,7 @@ export class M1Game {
       return;
     }
     const candidates = this.latestAllies
-      .filter((ally) => ally.isBot && ally.hp > 0)
+      .filter((ally) => this.canSpectate(ally))
       .sort((first, second) => first.seatIndex - second.seatIndex);
     if (candidates.length === 0) {
       this.applySpectatorTarget(undefined);
@@ -948,7 +1067,8 @@ export class M1Game {
     if (!target) {
       return;
     }
-    const eyeHeight = this.config.gameplay.combat.enemyHitboxHeightM / 2;
+    // AI 队友的 position 是脚底，要抬到眼位；真人的 position 本身就是眼位。
+    const eyeHeight = target.isBot ? playerEyeHeightM(this.config.gameplay) : 0;
     this.controller.setSpectatorTarget(
       {
         x: target.position.x,
