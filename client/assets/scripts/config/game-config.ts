@@ -38,6 +38,8 @@ export interface GameplayConfig {
 
 export interface WeaponPresentationConfig {
   readonly displayName: string;
+  /** 投掷物（手榴弹）没有枪口，第一视角走「握在手里」的构图。 */
+  readonly isThrowable?: boolean;
   readonly assets: {
     readonly firstPerson?: string;
     readonly icon?: string;
