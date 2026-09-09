@@ -631,7 +631,12 @@ export class M1Game {
     }
     this.previousAuthoritativePosition = { ...player.position };
     this.weaponState = { ...player.weapon };
-    this.weaponView.setWeapon(player.weapon.weaponId);
+    // 第一视角显示的武器要跟着「是否架在重机枪上」走：
+    // 上了机枪就该看到机枪，而不是手里还端着步枪。
+    const mountedWeaponId = player.mountedMgId
+      ? this.worldInteractions.getMachineGun(player.mountedMgId)?.weaponId
+      : undefined;
+    this.weaponView.setWeapon(mountedWeaponId ?? player.weapon.weaponId);
     this.availableWeaponIds = player.availableWeaponIds.slice();
     this.medkitsRemaining = player.medkitsRemaining;
     this.grenadesRemaining = player.grenadesRemaining;

@@ -52,12 +52,17 @@ export function spriteStatePath(
 export function loadSpriteFrame(
   path: string,
   onLoaded: (frame: SpriteFrame) => void,
+  onFailed?: (path: string) => void,
 ): void {
-  loadTexture(path, (texture) => {
-    const frame = new SpriteFrame();
-    frame.texture = texture;
-    onLoaded(frame);
-  });
+  loadTexture(
+    path,
+    (texture) => {
+      const frame = new SpriteFrame();
+      frame.texture = texture;
+      onLoaded(frame);
+    },
+    onFailed,
+  );
 }
 
 export function combatSpritePath(path: string): string {
