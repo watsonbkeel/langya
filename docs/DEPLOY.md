@@ -95,6 +95,17 @@ Physics / Spine 等模块，显著增加首屏请求和体积：
 Mac CLI 在日志出现 `Build Task (web-mobile) Finished` 后仍可能返回 36；必须同时
 检查完成日志与 `client/build/web-mobile/index.html`，不能只按该退出码误判失败。
 
+构建产物里**业务脚本在 `assets/main/index.js`**，不在 `src/chunks/bundle.js`
+（后者只有约 10KB，是 SystemJS 引导代码）。且 `debug=false` 会混淆标识符，
+所以**不能按函数名/常量名 grep 验证**某段逻辑是否打包成功——搜 `terrainHeightAt`
+永远搜不到。要验证时改搜算法特征式，例如地形的 `smoothStep`：
+
+```bash
+# 正确：搜混淆后仍保留的算法结构
+grep -oE "\*\(3-2\*[a-zA-Z_$]+\)" client/build/web-mobile/assets/main/index.js
+# 期望输出类似 *(3-2*i)
+```
+
 Debian 收到构建产物后执行：
 
 ```bash
