@@ -31,6 +31,7 @@ import {
   createSoftShadowMaterial,
   faceBillboardToCamera,
   loadTexture,
+  spriteStatePath,
 } from '../core/billboard';
 
 export class EnemyRenderer {
@@ -69,10 +70,12 @@ export class EnemyRenderer {
     this.gameplay = gameplay;
     this.presentation = presentation;
     const baseSpritePath = combatSpritePath(enemySpritePath);
+    // 路径解析统一走 spriteStatePath，同时兼容文件式（.../idle）
+    // 与目录式（.../seat-0）两种配置写法。
     this.spritePaths = {
-      idle: baseSpritePath,
-      run: baseSpritePath.replace(/\/idle$/, '/run'),
-      fire: baseSpritePath.replace(/\/idle$/, '/fire'),
+      idle: spriteStatePath(baseSpritePath, 'idle'),
+      run: spriteStatePath(baseSpritePath, 'run'),
+      fire: spriteStatePath(baseSpritePath, 'fire'),
     };
     this.worldRoot = new Node('M1World');
     this.worldRoot.setParent(sceneRoot);

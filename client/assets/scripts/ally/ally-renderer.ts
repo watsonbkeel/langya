@@ -26,6 +26,7 @@ import {
   createSoftShadowMaterial,
   faceBillboardToCamera,
   loadTexture,
+  spriteStatePath,
 } from '../core/billboard';
 
 export class AllyRenderer {
@@ -43,6 +44,10 @@ export class AllyRenderer {
   private readonly heroSpritePaths: Readonly<Record<string, string>>;
   private readonly heroMaterials = new Map<string, Readonly<Record<'idle' | 'run' | 'fire', Material>>>();
   private readonly textures = new Map<'idle' | 'run' | 'fire', Texture2D>();
+  // 记录哪些英雄的哪些状态贴图确实加载成功了。
+  // 只有真正拿到纹理的材质才允许被选用，否则回退到通用中国军人立绘，
+  // 避免材质停留在引擎缺省灰贴图（就是场上那个会移动的灰色方块）。
+  private readonly heroTextureReady = new Map<string, Set<'idle' | 'run' | 'fire'>>();
   private idleTextureLoaded = false;
   private cameraNode: Node | null = null;
   private readonly nodes = new Map<string, Node>();
@@ -64,9 +69,9 @@ export class AllyRenderer {
     this.presentation = presentation;
     const baseSpritePath = combatSpritePath(allySpritePath);
     this.spritePaths = {
-      idle: baseSpritePath,
-      run: baseSpritePath.replace(/\/idle$/, '/run'),
-      fire: baseSpritePath.replace(/\/idle$/, '/fire'),
+      idle: spriteStatePath(baseSpritePath, 'idle'),
+      run: spriteStatePath(baseSpritePath, 'run'),
+      fire: spriteStatePath(baseSpritePath, 'fire'),
     };
     const normalizedHeroPaths: Record<string, string> = {};
     for (const heroName in heroSpritePaths) {
@@ -100,21 +105,22 @@ export class AllyRenderer {
         fire: createBillboardMaterial(),
       };
       this.heroMaterials.set(heroName, materials);
+      this.heroTextureReady.set(heroName, new Set());
       (['idle', 'run', 'fire'] as const).forEach((state) => {
-        const path = state === 'idle'
-          ? spritePath
-          : spritePath.replace(/\/idle$/, `/${state}`);
-        loadTexture(path, (texture) => {
-          if (!this.root.isValid) return;
-          materials[state].setProperty('mainTexture', texture);
-          for (const [allyId, node] of this.nodes) {
-            this.updateBillboardState(
-              node,
-              this.states.get(allyId) ?? 'guard',
-              this.heroNameByNode.get(allyId),
-            );
-          }
-        });
+        const path = spriteStatePath(spritePath, state);
+        loadTexture(
+          path,
+          (texture) => {
+            if (!this.root.isValid) return;
+            materials[state].setProperty('mainTexture', texture);
+            this.heroTextureReady.get(heroName)?.add(state);
+            this.refreshAllBillboards();
+          },
+          () => {
+            // 加载失败时不标记就绪，updateBillboardState 会自动回退到通用立绘。
+            this.refreshAllBillboards();
+          },
+        );
       });
     }
     (['idle', 'run', 'fire'] as const).forEach((state) => {
@@ -270,8 +276,11 @@ export class AllyRenderer {
       node,
       null,
       this.billboardMesh,
-      this.heroMaterials.get(heroName)?.idle ?? this.billboardMaterials.idle,
+      // 初始先挂通用 idle，具体用哪张交给 updateBillboardState 按
+      // “贴图是否真的就绪”判定，避免挂上空纹理的英雄材质变灰块。
+      this.billboardMaterials.idle,
     );
+    this.updateBillboardState(node, 'guard', heroName);
     renderer.enabled = !this.idleTextureLoaded;
 
     const shadow = new Node('GroundShadow');
@@ -342,13 +351,41 @@ export class AllyRenderer {
     return node.getChildByName('Billboard')?.getComponent(MeshRenderer) ?? null;
   }
 
+  private refreshAllBillboards(): void {
+    for (const [allyId, node] of this.nodes) {
+      this.updateBillboardState(
+        node,
+        this.states.get(allyId) ?? 'guard',
+        this.heroNameByNode.get(allyId),
+      );
+    }
+  }
+
   private updateBillboardState(node: Node, state: AllyAiState, heroName?: string): void {
     const spriteState = state === 'engage' ? 'fire' : 'guard' === state || 'deploy' === state ? 'idle' : 'run';
-    const heroMaterials = heroName ? this.heroMaterials.get(heroName) : undefined;
-    const material = heroMaterials?.[spriteState]
-      ?? (this.textures.has(spriteState)
-        ? this.billboardMaterials[spriteState]
-        : this.billboardMaterials.idle);
-    this.getBillboardRenderer(node)?.setSharedMaterial(material, 0);
+    // 选材质的唯一标准：贴图已经真的加载成功。
+    // 优先英雄专属立绘 → 通用中国军人同状态 → 通用 idle；
+    // 全都没就绪时宁可保留上一帧材质，也不换成空纹理的灰块。
+    const heroReady = heroName ? this.heroTextureReady.get(heroName) : undefined;
+    if (heroName && heroReady?.has(spriteState)) {
+      const heroMaterial = this.heroMaterials.get(heroName)?.[spriteState];
+      if (heroMaterial) {
+        this.getBillboardRenderer(node)?.setSharedMaterial(heroMaterial, 0);
+        return;
+      }
+    }
+    if (this.textures.has(spriteState)) {
+      this.getBillboardRenderer(node)?.setSharedMaterial(
+        this.billboardMaterials[spriteState],
+        0,
+      );
+      return;
+    }
+    if (this.textures.has('idle')) {
+      this.getBillboardRenderer(node)?.setSharedMaterial(
+        this.billboardMaterials.idle,
+        0,
+      );
+    }
   }
 }

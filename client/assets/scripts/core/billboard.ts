@@ -14,14 +14,39 @@ import {
 export function loadTexture(
   path: string,
   onLoaded: (texture: Texture2D) => void,
+  onFailed?: (path: string) => void,
 ): void {
   // PNG 在 Cocos 运行时以 ImageAsset 暴露，显式加载其 texture 子资源。
   resources.load(`${path}/texture`, Texture2D, (error, texture) => {
     if (error || !texture) {
+      // 静默失败会让材质停留在引擎缺省灰贴图（#929292 色块），
+      // 因此显式回调让调用方回退到可用素材，而不是把灰块摆在场上。
+      console.warn(`[billboard] 贴图加载失败：${path}`, error);
+      onFailed?.(path);
       return;
     }
     onLoaded(texture);
   });
+}
+
+/**
+ * 把配置里的立绘基准路径解析成指定状态的贴图路径。
+ *
+ * 配置存在两种写法，必须都能吃下：
+ * - 文件式：`chars/jp-soldier/idle` → 末尾的 idle 换成目标状态
+ * - 目录式：`chars/heroes/seat-0`   → 直接在目录下追加状态文件名
+ *
+ * 早期只处理了文件式，导致目录式配置的英雄立绘全部加载失败并显示灰块。
+ */
+export function spriteStatePath(
+  basePath: string,
+  state: 'idle' | 'run' | 'fire',
+): string {
+  const trimmed = basePath.replace(/\/+$/, '');
+  if (/\/(idle|run|fire)$/.test(trimmed)) {
+    return trimmed.replace(/\/(idle|run|fire)$/, `/${state}`);
+  }
+  return `${trimmed}/${state}`;
 }
 
 export function loadSpriteFrame(
