@@ -36,6 +36,41 @@ const GROUND_UV_REPEAT = 8;
  */
 const GROUND_SEGMENT_SIZE_M = 2;
 
+/**
+ * 战场核心网格之外的「裙边」（2026-09-11 修复「两侧笔直的河」）。
+ *
+ * 原地面只盖 x∈±40.5、z∈[-140,10]。摄像机 FOV 70°（横向约 102°）从山顶
+ * 往下看，视野两侧远远超出 ±40.5m，越过网格边缘直接露出天空球**地平线
+ * 以下**的贴图（全景图下半部是灰蓝色），两条笔直的边看起来就像两条河。
+ *
+ * 修法：核心区仍用 2m 细网格保证坡面与判定一致；外围用 8m 粗网格一直铺到
+ * 雾外（fogEndM=320，铺到 360m），边缘落在纯雾色里，不再有可见硬边。
+ * 裙边远端再把高度平滑抬向天空球地平线（见 HORIZON_RIM_*），
+ * 否则 z<-130 的 y=0 平原在 350m 外仍比地平线低约 2.6°，会露出一条
+ * 地平线以下的暗带。裙边完全在战场之外（敌人最远出生点 z=-130，
+ * 横向 ±30），不影响任何判定。
+ */
+const GROUND_SKIRT_SEGMENT_SIZE_M = 8;
+const GROUND_SKIRT_EXTENT_M = 360;
+/** 视觉地平线抬升：距原点超过 START 后开始把地面高度混向 HEIGHT，END 处到位。 */
+const HORIZON_RIM_START_M = 200;
+const HORIZON_RIM_END_M = 360;
+/**
+ * 天空球中心 = 摄像机 y + skyDomeOffsetYM(-6)，全景图地平线在眼下 0.9°。
+ * 眼位在山顶约 19.9–21m，裙边远端 16m/360m 对应眼下 0.6–0.8°，
+ * 略高于地平线：宁可雾色地面盖掉 1–3px 天空，也不能让地平线以下的暗带露出来。
+ */
+const HORIZON_RIM_HEIGHT_M = 16;
+/**
+ * 山脊两侧（|x| 超出核心区后）按比例压低：terrainHeightAt 在 |x|>40 处不再下降，
+ * 直接铺出去会是一块与山顶等高、一直延伸到雾里的平原，不像「山」。
+ * 这里只在**视觉层**把两侧按山体高度的 60% 缓降（山脚 terrain=0 处自然无变化），
+ * 让山顶阵地看起来是一道脊，两侧是塌下去的谷。核心区内（|x|≤40.5）不受影响。
+ */
+const SIDE_FALLOFF_START_M = 44;
+const SIDE_FALLOFF_END_M = 200;
+const SIDE_FALLOFF_RATIO = 0.6;
+
 interface GroundBounds {
   readonly minX: number;
   readonly maxX: number;
@@ -444,14 +479,14 @@ function createGroundMesh(
 ): Mesh {
   const spanX = bounds.maxX - bounds.minX;
   const spanZ = bounds.maxZ - bounds.minZ;
-  const segmentsX = Math.max(
-    1,
-    Math.round(spanX / GROUND_SEGMENT_SIZE_M),
-  );
-  const segmentsZ = Math.max(
-    1,
-    Math.round(spanZ / GROUND_SEGMENT_SIZE_M),
-  );
+  // 一张规则拓扑的网格，但采样间距不均匀：核心区 2m、裙边 8m。
+  // 同一张网格天然没有 T 形接缝，也只占一个 draw call。
+  const xs = buildGroundAxis(bounds.minX, bounds.maxX);
+  const zs = buildGroundAxis(bounds.minZ, bounds.maxZ);
+  // 贴图密度沿用原核心区的比例（横向 spanX/uvRepeat、纵深 spanZ/uvRepeat 一格），
+  // 改成按世界坐标取 UV，裙边与核心区的纹理无缝连续。
+  const tileX = spanX / uvRepeat;
+  const tileZ = spanZ / uvRepeat;
 
   const positions: number[] = [];
   const normals: number[] = [];
@@ -461,27 +496,23 @@ function createGroundMesh(
   let minY = Number.POSITIVE_INFINITY;
   let maxY = Number.NEGATIVE_INFINITY;
 
-  for (let row = 0; row <= segmentsZ; row += 1) {
-    const vRatio = row / segmentsZ;
-    const z = bounds.minZ + spanZ * vRatio;
-    for (let column = 0; column <= segmentsX; column += 1) {
-      const uRatio = column / segmentsX;
-      const x = bounds.minX + spanX * uRatio;
-      const y = terrainHeightAt(x, z);
+  for (const z of zs) {
+    for (const x of xs) {
+      const y = groundHeightAt(x, z);
 
       positions.push(x, y, z);
-      const normal = terrainNormalAt(x, z);
+      const normal = groundNormalAt(x, z);
       normals.push(normal.x, normal.y, normal.z);
-      uvs.push(uRatio * uvRepeat, vRatio * uvRepeat);
+      uvs.push(x / tileX, z / tileZ);
 
       minY = Math.min(minY, y);
       maxY = Math.max(maxY, y);
     }
   }
 
-  const stride = segmentsX + 1;
-  for (let row = 0; row < segmentsZ; row += 1) {
-    for (let column = 0; column < segmentsX; column += 1) {
+  const stride = xs.length;
+  for (let row = 0; row < zs.length - 1; row += 1) {
+    for (let column = 0; column < xs.length - 1; column += 1) {
       const topLeft = row * stride + column;
       const topRight = topLeft + 1;
       const bottomLeft = topLeft + stride;
@@ -496,27 +527,80 @@ function createGroundMesh(
     normals,
     uvs,
     indices,
-    minPos: { x: bounds.minX, y: minY, z: bounds.minZ },
-    maxPos: { x: bounds.maxX, y: maxY, z: bounds.maxZ },
+    minPos: { x: xs[0], y: minY, z: zs[0] },
+    maxPos: { x: xs[xs.length - 1], y: maxY, z: zs[zs.length - 1] },
   });
+}
+
+/**
+ * 一条轴上的采样坐标：[-SKIRT, coreMin] 粗步、[coreMin, coreMax] 细步、
+ * [coreMax, SKIRT] 粗步，端点严格落在核心区边界上。
+ */
+function buildGroundAxis(coreMin: number, coreMax: number): number[] {
+  const values: number[] = [];
+  const pushRange = (from: number, to: number, step: number): void => {
+    const count = Math.max(1, Math.round((to - from) / step));
+    for (let i = 0; i < count; i += 1) {
+      values.push(from + ((to - from) * i) / count);
+    }
+  };
+  pushRange(-GROUND_SKIRT_EXTENT_M, coreMin, GROUND_SKIRT_SEGMENT_SIZE_M);
+  pushRange(coreMin, coreMax, GROUND_SEGMENT_SIZE_M);
+  pushRange(coreMax, GROUND_SKIRT_EXTENT_M, GROUND_SKIRT_SEGMENT_SIZE_M);
+  values.push(GROUND_SKIRT_EXTENT_M);
+  return values;
+}
+
+/**
+ * 地面渲染高度 = 判定地形高度，只在裙边远端（离原点 200m 外）平滑混向
+ * 天空球地平线。战场（|x|≤40.5、z≥-140，离原点 ≤146m）内与 terrainHeightAt 完全一致。
+ */
+function groundHeightAt(x: number, z: number): number {
+  let height = terrainHeightAt(x, z);
+  const side = Math.abs(x);
+  if (side > SIDE_FALLOFF_START_M) {
+    const t = smooth01(
+      (side - SIDE_FALLOFF_START_M) /
+        (SIDE_FALLOFF_END_M - SIDE_FALLOFF_START_M),
+    );
+    height *= 1 - SIDE_FALLOFF_RATIO * t;
+  }
+  const distance = Math.hypot(x, z);
+  if (distance > HORIZON_RIM_START_M) {
+    const t = smooth01(
+      (distance - HORIZON_RIM_START_M) /
+        (HORIZON_RIM_END_M - HORIZON_RIM_START_M),
+    );
+    height += (HORIZON_RIM_HEIGHT_M - height) * t;
+  }
+  return height;
+}
+
+function smooth01(value: number): number {
+  const t = value <= 0 ? 0 : value >= 1 ? 1 : value;
+  return t * t * (3 - 2 * t);
+}
+
+function groundNormalAt(
+  x: number,
+  z: number,
+): { readonly x: number; readonly y: number; readonly z: number } {
+  return finiteDifferenceNormal(groundHeightAt, x, z);
 }
 
 /**
  * 用有限差分求地形法线，让坡面有正确的明暗过渡而不是一片死平。
  */
-function terrainNormalAt(
+function finiteDifferenceNormal(
+  heightAt: (x: number, z: number) => number,
   x: number,
   z: number,
 ): { readonly x: number; readonly y: number; readonly z: number } {
   const epsilon = 0.5;
   const slopeX =
-    (terrainHeightAt(x + epsilon, z) -
-      terrainHeightAt(x - epsilon, z)) /
-    (2 * epsilon);
+    (heightAt(x + epsilon, z) - heightAt(x - epsilon, z)) / (2 * epsilon);
   const slopeZ =
-    (terrainHeightAt(x, z + epsilon) -
-      terrainHeightAt(x, z - epsilon)) /
-    (2 * epsilon);
+    (heightAt(x, z + epsilon) - heightAt(x, z - epsilon)) / (2 * epsilon);
   const length = Math.hypot(slopeX, 1, slopeZ);
   return {
     x: -slopeX / length,
