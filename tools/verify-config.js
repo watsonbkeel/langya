@@ -194,8 +194,8 @@ if (allies) {
       err(`AI 队友射速(${b.fireRate}) 高于武器本身(${w.fireRate})，会抢戏`);
     }
   }
-  if (b.accuracy > 0.6) {
-    warn(`AI 队友命中率 ${b.accuracy} 偏高，可能抢戏（M2 需实测歼敌占比 ≤ 50%）`);
+  if (b.accuracy > 0.95) {
+    warn(`AI 队友命中率 ${b.accuracy} 偏高，注意校准器实测歼敌占比 ≤ 60%`);
   }
   // 布防分配总数应等于 队友数 = seatCount - 1
   const d = (allies.deployment || {}).defaultAssignment || {};
@@ -209,8 +209,9 @@ if (allies) {
     });
   }
   const cal = allies.calibration || {};
-  if (cal.maxKillRatio > 0.5) {
-    err(`calibration.maxKillRatio = ${cal.maxKillRatio}，PRD 上限为 0.5`);
+  // 2026-09-10 实测反馈「第二波就守不住」，上限由 0.5 放宽到 0.6（PRD 5.6 单 AI 效率 50%~60% 的上沿）
+  if (cal.maxKillRatio > 0.6) {
+    err(`calibration.maxKillRatio = ${cal.maxKillRatio}，上限为 0.6`);
   }
 }
 

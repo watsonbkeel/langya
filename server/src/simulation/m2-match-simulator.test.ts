@@ -70,9 +70,21 @@ describe('M2 match simulator', () => {
   });
 
   it("允许延迟投放时在时限后补齐同屏上限排队的敌人", () => {
-    // 种子需挑一个会把最后几名敌人排到时限之后的对局；
-    // 地形贴合改变了命中几何，原种子 724 已不再触发加时，换用 9。
-    const result = simulateM2Match(config, 9);
+    // 本用例只验证「加时补投」逻辑，不应受平衡数值影响：
+    // 2026-09-10 队友战力上调后线上配置已不会把敌人排到时限之后，
+    // 因此用一份把队友命中率归零的配置副本强制触发同屏排队。
+    const overtimeConfig = {
+      ...config,
+      allies: {
+        ...config.allies,
+        bot: {
+          ...config.allies.bot,
+          accuracy: 0,
+          accuracyLongRange: 0,
+        },
+      },
+    };
+    const result = simulateM2Match(overtimeConfig, 9);
     const matchDurationTicks =
       config.gameplay.match.durationSec *
       config.gameplay.server.tickRateHz;

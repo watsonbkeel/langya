@@ -44,6 +44,15 @@ const REJECT_TEXT: Readonly<Record<FireRejectReason, string>> = {
   dead: '已无法开火',
 };
 
+/** 战报底部按钮排版：与大厅 RoomView 的按钮规格保持一致（圆角 10、高 52） */
+const REPORT_BUTTON_WIDTH = 320;
+const REPORT_BUTTON_HEIGHT = 52;
+const REPORT_BUTTON_RADIUS = 10;
+/** 按钮下沿到屏幕底边的留白 */
+const REPORT_BOTTOM_MARGIN_PX = 36;
+/** 「向英雄致敬」与按钮之间的空白 */
+const REPORT_TRIBUTE_GAP_PX = 28;
+
 export class M1Hud {
   private readonly root: Node;
   private readonly presentation: PresentationConfig;
@@ -535,14 +544,25 @@ export class M1Hud {
         '#FFD56A',
       );
     }
+    // 底部区块自下而上排：按钮贴底留 REPORT_BOTTOM_MARGIN，致敬语在按钮上方再留一段空白，
+    // 与上方分波战绩之间自然拉开，避免三行文字/按钮挤成一团。
+    const buttonY =
+      -this.presentation.designHeight / 2 +
+      REPORT_BOTTOM_MARGIN_PX +
+      REPORT_BUTTON_HEIGHT / 2;
+    const tributeY =
+      buttonY +
+      REPORT_BUTTON_HEIGHT / 2 +
+      REPORT_TRIBUTE_GAP_PX +
+      this.presentation.titleFontSizePx / 2;
     this.createReportLabel(
       report,
       '向英雄致敬',
       this.presentation.titleFontSizePx,
-      -this.presentation.designHeight / 2 + this.presentation.titleFontSizePx,
+      tributeY,
       '#F4E8C1',
     );
-    this.createRestartButton(report);
+    this.createRestartButton(report, buttonY);
   }
 
   /**
@@ -898,23 +918,25 @@ export class M1Hud {
     label.color = Color.fromHEX(new Color(), colorHex);
   }
 
-  private createRestartButton(parent: Node): void {
-    const width = this.presentation.reportLineFontSizePx * 8;
-    const height = this.presentation.reportLineFontSizePx * 2.2;
+  /** 与大厅 RoomView.createButton 同款：圆角实心金色主按钮，文字两侧留足内边距 */
+  private createRestartButton(parent: Node, y: number): void {
+    const width = REPORT_BUTTON_WIDTH;
+    const height = REPORT_BUTTON_HEIGHT;
     const node = new Node('RestartMatchButton');
     this.setUiLayer(node);
     node.setParent(parent);
-    node.setPosition(
-      0,
-      -this.presentation.designHeight / 2 +
-        this.presentation.reportLineFontSizePx * 3,
-      0,
-    );
+    node.setPosition(0, y, 0);
     node.addComponent(UITransform).setContentSize(width, height);
 
     const background = node.addComponent(Graphics);
     background.fillColor = Color.fromHEX(new Color(), '#D9B86C');
-    background.rect(-width / 2, -height / 2, width, height);
+    background.roundRect(
+      -width / 2,
+      -height / 2,
+      width,
+      height,
+      REPORT_BUTTON_RADIUS,
+    );
     background.fill();
 
     const button = node.addComponent(Button);
