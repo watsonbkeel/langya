@@ -23,11 +23,12 @@ import type {
   WavesConfig,
 } from '../config/game-config';
 import {
+  billboardNodeOf,
   createBillboard,
   createBillboardMaterial,
   createBillboardMesh,
-  faceBillboardToCamera,
   loadTexture,
+  StaticBillboardGroup,
 } from '../core/billboard';
 
 /**
@@ -59,6 +60,8 @@ export class M7Environment {
   private readonly sunNode: Node;
   private readonly materials: Material[] = [];
   private readonly billboardRoots: Node[] = [];
+  /** 装饰只在摄像机移动时才重新转向（见 StaticBillboardGroup 说明）。 */
+  private readonly billboardGroup = new StaticBillboardGroup();
   private cameraNode: Node | null = null;
   private readonly cameraPos = new Vec3();
 
@@ -96,15 +99,11 @@ export class M7Environment {
       this.cameraPos.y += this.config.skyDomeOffsetYM;
       this.skyNode.setWorldPosition(this.cameraPos);
     }
-    for (const node of this.billboardRoots) {
-      faceBillboardToCamera(
-        node.getChildByName('Billboard') ?? node,
-        this.cameraNode,
-      );
-    }
+    this.billboardGroup.update(this.cameraNode);
   }
 
   destroy(): void {
+    this.billboardGroup.clear();
     this.root.destroy();
     this.skyMesh.destroy();
     this.billboardMesh.destroy();
@@ -480,6 +479,7 @@ export class M7Environment {
     });
     renderer.enabled = false;
     this.billboardRoots.push(node);
+    this.billboardGroup.add(node);
     return node;
   }
 
@@ -512,9 +512,7 @@ export class M7Environment {
       }
       material.setProperty('mainTexture', texture);
       for (const node of nodes) {
-        const renderer = node
-          .getChildByName('Billboard')
-          ?.getComponent(MeshRenderer);
+        const renderer = billboardNodeOf(node).getComponent(MeshRenderer);
         if (renderer) {
           renderer.enabled = true;
         }

@@ -20,6 +20,7 @@ import type {
   PresentationConfig,
 } from '../config/game-config';
 import {
+  billboardNodeOf,
   createBillboard,
   createBillboardMaterial,
   createBillboardMesh,
@@ -226,10 +227,7 @@ export class AllyRenderer {
       -this.presentation.entityPositionSmoothing * deltaTime,
     );
     for (const [allyId, node] of this.nodes) {
-      faceBillboardToCamera(
-        node.getChildByName('Billboard') ?? node,
-        this.cameraNode,
-      );
+      faceBillboardToCamera(billboardNodeOf(node), this.cameraNode);
       const targetPosition = this.targetPositions.get(allyId);
       const targetScale = this.targetScales.get(allyId);
       if (!targetPosition || !targetScale) {
@@ -427,7 +425,7 @@ export class AllyRenderer {
   }
 
   private getBillboardRenderer(node: Node): MeshRenderer | null {
-    return node.getChildByName('Billboard')?.getComponent(MeshRenderer) ?? null;
+    return billboardNodeOf(node).getComponent(MeshRenderer);
   }
 
   private refreshAllBillboards(): void {

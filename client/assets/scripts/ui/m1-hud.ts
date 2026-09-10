@@ -54,6 +54,13 @@ const REPORT_BOTTOM_MARGIN_PX = 36;
 const REPORT_TRIBUTE_GAP_PX = 28;
 
 /**
+ * 队友面板颜色。面板每帧随快照刷新，Label.color setter 自己会去重，
+ * 但不该每帧每人 `new Color()`——用模块级常量。
+ */
+const ALLY_COLOR_NORMAL = Color.fromHEX(new Color(), '#DCE8B5');
+const ALLY_COLOR_DEAD = Color.fromHEX(new Color(), '#899094');
+
+/**
  * 受击方向指示：准心周围一段红色弧，指向子弹飞来的方向。
  * 重机枪上阵时视角被锁在射界内，玩家往往看不到射手；没有方向提示就只能挨打。
  */
@@ -591,9 +598,9 @@ export class M1Hud {
    */
   updateAllies(allies: readonly AllyState[], playerId: string | null): void {
     this.allyIds.clear();
+    // filter 已经是新数组，直接原地排序，不再多拷一份。
     const bots = allies
       .filter((ally) => ally.id !== playerId)
-      .slice()
       .sort((first, second) => first.seatIndex - second.seatIndex);
     for (let index = 0; index < bots.length; index += 1) {
       const ally = bots[index];
@@ -625,10 +632,7 @@ export class M1Hud {
             : '战友';
       label.string = `${ally.heroName}  ${ally.hp}/${ally.maxHp}  ${ally.routeId}路  ${state}`;
       if (ally.hp <= 0 || !this.flashingAllies.has(ally.id)) {
-        label.color = Color.fromHEX(
-          new Color(),
-          ally.hp <= 0 ? '#899094' : '#DCE8B5',
-        );
+        label.color = ally.hp <= 0 ? ALLY_COLOR_DEAD : ALLY_COLOR_NORMAL;
       }
       this.allyIds.set(ally.id, label);
     }
@@ -699,7 +703,7 @@ export class M1Hud {
     setTimeout(() => {
       this.flashingAllies.delete(allyId);
       if (label.isValid) {
-        label.color = Color.fromHEX(new Color(), '#DCE8B5');
+        label.color = ALLY_COLOR_NORMAL;
       }
     }, this.presentation.hitFeedbackSec * 1000);
   }
@@ -708,7 +712,7 @@ export class M1Hud {
     this.flashingAllies.delete(allyId);
     const label = this.allyIds.get(allyId);
     if (label) {
-      label.color = Color.fromHEX(new Color(), '#899094');
+      label.color = ALLY_COLOR_DEAD;
     }
   }
 

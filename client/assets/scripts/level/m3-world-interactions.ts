@@ -18,11 +18,12 @@ import {
   type WeaponsConfig,
 } from '../config/game-config';
 import {
+  billboardNodeOf,
   createBillboard,
   createBillboardMaterial,
   createBillboardMesh,
-  faceBillboardToCamera,
   loadTexture,
+  StaticBillboardGroup,
 } from '../core/billboard';
 
 export type InteractionTarget =
@@ -57,6 +58,8 @@ export class M3WorldInteractions {
   private readonly weapons: WeaponsConfig;
   private readonly itemNodes = new Map<string, Node>();
   private readonly machineGunNodes = new Map<string, Node>();
+  /** 道具/机枪位落地后不动，只在摄像机移动时才重新转向。 */
+  private readonly billboardGroup = new StaticBillboardGroup();
   private cameraNode: Node | null = null;
   private supplyReady = false;
   private rackReady = false;
@@ -92,18 +95,7 @@ export class M3WorldInteractions {
   }
 
   update(): void {
-    for (const node of this.itemNodes.values()) {
-      faceBillboardToCamera(
-        node.getChildByName('Billboard') ?? node,
-        this.cameraNode,
-      );
-    }
-    for (const node of this.machineGunNodes.values()) {
-      faceBillboardToCamera(
-        node.getChildByName('Billboard') ?? node,
-        this.cameraNode,
-      );
-    }
+    this.billboardGroup.update(this.cameraNode);
   }
 
   sync(
@@ -183,6 +175,7 @@ export class M3WorldInteractions {
   destroy(): void {
     this.itemNodes.clear();
     this.machineGunNodes.clear();
+    this.billboardGroup.clear();
     this.root.destroy();
     this.billboardMesh.destroy();
     this.supplyMaterial.destroy();
@@ -255,6 +248,7 @@ export class M3WorldInteractions {
     for (const [itemId, node] of this.itemNodes) {
       if (!visibleIds.has(itemId)) {
         this.itemNodes.delete(itemId);
+        this.billboardGroup.remove(node);
         node.destroy();
       }
     }
@@ -281,6 +275,7 @@ export class M3WorldInteractions {
     for (const [gunId, node] of this.machineGunNodes) {
       if (!visibleIds.has(gunId)) {
         this.machineGunNodes.delete(gunId);
+        this.billboardGroup.remove(node);
         node.destroy();
       }
     }
@@ -325,11 +320,12 @@ export class M3WorldInteractions {
       { centerY: 0, widthScale: 1 },
     );
     renderer.enabled = false;
+    this.billboardGroup.add(node);
     return node;
   }
 
   private getBillboardRenderer(node: Node): MeshRenderer | null {
-    return node.getChildByName('Billboard')?.getComponent(MeshRenderer) ?? null;
+    return billboardNodeOf(node).getComponent(MeshRenderer);
   }
 
   private weaponName(weaponId: string): string {

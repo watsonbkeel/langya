@@ -93,7 +93,7 @@ test('积压时丢弃可替代快照但继续发送关键消息', () => {
       'first',
       'world_snapshot',
       () => context,
-      true,
+      0,
     ),
     false,
   );
@@ -104,7 +104,7 @@ test('积压时丢弃可替代快照但继续发送关键消息', () => {
       'second',
       'world_snapshot',
       () => context,
-      true,
+      0,
     ),
     false,
   );
@@ -116,7 +116,7 @@ test('积压时丢弃可替代快照但继续发送关键消息', () => {
       'latest',
       'world_snapshot',
       () => context,
-      true,
+      0,
     ),
     true,
   );
@@ -187,4 +187,25 @@ test('关闭原因按字符安全截断，结构化日志保留诊断字段', ()
   assert.match(line, /"playerAlive":true/);
   assert.match(line, /"code":1006/);
   assert.match(line, /"lastInboundMessageType":"input_state"/);
+});
+
+test('快照积压容忍阈值：缓冲未超阈值照常发送，超过才丢', () => {
+  const logger = new RecordingLogger();
+  const socket = new FakeSocket();
+  const monitor = new WebSocketSendMonitor(1_024_000, 5_000, logger, () => 0);
+
+  // 公网链路每帧都可能残留几 KB 在途数据，不应因此丢帧。
+  socket.bufferedAmount = 4_000;
+  assert.equal(
+    monitor.send(socket, 'in-flight-ok', 'world_snapshot', () => context, 16_384),
+    true,
+  );
+  socket.bufferedAmount = 20_000;
+  assert.equal(
+    monitor.send(socket, 'too-much', 'world_snapshot', () => context, 16_384),
+    false,
+  );
+  assert.deepEqual(socket.sent, ['in-flight-ok']);
+  assert.equal(logger.warnLines.length, 1);
+  assert.match(logger.warnLines[0] ?? '', /"action":"drop"/);
 });

@@ -21,6 +21,11 @@ import {
 } from '../../../shared/protocol';
 import { terrainHeightAt } from '../../../shared/terrain';
 import {
+  compactAngle,
+  compactPosition,
+  compactRatio,
+} from '../net/snapshot-precision';
+import {
   AllyAgent,
   AllyController,
   type AllyBotConfig,
@@ -1298,9 +1303,9 @@ export class M2BattleSession<
             ),
             hp: participant.hp,
             maxHp: participant.maxHp,
-            position: participant.position,
-            aimYaw: participant.aimYaw,
-            aimPitch: participant.aimPitch,
+            position: compactPosition(participant.position),
+            aimYaw: compactAngle(participant.aimYaw),
+            aimPitch: compactAngle(participant.aimPitch),
             isCrouch: participant.isCrouch,
             availableWeaponIds: participant.weapons.availableWeaponIds,
             grenadesRemaining: participant.grenadesRemaining,
@@ -1323,7 +1328,7 @@ export class M2BattleSession<
           aiState: ally.state,
           hp: ally.hp,
           maxHp: ally.maxHp,
-          position: ally.position,
+          position: compactPosition(ally.position),
           aimYaw: 0,
           aimPitch: 0,
           isCrouch: ally.isCrouching,
@@ -1349,7 +1354,7 @@ export class M2BattleSession<
             }),
         hp: enemy.hp,
         maxHp: enemy.maxHp,
-        position: enemy.agent.position,
+        position: compactPosition(enemy.agent.position),
         alive: true,
       }));
 
@@ -1363,10 +1368,19 @@ export class M2BattleSession<
         items: [
           ...this.weaponRacks,
           ...this.supplyDropManager.getItems(serverTimeMs),
-        ],
+        ].map((item) => ({
+          ...item,
+          position: compactPosition(item.position),
+        })),
         match:
           matchProgress ?? this.createMatchProgress(serverTimeMs),
-        machineGuns: this.machineGunController.getStates(),
+        machineGuns: this.machineGunController
+          .getStates()
+          .map((gun) => ({
+            ...gun,
+            position: compactPosition(gun.position),
+            heatRatio: compactRatio(gun.heatRatio),
+          })),
       },
     };
   }

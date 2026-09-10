@@ -11,6 +11,10 @@ export interface RuntimeConfig {
   readonly wsHeartbeatIntervalMs: number;
   readonly wsBackpressureWarnBytes: number;
   readonly wsBackpressureLogIntervalMs: number;
+  /** 世界快照允许的发送积压上限（字节），超过就跳过这一帧而不是继续堆。 */
+  readonly wsSnapshotDropBytes: number;
+  /** 是否开启 permessage-deflate（JSON 快照键名高度重复，压缩率 4–5 倍）。 */
+  readonly wsCompression: boolean;
 }
 
 function parsePort(name: string, fallback: number): number {
@@ -70,5 +74,12 @@ export function loadRuntimeConfig(repositoryRoot: string): RuntimeConfig {
       'WS_BACKPRESSURE_LOG_INTERVAL_MS',
       5_000,
     ),
+    // 约 2–3 帧快照。公网链路每帧都可能有几 KB 尚未刷出内核缓冲，
+    // 早先「只要 > 0 就丢帧」会把正常在途数据也当积压，造成敌人瞬移。
+    wsSnapshotDropBytes: parsePositiveInteger(
+      'WS_SNAPSHOT_DROP_BYTES',
+      16_384,
+    ),
+    wsCompression: (process.env.WS_COMPRESSION ?? '1') !== '0',
   });
 }

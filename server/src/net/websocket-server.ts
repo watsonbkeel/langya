@@ -120,7 +120,20 @@ export class GameWebSocketServer {
       response.end();
     });
 
-    this.websocketServer = new WebSocketServer({ noServer: true });
+    // permessage-deflate：JSON 快照键名高度重复，压缩后约 1/4。1 房 5 人的规模下
+    // CPU 开销可忽略，换来公网链路上少积压、少丢帧。用 threshold 让小消息不压。
+    this.websocketServer = new WebSocketServer({
+      noServer: true,
+      perMessageDeflate: runtimeConfig.wsCompression
+        ? {
+            threshold: 512,
+            // 每连接保留压缩上下文，连续帧之间的重复模式能被引用。
+            serverNoContextTakeover: false,
+            clientNoContextTakeover: false,
+            concurrencyLimit: 4,
+          }
+        : false,
+    });
     this.httpServer.on('upgrade', (request, socket, head) => {
       const requestPath = new URL(
         request.url ?? '/',
@@ -1295,7 +1308,9 @@ export class GameWebSocketServer {
       payload,
       messageType,
       () => this.createLogContext(session),
-      messageType === SERVER_MESSAGE_TYPES.worldSnapshot,
+      messageType === SERVER_MESSAGE_TYPES.worldSnapshot
+        ? this.runtimeConfig.wsSnapshotDropBytes
+        : undefined,
     );
   }
 }

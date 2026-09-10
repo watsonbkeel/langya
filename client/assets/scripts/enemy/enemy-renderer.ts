@@ -24,6 +24,7 @@ import type {
   PresentationConfig,
 } from '../config/game-config';
 import {
+  billboardNodeOf,
   createBillboard,
   createBillboardMaterial,
   createBillboardMesh,
@@ -182,10 +183,7 @@ export class EnemyRenderer {
       -this.presentation.entityPositionSmoothing * deltaTime,
     );
     for (const [enemyId, node] of this.activeEnemies) {
-      faceBillboardToCamera(
-        node.getChildByName('Billboard') ?? node,
-        this.cameraNode,
-      );
+      faceBillboardToCamera(billboardNodeOf(node), this.cameraNode);
       const targetPosition = this.targetPositions.get(enemyId);
       const targetScale = this.targetScales.get(enemyId);
       if (!targetPosition || !targetScale) {
@@ -435,7 +433,7 @@ export class EnemyRenderer {
   }
 
   private getBillboardRenderer(node: Node): MeshRenderer | null {
-    return node.getChildByName('Billboard')?.getComponent(MeshRenderer) ?? null;
+    return billboardNodeOf(node).getComponent(MeshRenderer);
   }
 
   private updateBillboardState(

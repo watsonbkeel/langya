@@ -170,3 +170,92 @@ export function faceBillboardToCamera(
     0,
   );
 }
+
+const billboardChildCache = new WeakMap<Node, Node>();
+
+/**
+ * 取根节点下真正要转向的 'Billboard' 子节点（没有就用根节点本身）。
+ * 结果按根节点缓存：渲染器每帧对几十上百个节点调用，
+ * 不能每帧都 getChildByName 做字符串比对（2026-09-10 卡顿排查热点）。
+ */
+export function billboardNodeOf(root: Node): Node {
+  let child = billboardChildCache.get(root);
+  if (!child || !child.isValid) {
+    child = root.getChildByName('Billboard') ?? root;
+    billboardChildCache.set(root, child);
+  }
+  return child;
+}
+
+/**
+ * 静态 billboard 的批量朝向器。
+ *
+ * 装饰/工事/道具/机枪位在世界里不动，朝向只随摄像机**位置**变化
+ * （faceBillboardToCamera 看的是节点→摄像机方向，与视角 yaw 无关）。
+ * 玩家架枪射击时摄像机几乎不动，此时 110+ 个节点每帧 setRotation
+ * 全是白做，还会把整棵子树的 worldMatrix 置脏。这里只在摄像机移动
+ * 超过阈值时才重算一遍；新加入的节点会在下一次 update 立即转向。
+ */
+export class StaticBillboardGroup {
+  private readonly roots = new Set<Node>();
+  private pendingRoots: Node[] = [];
+  private lastCameraX = Number.NaN;
+  private lastCameraZ = Number.NaN;
+  private readonly moveThresholdSq: number;
+
+  constructor(moveThresholdM = 0.1) {
+    this.moveThresholdSq = moveThresholdM * moveThresholdM;
+  }
+
+  add(root: Node): void {
+    if (this.roots.has(root)) {
+      return;
+    }
+    this.roots.add(root);
+    this.pendingRoots.push(root);
+  }
+
+  remove(root: Node): void {
+    this.roots.delete(root);
+  }
+
+  clear(): void {
+    this.roots.clear();
+    this.pendingRoots = [];
+    this.lastCameraX = Number.NaN;
+    this.lastCameraZ = Number.NaN;
+  }
+
+  update(cameraNode: Node | null): void {
+    if (!cameraNode) {
+      return;
+    }
+    const cameraPosition = cameraNode.worldPosition;
+    const deltaX = cameraPosition.x - this.lastCameraX;
+    const deltaZ = cameraPosition.z - this.lastCameraZ;
+    const cameraMoved =
+      Number.isNaN(this.lastCameraX) ||
+      deltaX * deltaX + deltaZ * deltaZ > this.moveThresholdSq;
+
+    if (cameraMoved) {
+      this.lastCameraX = cameraPosition.x;
+      this.lastCameraZ = cameraPosition.z;
+      this.pendingRoots = [];
+      for (const root of this.roots) {
+        if (root.isValid) {
+          faceBillboardToCamera(billboardNodeOf(root), cameraNode);
+        }
+      }
+      return;
+    }
+
+    if (this.pendingRoots.length > 0) {
+      for (const root of this.pendingRoots) {
+        if (root.isValid && this.roots.has(root)) {
+          faceBillboardToCamera(billboardNodeOf(root), cameraNode);
+        }
+      }
+      this.pendingRoots = [];
+    }
+  }
+}

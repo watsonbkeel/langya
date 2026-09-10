@@ -19,11 +19,12 @@ import type {
   WavesConfig,
 } from '../config/game-config';
 import {
+  billboardNodeOf,
   createBillboard,
   createBillboardMaterial,
   createBillboardMesh,
-  faceBillboardToCamera,
   loadTexture,
+  StaticBillboardGroup,
 } from '../core/billboard';
 
 const GROUND_UV_REPEAT = 8;
@@ -90,6 +91,8 @@ export class M4SceneDecorations {
   private readonly maxRouteLengthM: number;
   private cameraNode: Node | null = null;
   private readonly billboardRoots: Node[] = [];
+  /** 工事/沙袋只在摄像机移动时才重新转向（见 StaticBillboardGroup 说明）。 */
+  private readonly billboardGroup = new StaticBillboardGroup();
   private groundRenderer: MeshRenderer | null = null;
 
   constructor(
@@ -138,15 +141,11 @@ export class M4SceneDecorations {
   }
 
   update(): void {
-    for (const node of this.billboardRoots) {
-      faceBillboardToCamera(
-        node.getChildByName('Billboard') ?? node,
-        this.cameraNode,
-      );
-    }
+    this.billboardGroup.update(this.cameraNode);
   }
 
   destroy(): void {
+    this.billboardGroup.clear();
     this.root.destroy();
     this.boxMesh.destroy();
     this.billboardMesh.destroy();
@@ -309,9 +308,7 @@ export class M4SceneDecorations {
         if (!matches(node.name)) {
           continue;
         }
-        const renderer = node
-          .getChildByName('Billboard')
-          ?.getComponent(MeshRenderer);
+        const renderer = billboardNodeOf(node).getComponent(MeshRenderer);
         if (renderer) {
           renderer.enabled = true;
         }
@@ -341,6 +338,7 @@ export class M4SceneDecorations {
     );
     renderer.enabled = false;
     this.billboardRoots.push(node);
+    this.billboardGroup.add(node);
     return node;
   }
 

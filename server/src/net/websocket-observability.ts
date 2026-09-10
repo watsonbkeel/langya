@@ -101,15 +101,21 @@ export class WebSocketSendMonitor {
     data: string,
     messageType: string,
     getContext: () => WebSocketLogContext,
-    dropWhenBackpressured = false,
+    /**
+     * 可丢弃消息（世界快照）的积压容忍字节数：缓冲超过它就跳过本帧。
+     * `undefined` 表示不可丢弃（房间/战报等关键消息）。
+     * 传 0 等于旧行为「只要有积压就丢」。
+     */
+    dropWhenBufferedOver?: number,
   ): boolean {
     if (socket.readyState !== WebSocket.OPEN) {
       return false;
     }
 
     const bufferedAmount = socket.bufferedAmount;
+    const dropWhenBackpressured = dropWhenBufferedOver !== undefined;
     const shouldDrop =
-      dropWhenBackpressured && bufferedAmount > 0;
+      dropWhenBackpressured && bufferedAmount > dropWhenBufferedOver;
     if (
       shouldDrop ||
       bufferedAmount >= this.backpressureWarnBytes

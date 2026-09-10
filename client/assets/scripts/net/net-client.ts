@@ -272,25 +272,51 @@ function isSnapshotMessage(value: unknown): value is SnapshotMessage {
   );
 }
 
+/**
+ * world_snapshot 每 50ms 一帧，里面几十个实体每个几十个字段；逐字段递归校验
+ * 是客户端网络线程上最贵的一段 JS（2026-09-10 卡顿排查）。
+ * 服务端与客户端同仓同版发布，结构漂移只会在升版时发生，因此：
+ * - 每帧只校验顶层结构（数组存在、match 字段完整）；
+ * - 每 DEEP_VALIDATE_EVERY 帧全量深校验一次，漂移仍能在 1 秒内被发现。
+ */
+const DEEP_VALIDATE_EVERY = 20;
+
 function isWorldSnapshotMessage(
   value: unknown,
 ): value is WorldSnapshotMessage {
-  return (
-    isRecord(value) &&
-    value.type === 'world_snapshot' &&
-    isRecord(value.payload) &&
-    typeof value.payload.tick === 'number' &&
-    typeof value.payload.serverTimeMs === 'number' &&
-    Array.isArray(value.payload.allies) &&
-    value.payload.allies.every(isAllyState) &&
-    Array.isArray(value.payload.enemies) &&
-    value.payload.enemies.every(isEnemyState) &&
-    Array.isArray(value.payload.items) &&
-    value.payload.items.every(isItemState) &&
-    isMatchProgressState(value.payload.match) &&
-    Array.isArray(value.payload.machineGuns) &&
-    value.payload.machineGuns.every(isMachineGunState)
-  );
+  if (
+    !isRecord(value) ||
+    value.type !== 'world_snapshot' ||
+    !isRecord(value.payload)
+  ) {
+    return false;
+  }
+  const payload = value.payload;
+  if (
+    typeof payload.tick !== 'number' ||
+    typeof payload.serverTimeMs !== 'number' ||
+    !Array.isArray(payload.allies) ||
+    !Array.isArray(payload.enemies) ||
+    !Array.isArray(payload.items) ||
+    !Array.isArray(payload.machineGuns) ||
+    !isMatchProgressState(payload.match)
+  ) {
+    return false;
+  }
+  if (payload.tick % DEEP_VALIDATE_EVERY !== 0) {
+    return true;
+  }
+  const deepValid =
+    payload.allies.every(isAllyState) &&
+    payload.enemies.every(isEnemyState) &&
+    payload.items.every(isItemState) &&
+    payload.machineGuns.every(isMachineGunState);
+  if (!deepValid) {
+    console.warn(
+      `[net] world_snapshot 结构校验失败 tick=${payload.tick}，客户端与服务端版本可能不一致`,
+    );
+  }
+  return deepValid;
 }
 
 function isItemState(value: unknown): value is ItemState {
@@ -529,12 +555,13 @@ function parseServerMessage(raw: string): ServerMessage | undefined {
     return undefined;
   }
 
+  // 高频消息放最前：每帧都要走这条链，少几次无效的 type 比对。
   if (
+    isWorldSnapshotMessage(parsed) ||
     isPongMessage(parsed) ||
     isSnapshotMessage(parsed) ||
     isRoomStateMessage(parsed) ||
     isRoomActionResultMessage(parsed) ||
-    isWorldSnapshotMessage(parsed) ||
     isFireResultMessage(parsed) ||
     isEnemyDiedMessage(parsed) ||
     isAllyCalloutMessage(parsed) ||
