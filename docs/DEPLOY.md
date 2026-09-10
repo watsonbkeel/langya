@@ -139,6 +139,11 @@ Nginx 配置校验、PM2 reload 和 HTTP/WS 连通性检查。客户端构建不
 | `WS_PATH` | WS 路径 | `/ws` |
 | `DB_PATH` | SQLite 文件路径 | `./data/matches.sqlite`（M3 使用） |
 | `LOG_LEVEL` | 日志级别 | `info` |
+| `WS_COMPRESSION` | permessage-deflate 压缩（`0` 关闭）。JSON 快照压缩比 ≈0.02，线上 76KB/s→1.7KB/s | `1` |
+| `WS_SNAPSHOT_DROP_BYTES` | 快照丢帧阈值：连接 `bufferedAmount` 超过该字节数才丢 `world_snapshot`（约 2–3 帧）。旧逻辑「>0 即丢」会把正常在途数据当积压，导致敌人瞬移 | `16384` |
+
+快照链路排障用 `node tools/measure-snapshot.js wss://langyashan.bkeel.com/ws`（体积/帧率/带宽/压缩比/帧间隔分位），
+丢帧看 `/root/.pm2/logs/langyashan-server-error-0.log` 里的 `send_backpressure` 次数。
 
 ## 6. 内网访问验证
 
