@@ -89,8 +89,14 @@ Physics / Spine 等模块，显著增加首屏请求和体积：
 ```bash
 /Applications/Cocos/Creator/3.8.7/CocosCreator.app/Contents/MacOS/CocosCreator \
   --project ./client \
-  --build "platform=web-mobile;debug=false;engineModulesConfigKey=defaultConfig;useSplashScreen=false;experimentalEraseModules=true"
+  --build "platform=web-mobile;debug=false;md5Cache=true;engineModulesConfigKey=defaultConfig;useSplashScreen=false;experimentalEraseModules=true"
 ```
+
+**`md5Cache=true` 不能省**（2026-09-10 起强制）：没有它，贴图的 native URL 仍带
+`.png` 扩展名（磁盘实际是 `.webp`），且版本切换会撞香港中转机的 30 天静态缓存。
+开了之后所有产物带 hash（`cc.83ed0.js`、`xxx.0fc23.webp`），旧缓存自然失效，
+不需要手动清中转机缓存。构建完记得 `git checkout -- client/settings/v2/packages/information.json`
+（构建会写脏这个文件）。
 
 Mac CLI 在日志出现 `Build Task (web-mobile) Finished` 后仍可能返回 36；必须同时
 检查完成日志与 `client/build/web-mobile/index.html`，不能只按该退出码误判失败。
