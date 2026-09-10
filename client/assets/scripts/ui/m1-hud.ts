@@ -1100,18 +1100,67 @@ function describeActionReject(
   action: ActionResultPayload['action'],
   reason: Extract<ActionResultPayload, { readonly accepted: false }>['rejectReason'],
 ): string {
-  if (action !== 'use_medkit') {
-    return reason;
+  if (action === 'use_medkit') {
+    switch (reason) {
+      case 'unavailable':
+        return '当前生命值无需使用血包';
+      case 'no_resource':
+        return '血包已用完';
+      case 'invalid_state':
+        return '当前状态无法使用血包';
+      case 'dead':
+        return '阵亡后无法使用血包';
+      default:
+        return describeGenericReject(reason);
+    }
   }
+  if (action === 'pickup') {
+    switch (reason) {
+      case 'unavailable':
+        return '已经持有这把武器 / 血包已被拿走';
+      case 'out_of_range':
+        return '离得太远，走近一点再按 F';
+      case 'invalid_target':
+        return '这里没有可拾取的物品';
+      default:
+        return describeGenericReject(reason);
+    }
+  }
+  if (action === 'mount_mg') {
+    switch (reason) {
+      case 'occupied':
+        return '重机枪已有人使用';
+      case 'out_of_range':
+        return '离重机枪太远';
+      case 'invalid_target':
+        return '这里没有重机枪';
+      default:
+        return describeGenericReject(reason);
+    }
+  }
+  return describeGenericReject(reason);
+}
+
+function describeGenericReject(
+  reason: Extract<ActionResultPayload, { readonly accepted: false }>['rejectReason'],
+): string {
   switch (reason) {
-    case 'unavailable':
-      return '当前生命值无需使用血包';
-    case 'no_resource':
-      return '血包已用完';
-    case 'invalid_state':
-      return '当前状态无法使用血包';
     case 'dead':
-      return '阵亡后无法使用血包';
+      return '阵亡后无法操作';
+    case 'invalid_state':
+      return '当前状态不允许';
+    case 'invalid_target':
+      return '目标无效';
+    case 'out_of_range':
+      return '距离太远';
+    case 'unavailable':
+      return '当前不可用';
+    case 'cooldown':
+      return '冷却中';
+    case 'no_resource':
+      return '资源不足';
+    case 'occupied':
+      return '已被占用';
     default:
       return reason;
   }

@@ -70,7 +70,6 @@ export class M4SceneDecorations {
   private groundTextureMaterial: Material | null = null;
   private readonly machineGunNestMaterial: Material;
   private readonly coverMaterial: Material;
-  private readonly crateMaterial: Material;
   private readonly gameplay: GameplayConfig;
   private readonly waves: WavesConfig;
   private readonly maxRouteLengthM: number;
@@ -109,13 +108,13 @@ export class M4SceneDecorations {
     };
     this.machineGunNestMaterial = createBillboardMaterial();
     this.coverMaterial = createBillboardMaterial();
-    this.crateMaterial = createBillboardMaterial();
 
     this.createTexturedGround();
     this.createRouteMarkers();
     this.createCoverLine();
     this.createMachineGunNests();
-    this.createSupplyCrates();
+    // 注意：这里不再放「装饰补给箱」。它们与 M3 的空投血包同贴图却不可拾取，
+    // 玩家会误以为「捷不了」（2026-09-09 反馈）。可交互物一律由服务端下发。
     this.loadSceneTextures();
   }
 
@@ -140,7 +139,6 @@ export class M4SceneDecorations {
     this.groundTextureMaterial?.destroy();
     this.machineGunNestMaterial.destroy();
     this.coverMaterial.destroy();
-    this.crateMaterial.destroy();
     for (const material of [
       this.routeMaterials.A,
       this.routeMaterials.B,
@@ -260,27 +258,6 @@ export class M4SceneDecorations {
     }
   }
 
-  private createSupplyCrates(): void {
-    const width = this.gameplay.arena.widthM;
-    const depth = this.gameplay.arena.depthM;
-    const positions: readonly [number, number][] = [
-      [-width * 0.22, -depth * 0.2],
-      [0, -depth * 0.24],
-      [width * 0.22, -depth * 0.2],
-    ];
-    positions.forEach(([x, z], index) => {
-      this.createBillboardProp(
-        `SupplyCrate:${index}`,
-        this.crateMaterial,
-        x,
-        terrainHeightAt(x, z) + 0.55,
-        z,
-        2.25,
-        1.55,
-      );
-    });
-  }
-
   private loadSceneTextures(): void {
     this.loadGroundMaterial((material) => {
       loadTexture('scene/rocky-ground', (texture) => {
@@ -301,11 +278,6 @@ export class M4SceneDecorations {
       'scene/stone-barricade',
       this.coverMaterial,
       (name) => name.startsWith('StoneCover:'),
-    );
-    this.loadBillboardTexture(
-      'scene/supply-crate',
-      this.crateMaterial,
-      (name) => name.startsWith('SupplyCrate:'),
     );
   }
 

@@ -11,10 +11,11 @@ import type {
   MachineGunState,
   Vector3,
 } from '../../../../shared/protocol';
-import type {
-  GameplayConfig,
-  PresentationConfig,
-  WeaponsConfig,
+import {
+  playerEyeHeightM,
+  type GameplayConfig,
+  type PresentationConfig,
+  type WeaponsConfig,
 } from '../config/game-config';
 import {
   createBillboard,
@@ -270,11 +271,10 @@ export class M3WorldInteractions {
       }
       const width = this.presentation.machineGunLengthM * 1.5;
       const height = this.presentation.machineGunHeightM * 1.7;
-      node.setPosition(
-        gun.position.x,
-        gun.position.y + height / 2,
-        gun.position.z,
-      );
+      // 服务端 gun.position 是「上机枪后的眼位」（地面 + 眼高），
+      // 与 ally-renderer 落地口径一致：渲染时减回眼高得到地面。
+      const groundY = gun.position.y - playerEyeHeightM(this.gameplay);
+      node.setPosition(gun.position.x, groundY + height / 2, gun.position.z);
       node.setScale(width, height, 1);
       this.applyMachineGunVisual(node, gun.isOverheated);
     }

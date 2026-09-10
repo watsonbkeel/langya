@@ -87,10 +87,14 @@ Mac 先使用项目已锁定的精简引擎模块配置构建客户端；不要�
 Physics / Spine 等模块，显著增加首屏请求和体积：
 
 ```bash
-/Applications/Cocos/Creator/3.8.7/CocosCreator.app/Contents/MacOS/CocosCreator \
+env -u NODE_OPTIONS -u ELECTRON_RUN_AS_NODE \
+  /Applications/Cocos/Creator/3.8.7/CocosCreator.app/Contents/MacOS/CocosCreator \
   --project ./client \
   --build "platform=web-mobile;debug=false;md5Cache=true;engineModulesConfigKey=defaultConfig;useSplashScreen=false;experimentalEraseModules=true"
 ```
+
+`env -u NODE_OPTIONS -u ELECTRON_RUN_AS_NODE` 不能省：从 WorkBuddy / VS Code 等 Electron 宿主
+的终端里启动时这两个变量会被继承，CocosCreator 会报 `bad option: --project` 退出码 9。
 
 **`md5Cache=true` 不能省**（2026-09-10 起强制）：没有它，贴图的 native URL 仍带
 `.png` 扩展名（磁盘实际是 `.webp`），且版本切换会撞香港中转机的 30 天静态缓存。

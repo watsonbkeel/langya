@@ -33,6 +33,8 @@ TARGET_MAX_EDGE = {
     "rock-pile-small": 448,
     "fp-rifle-hands-idle": 1536,
     "fp-rifle-hands-fire": 1536,
+    "fp-hmg-rear-idle": 1536,
+    "fp-hmg-rear-fire": 1536,
 }
 SKY_MAX_WIDTH = 2048
 # 第一人称带手臂图：不裁包围盒（idle/fire 两帧要保持同一坐标系），
@@ -40,6 +42,9 @@ SKY_MAX_WIDTH = 2048
 FIRST_PERSON_TARGETS = {
     "fp-rifle-hands-idle": "liaoshi13-hands",
     "fp-rifle-hands-fire": "liaoshi13-hands-fire",
+    # 重机枪射手后视图（manifest: m8-hmg-fp.json）
+    "fp-hmg-rear-idle": "type92-hmg-hands",
+    "fp-hmg-rear-fire": "type92-hmg-hands-fire",
 }
 
 

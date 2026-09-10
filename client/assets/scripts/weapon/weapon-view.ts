@@ -32,7 +32,12 @@ interface HandsComposition {
   /** idle 帧枪口在贴图内的归一化坐标（0..1，V 轴向下）。 */
   readonly muzzleU: number;
   readonly muzzleV: number;
-  /** 枪口相对准心的留白，正值向右/向上。 */
+  /**
+   * 枪口相对准心的偏移，正值向右/向上。
+   * 枪口不能贴着准心：真人持枪时枪口在视野中心右下方一段距离，
+   * 准心周围要留出干净的视野（2026-09-09 反馈「准心和枪口平行很乱」）。
+   * 数值用 tools/asset-pipeline/preview-weapon-layout.py 出图核对过。
+   */
   readonly muzzleGapXPx: number;
   readonly muzzleGapYPx: number;
   /**
@@ -49,10 +54,23 @@ const HANDS_COMPOSITIONS: Readonly<Record<string, HandsComposition>> = {
     heightRatio: 0.78,
     muzzleU: 0.49,
     muzzleV: 0.299,
-    muzzleGapXPx: 18,
-    muzzleGapYPx: -10,
+    muzzleGapXPx: 150,
+    muzzleGapYPx: -60,
     fireShiftXPx: -82,
     fireShiftYPx: -49,
+  },
+  // 九二式重机枪：射手坐在枪后往前看的后视图。枪身在画面**下方正中**，
+  // 枪口正对前方、落在准心正下方；不像手持枪那样从右下斜伸。
+  // muzzleU/V 由 preview-weapon-layout.py --measure type92-hmg 实测（枪口是贴图最高不透明行）；
+  // fireShift 由两帧机匣区域灰度模板匹配得出（fire 帧整体低 38px、右 6px，贴图像素）。
+  'type92-hmg': {
+    heightRatio: 0.72,
+    muzzleU: 0.5,
+    muzzleV: 0.299,
+    muzzleGapXPx: 0,
+    muzzleGapYPx: -90,
+    fireShiftXPx: 6,
+    fireShiftYPx: 38,
   },
 };
 
@@ -77,14 +95,17 @@ interface HandheldComposition {
    * 由脚本扫描贴图**最左侧**不透明列实测，不要凭感觉填。
    */
   readonly muzzleV: number;
-  /** 枪口相对准心的横向留白，正值让枪口停在准心右侧一点。 */
+  /**
+   * 枪口相对准心的偏移（正值向右/向上）。
+   * 枪口要退到准心右下方约 150-170px，而不是贴着准心：
+   * 贴着时枪口、准心、枪身线条堆在一起，视觉上打架。
+   */
   readonly muzzleGapXPx: number;
-  /** 枪口相对准心的纵向留白，负值让枪口略低于准心。 */
   readonly muzzleGapYPx: number;
 }
 
 // 仅用于屏幕空间构图，不参与武器数值或服务器判定。
-// 倾角约 40°、整枪宽约 0.64 屏宽：枪口钉在准心旁，枪身斜向右下，
+// 倾角约 40°、整枪宽约 0.64 屏宽：枪口落在准心右下方，枪身斜向右下，
 // 从屏幕**底边中间偏右**出屏（不是从右边缘出去），
 // 屏幕里留下枪的前 60% 左右——枪托和后半段机匣都在屏外，
 // 这才是端枪时眼睛看到的样子。数值用 tools 下的几何脚本验过。
@@ -93,30 +114,30 @@ const HANDHELD_COMPOSITIONS: Readonly<Record<string, HandheldComposition>> = {
     tiltDeg: -42,
     widthRatio: 0.64,
     muzzleV: 0.138,
-    muzzleGapXPx: 20,
-    muzzleGapYPx: -12,
+    muzzleGapXPx: 140,
+    muzzleGapYPx: -100,
   },
   'lee-enfield': {
     tiltDeg: -42,
     widthRatio: 0.66,
     muzzleV: 0.199,
-    muzzleGapXPx: 20,
-    muzzleGapYPx: -12,
+    muzzleGapXPx: 140,
+    muzzleGapYPx: -100,
   },
   // 轻机枪贴图带弹匣和两脚架，纵向占比大，倾角略平一点免得弹匣戳到准心。
   zb26: {
     tiltDeg: -38,
     widthRatio: 0.66,
     muzzleV: 0.397,
-    muzzleGapXPx: 22,
-    muzzleGapYPx: -14,
+    muzzleGapXPx: 140,
+    muzzleGapYPx: -96,
   },
   bren: {
     tiltDeg: -38,
     widthRatio: 0.66,
     muzzleV: 0.402,
-    muzzleGapXPx: 22,
-    muzzleGapYPx: -14,
+    muzzleGapXPx: 140,
+    muzzleGapYPx: -96,
   },
 };
 
@@ -166,8 +187,8 @@ const EMPLACEMENT_COMPOSITIONS: Readonly<
     bodyTopV: 0.04,
     bodyBottomV: 0.33,
     muzzleV: 0.143,
-    muzzleGapXPx: 26,
-    muzzleGapYPx: -18,
+    muzzleGapXPx: 120,
+    muzzleGapYPx: -90,
   },
 };
 
@@ -281,18 +302,15 @@ export class WeaponView {
     const spritePath = weapon?.assets.firstPerson;
     const generation = ++this.loadGeneration;
     this.clearHandsMode();
-    const handsPath = this.weapons.player[weaponId]?.assets.firstPersonHands;
+    // 整幅图模式对手持枪和架设重机枪都适用：都是「玩家眼前看到的样子」的成图，
+    // 区别只在构图参数（重机枪枪身居中、枪口在准心正下方）。手榴弹不走这条路。
+    const handsPath = weapon?.assets.firstPersonHands;
     const handsComposition = HANDS_COMPOSITIONS[weaponId];
-    if (
-      handsPath &&
-      handsComposition &&
-      !this.isEmplacement &&
-      !this.isThrowable
-    ) {
+    if (handsPath && handsComposition && !this.isThrowable) {
       this.loadHandsMode(
         weaponId,
         handsPath,
-        this.weapons.player[weaponId]?.assets.firstPersonHandsFire,
+        weapon?.assets.firstPersonHandsFire,
         handsComposition,
         generation,
       );
@@ -398,9 +416,9 @@ export class WeaponView {
   }
 
   /**
-   * 整幅图构图：底边贴屏幕底边，枪口横向对准心。
-   * 纵向不强行对准心——手臂悬空比枪口低几像素难看得多，
-   * 缩放比例由 heightRatio 控制枪口纵向落点。
+   * 整幅图构图：先把图底边贴到屏幕底边，再按 muzzleGap 把枪口平移到准心附近的目标点。
+   * 手持枪的目标点在准心右下；重机枪（后视图）的目标点在准心正下方。
+   * 纵向目标必须低于贴图自然落点（gapY 取负），否则图被抬起、底边悬空。
    */
   private layoutHands(
     composition: HandsComposition,
@@ -420,10 +438,12 @@ export class WeaponView {
     const muzzleLocalY = (0.5 - composition.muzzleV) * scaledHeight;
     // 底边贴屏幕底边。
     const centerY = -designHeight / 2 + scaledHeight / 2;
-    // 横向把枪口钉到准心旁；若纵向枪口离准心太远，就把图往上推一点。
+    // 横向把枪口摆到准心右下；纵向把枪口推到目标高度。
+    // 往下推只会把手臂底部裁出屏幕（无害），往上推才会让手臂悬空，
+    // 所以目标高度必须低于贴图自然落点，参数表里 muzzleGapYPx 取负值。
     const desiredMuzzleY = composition.muzzleGapYPx;
     const muzzleY = centerY + muzzleLocalY;
-    const liftY = Math.max(0, desiredMuzzleY - muzzleY);
+    const liftY = desiredMuzzleY - muzzleY;
     this.handsIdlePosition.set(
       composition.muzzleGapXPx - muzzleLocalX,
       centerY + liftY,

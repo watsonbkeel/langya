@@ -31,6 +31,9 @@ MAX_BATCH = 100
 MAX_CONCURRENCY = 5
 POLL_INTERVAL_SEC = 8
 POLL_TIMEOUT_SEC = 20 * 60
+# 轮询/下载遇到瞬时网络错误（超时、连接重置）时的重试次数。
+# 任务已经提交就已经计费，一次超时就放弃会白白丢掉已付费的图（2026-09-10 踩坑）。
+TRANSIENT_RETRIES = 6
 SSL_CONTEXT = (
     ssl.create_default_context(cafile=certifi.where())
     if certifi is not None
@@ -88,25 +91,51 @@ def submit(item: dict[str, Any], base_url: str, model: str, api_key: str) -> str
     return task_id
 
 
+def with_transient_retry(label: str, action):
+    """对轮询/下载这类幂等请求做有限重试；提交请求不走这里（重提会重复计费）。"""
+    last: Exception | None = None
+    for attempt in range(1, TRANSIENT_RETRIES + 1):
+        try:
+            return action()
+        except (URLError, TimeoutError, OSError) as error:
+            last = error
+            print(
+                f"[image-agent] {label} 网络错误（{attempt}/{TRANSIENT_RETRIES}）：{error}",
+                file=sys.stderr,
+                flush=True,
+            )
+            time.sleep(min(30, POLL_INTERVAL_SEC * attempt))
+    assert last is not None
+    raise last
+
+
 def run_item(
     item: dict[str, Any],
     base_url: str,
     model: str,
     api_key: str,
     output_dir: Path,
+    resume: dict[str, str],
 ) -> tuple[str, str]:
     name = item.get("name")
     if not isinstance(name, str) or not name:
         raise ValueError("manifest 项缺少 name")
-    task_id = submit(item, base_url, model, api_key)
-    print(f"[image-agent] submitted {name} ({task_id})", flush=True)
+    task_id = resume.get(name)
+    if task_id:
+        print(f"[image-agent] resumed {name} ({task_id})", flush=True)
+    else:
+        task_id = submit(item, base_url, model, api_key)
+        print(f"[image-agent] submitted {name} ({task_id})", flush=True)
     deadline = time.monotonic() + POLL_TIMEOUT_SEC
     while time.monotonic() < deadline:
-        status = request_json(
-            f"{base_url}/async-images/{task_id}",
-            "GET",
-            None,
-            api_key,
+        status = with_transient_retry(
+            f"poll {name}",
+            lambda: request_json(
+                f"{base_url}/async-images/{task_id}",
+                "GET",
+                None,
+                api_key,
+            ),
         )
         state = status.get("status")
         if state == "succeeded":
@@ -115,7 +144,10 @@ def run_item(
                 raise RuntimeError(f"{name} 成功但没有下载地址")
             download_url = urljoin(f"{base_url}/", download_url)
             destination = output_dir / f"{name}.png"
-            download(download_url, destination, api_key)
+            with_transient_retry(
+                f"download {name}",
+                lambda: download(download_url, destination, api_key),
+            )
             print(f"[image-agent] downloaded {name} -> {destination}", flush=True)
             return name, str(destination)
         if state in {"failed", "cancelled", "canceled"}:
@@ -136,7 +168,20 @@ def main() -> int:
         action="store_true",
         help="仅在用户明确确认超过 100 张后使用",
     )
+    parser.add_argument(
+        "--resume",
+        action="append",
+        default=[],
+        metavar="NAME=TASK_ID",
+        help="跳过提交，直接轮询已提交的任务（上一轮日志里的 task_id），可重复传",
+    )
     args = parser.parse_args()
+    resume: dict[str, str] = {}
+    for pair in args.resume:
+        if "=" not in pair:
+            raise SystemExit(f"--resume 格式应为 NAME=TASK_ID：{pair}")
+        key, value = pair.split("=", 1)
+        resume[key.strip()] = value.strip()
     api_key = os.environ.get("BKEEL_IMAGE_API_KEY")
     if not api_key:
         raise SystemExit("请设置 BKEEL_IMAGE_API_KEY（不会写入文件）")
@@ -165,8 +210,10 @@ def main() -> int:
                 args.model,
                 api_key,
                 args.output_dir,
+                resume,
             ): item.get("name", "<unnamed>")
             for item in items
+            if not resume or item.get("name") in resume
         }
         for future in as_completed(futures):
             name = futures[future]

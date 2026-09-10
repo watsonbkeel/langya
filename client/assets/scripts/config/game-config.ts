@@ -78,6 +78,12 @@ export interface WeaponsConfig {
         readonly displayName: string;
         readonly assets: {
           readonly firstPerson?: string;
+          /**
+           * 射手后视整幅图（枪身在画面下方正中、枪口指向准心）。
+           * 有它时优先于 firstPerson 侧视裸枪；坐标由 HANDS_COMPOSITIONS 实测。
+           */
+          readonly firstPersonHands?: string;
+          readonly firstPersonHandsFire?: string;
           readonly icon?: string;
         };
         readonly fireRate: number;

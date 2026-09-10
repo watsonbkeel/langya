@@ -139,6 +139,8 @@
       "nestCount": 2,
       "assets": {
         "firstPerson": "weapons/fp/type92-hmg",
+        "firstPersonHands": "weapons/fp/type92-hmg-hands",
+        "firstPersonHandsFire": "weapons/fp/type92-hmg-hands-fire",
         "icon": "weapons/icons/type92-hmg"
       },
       "comment": "AI 队友不可使用，保留给真人玩家"
