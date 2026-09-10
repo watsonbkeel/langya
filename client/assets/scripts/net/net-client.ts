@@ -26,6 +26,7 @@ import type {
   QuickMatchMessage,
   ReconnectMessage,
   ReloadMessage,
+  RespawnMessage,
   RoomAction,
   RoomActionResultMessage,
   RoomSeatState,
@@ -174,6 +175,8 @@ function isAllyState(value: unknown): value is AllyState {
       isFiniteNumber(value.medkitEndsAtMs)) &&
     (value.mountedMgId === undefined ||
       typeof value.mountedMgId === 'string') &&
+    (value.respawnsRemaining === undefined ||
+      isFiniteNumber(value.respawnsRemaining)) &&
     isWeaponState(value.weapon)
   );
 }
@@ -815,6 +818,16 @@ export class NetClient {
     const clientTick = this.allocateClientTick();
     const message: UseMedkitMessage = {
       type: 'use_medkit',
+      payload: { clientTick },
+    };
+    return this.send(message) ? clientTick : undefined;
+  }
+
+  /** 阵亡后选择复活；服务端以 action_result(action='respawn') 回执。 */
+  respawn(): number | undefined {
+    const clientTick = this.allocateClientTick();
+    const message: RespawnMessage = {
+      type: 'respawn',
       payload: { clientTick },
     };
     return this.send(message) ? clientTick : undefined;

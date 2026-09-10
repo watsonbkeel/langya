@@ -162,6 +162,7 @@ export class M1Game {
   private grenadesRemaining: number | null = null;
   private mountedMgId: string | null = null;
   private playerAlive = false;
+  private respawnRequested = false;
   private spectatingAllyId: string | null = null;
   private latestAllies: readonly AllyState[] = [];
   private waveEvents = 0;
@@ -212,6 +213,7 @@ export class M1Game {
         window.location.reload();
       }
     });
+    this.hud.setRespawnHandler(() => this.requestRespawn());
     this.playerName = this.resolvePlayerName();
     this.roomView = new RoomView(
       canvas,
@@ -960,6 +962,18 @@ export class M1Game {
     this.netClient.useMedkit();
   }
 
+  /** 阵亡后点「立即复活」：服务器满血 + 装备重置，下一帧快照 hp>0 即自动退出观战。 */
+  private requestRespawn(): void {
+    if (this.matchEnded || this.playerAlive || this.respawnRequested) {
+      return;
+    }
+    if (this.netClient.respawn() === undefined) {
+      return;
+    }
+    this.respawnRequested = true;
+    this.hud.hideRespawnPrompt();
+  }
+
   private throwGrenade(): void {
     if (
       this.matchEnded ||
@@ -999,6 +1013,10 @@ export class M1Game {
 
   private onActionResult(message: ActionResultMessage): void {
     this.hud.showActionResult(message.payload);
+    if (message.payload.action === 'respawn' && !message.payload.accepted) {
+      // 被拒则放开锁，下一帧快照若仍有名额会重新亮出按钮。
+      this.respawnRequested = false;
+    }
     this.publishDebugState();
   }
 
@@ -1039,6 +1057,7 @@ export class M1Game {
     this.matchEnded = true;
     this.scoreboardEntries = message.payload.scoreboard.length;
     this.weaponView.setVisible(false);
+    this.hud.hideRespawnPrompt();
     // 已经打完的局不需要重连，避免刷新页面后卡在旧战场。
     this.clearStoredToken();
     this.hud.showMatchEnd(message.payload, this.playerId);
@@ -1077,16 +1096,19 @@ export class M1Game {
     this.playerAlive = player !== undefined && player.hp > 0;
     if (this.playerAlive) {
       this.spectatingAllyId = null;
+      this.respawnRequested = false;
       this.controller.leaveSpectatorMode();
       this.weaponView.setVisible(!this.matchEnded);
       if (!wasPlayerAlive) {
         this.hud.setCombatFocus(this.controller.isPointerLocked());
       }
       this.hud.hideSpectating();
+      this.hud.hideRespawnPrompt();
       return;
     }
 
     this.hud.setCombatFocus(true);
+    this.updateRespawnPrompt(player);
     const current = allies.find(
       (ally) =>
         this.canSpectate(ally) &&
@@ -1094,6 +1116,22 @@ export class M1Game {
     );
     const target = current ?? allies.find((ally) => this.canSpectate(ally));
     this.applySpectatorTarget(target);
+  }
+
+  /**
+   * 真人首次阵亡且服务器还给复活名额时，亮出复活按钮并释放鼠标锁（锁着点不到按钮）。
+   * 名额用完（respawnsRemaining 缺省）则只走观战。
+   */
+  private updateRespawnPrompt(player: AllyState | undefined): void {
+    const remaining = player?.respawnsRemaining ?? 0;
+    if (this.matchEnded || this.respawnRequested || remaining <= 0) {
+      this.hud.hideRespawnPrompt();
+      return;
+    }
+    if (!this.hud.respawnPromptVisible) {
+      this.hud.showRespawnPrompt();
+      this.controller.releasePointerLock();
+    }
   }
 
   /** 观战候选：除自己以外所有还活着的队友，真人和 AI 都可以跟。 */

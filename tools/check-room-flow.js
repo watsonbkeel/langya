@@ -301,6 +301,42 @@ async function main() {
     '匹配到的自己不是 AI 队友',
   );
 
+  // ⑦-b 开局装备契约（2026-09-10）：两支长枪各 200 备弹、手榴弹 5、血包 5、复活名额 1。
+  if (selfAlly !== undefined) {
+    check(
+      Array.isArray(selfAlly.availableWeaponIds) &&
+        selfAlly.availableWeaponIds.length === 2,
+      `开局随身两支长枪（实际 ${selfAlly.availableWeaponIds?.length}）`,
+    );
+    check(
+      selfAlly.weapon?.reserveAmmo === 200,
+      `主武器备弹 200（实际 ${selfAlly.weapon?.reserveAmmo}）`,
+    );
+    check(
+      selfAlly.grenadesRemaining === 5,
+      `手榴弹 5（实际 ${selfAlly.grenadesRemaining}）`,
+    );
+    check(
+      selfAlly.medkitsRemaining === 5,
+      `血包 5（实际 ${selfAlly.medkitsRemaining}）`,
+    );
+    check(
+      selfAlly.respawnsRemaining === 1,
+      `真人带 1 次复活名额（实际 ${selfAlly.respawnsRemaining}）`,
+    );
+  }
+  // 活着时请求复活必须被拒（invalid_state），证明服务端认识 respawn 消息。
+  host.send({ type: 'respawn', payload: { clientTick: 1 } });
+  const respawnAlive = await host.wait(
+    (m) => m.type === 'action_result' && m.payload.action === 'respawn',
+    'action_result(respawn)',
+  );
+  check(
+    respawnAlive.payload.accepted === false &&
+      respawnAlive.payload.rejectReason === 'invalid_state',
+    `活着时复活被拒 invalid_state（实际 ${respawnAlive.payload.rejectReason}）`,
+  );
+
   // ⑧ 断线重连（对应大厅的自动重连路径）
   const guestToken = joined.payload.reconnectToken;
   guest.close();

@@ -18,6 +18,7 @@ export const CLIENT_MESSAGE_TYPES = {
   mountMg: 'mount_mg',
   unmountMg: 'unmount_mg',
   throwGrenade: 'throw_grenade',
+  respawn: 'respawn',
 } as const;
 
 export const SERVER_MESSAGE_TYPES = {
@@ -226,6 +227,16 @@ export type UseMedkitMessage = MessageEnvelope<
   UseMedkitPayload
 >;
 
+/** 真人阵亡后主动选择复活（每局次数受 gameplay.player.respawnLimit 限制）。 */
+export interface RespawnPayload {
+  readonly clientTick: number;
+}
+
+export type RespawnMessage = MessageEnvelope<
+  typeof CLIENT_MESSAGE_TYPES.respawn,
+  RespawnPayload
+>;
+
 export interface PickupPayload {
   readonly itemId: string;
   readonly clientTick: number;
@@ -357,6 +368,8 @@ export interface AllyState {
   readonly mountedMgId?: string;
   /** 真人席位当前由 AI 托管（掉线超时），客户端可加托管标记（PRD 7.3）。 */
   readonly autopilot?: boolean;
+  /** 真人本局剩余复活次数；缺省/0 表示不能再复活（AI 队友不下发）。 */
+  readonly respawnsRemaining?: number;
   readonly weapon: WeaponState;
 }
 
@@ -529,7 +542,8 @@ export type ActionType =
   | 'pickup'
   | 'mount_mg'
   | 'unmount_mg'
-  | 'throw_grenade';
+  | 'throw_grenade'
+  | 'respawn';
 
 export type ActionRejectReason =
   | 'dead'
@@ -662,7 +676,8 @@ export type ClientMessage =
   | PickupMessage
   | MountMgMessage
   | UnmountMgMessage
-  | ThrowGrenadeMessage;
+  | ThrowGrenadeMessage
+  | RespawnMessage;
 
 export type ServerMessage =
   | SnapshotMessage

@@ -109,6 +109,8 @@ export class M1Hud {
   private readonly temporaryLabelTimers = new Map<Label, ReturnType<typeof setTimeout>>();
   private readonly routeNames: Readonly<Record<RouteId, string>>;
   private restartHandler: (() => void) | null = null;
+  private respawnHandler: (() => void) | null = null;
+  private readonly respawnPrompt: Node;
   private weaponName = '步枪';
   private routeHighlightSequence = 0;
   private lowHealthActive = false;
@@ -297,6 +299,28 @@ export class M1Hud {
       presentation.medkitGlowColor,
     );
     this.createCrosshair();
+    // 复活提示：首次阵亡时在屏幕中央亮出，点一下即满血复活 + 装备重置。
+    // 排在断网遮罩之前，断网时仍被遮罩盖住。
+    this.respawnPrompt = new Node('RespawnPrompt');
+    this.setUiLayer(this.respawnPrompt);
+    this.respawnPrompt.setParent(this.root);
+    this.createOverlayLabel(
+      this.respawnPrompt,
+      'RespawnTitle',
+      presentation.reportLineFontSizePx,
+      presentation.spectatorOffsetYPx - presentation.reportLineGapPx * 1.5,
+      '#FFD56A',
+    ).string = '你已阵亡，还有一次复活机会';
+    this.createPrimaryButton(
+      this.respawnPrompt,
+      'RespawnButton',
+      '立即满血复活（装备重置）',
+      presentation.spectatorOffsetYPx - presentation.reportLineGapPx * 3,
+      () => {
+        this.respawnHandler?.();
+      },
+    );
+    this.respawnPrompt.active = false;
     // 断网遮罩最后创建，排在所有 HUD 兄弟节点之后才能压在最上层。
     this.disconnectOverlay = new Node('DisconnectOverlay');
     this.setUiLayer(this.disconnectOverlay);
@@ -496,6 +520,22 @@ export class M1Hud {
 
   setRestartHandler(handler: () => void): void {
     this.restartHandler = handler;
+  }
+
+  setRespawnHandler(handler: () => void): void {
+    this.respawnHandler = handler;
+  }
+
+  showRespawnPrompt(): void {
+    this.respawnPrompt.active = true;
+  }
+
+  hideRespawnPrompt(): void {
+    this.respawnPrompt.active = false;
+  }
+
+  get respawnPromptVisible(): boolean {
+    return this.respawnPrompt.active;
   }
 
   showActionResult(payload: ActionResultPayload): void {
@@ -976,11 +1016,29 @@ export class M1Hud {
     label.color = Color.fromHEX(new Color(), colorHex);
   }
 
-  /** 与大厅 RoomView.createButton 同款：圆角实心金色主按钮，文字两侧留足内边距 */
   private createRestartButton(parent: Node, y: number): void {
+    this.createPrimaryButton(
+      parent,
+      'RestartMatchButton',
+      '重新开始新的一局',
+      y,
+      () => {
+        this.restartHandler?.();
+      },
+    );
+  }
+
+  /** 与大厅 RoomView.createButton 同款：圆角实心金色主按钮，文字两侧留足内边距 */
+  private createPrimaryButton(
+    parent: Node,
+    name: string,
+    caption: string,
+    y: number,
+    onClick: () => void,
+  ): Node {
     const width = REPORT_BUTTON_WIDTH;
     const height = REPORT_BUTTON_HEIGHT;
-    const node = new Node('RestartMatchButton');
+    const node = new Node(name);
     this.setUiLayer(node);
     node.setParent(parent);
     node.setPosition(0, y, 0);
@@ -999,26 +1057,21 @@ export class M1Hud {
 
     const button = node.addComponent(Button);
     button.transition = Button.Transition.SCALE;
-    node.on(
-      Button.EventType.CLICK,
-      () => {
-        this.restartHandler?.();
-      },
-      this,
-    );
+    node.on(Button.EventType.CLICK, onClick, this);
 
-    const label = new Node('RestartMatchLabel');
+    const label = new Node(`${name}Label`);
     this.setUiLayer(label);
     label.setParent(node);
     const labelTransform = label.addComponent(UITransform);
     labelTransform.setContentSize(width, height);
     const text = label.addComponent(Label);
-    text.string = '重新开始新的一局';
+    text.string = caption;
     text.fontSize = this.presentation.reportLineFontSizePx;
     text.lineHeight = this.presentation.reportLineFontSizePx;
     text.horizontalAlign = Label.HorizontalAlign.CENTER;
     text.verticalAlign = Label.VerticalAlign.CENTER;
     text.color = Color.fromHEX(new Color(), '#183040');
+    return node;
   }
 
   private createOverlayLabel(
@@ -1200,6 +1253,8 @@ function describeAction(action: ActionResultPayload['action']): string {
       return '下重机枪';
     case 'throw_grenade':
       return '投掷手榴弹';
+    case 'respawn':
+      return '复活';
   }
 }
 
@@ -1217,6 +1272,18 @@ function describeActionReject(
         return '当前状态无法使用血包';
       case 'dead':
         return '阵亡后无法使用血包';
+      default:
+        return describeGenericReject(reason);
+    }
+  }
+  if (action === 'respawn') {
+    switch (reason) {
+      case 'unavailable':
+        return '本局不允许复活';
+      case 'no_resource':
+        return '复活机会已用完';
+      case 'invalid_state':
+        return '当前无法复活';
       default:
         return describeGenericReject(reason);
     }

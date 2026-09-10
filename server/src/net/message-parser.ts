@@ -14,6 +14,7 @@ import {
   type ReloadMessage,
   type QuickMatchMessage,
   type ReconnectMessage,
+  type RespawnMessage,
   type StartMatchMessage,
   type SwitchWeaponMessage,
   type ThrowGrenadeMessage,
@@ -218,6 +219,15 @@ function isUseMedkitMessage(value: unknown): value is UseMedkitMessage {
   );
 }
 
+function isRespawnMessage(value: unknown): value is RespawnMessage {
+  return (
+    isRecord(value) &&
+    value.type === CLIENT_MESSAGE_TYPES.respawn &&
+    isRecord(value.payload) &&
+    isClientTick(value.payload.clientTick)
+  );
+}
+
 function isPickupMessage(value: unknown): value is PickupMessage {
   return (
     isRecord(value) &&
@@ -290,7 +300,8 @@ export function parseClientMessage(raw: string): ClientMessage | undefined {
     isPickupMessage(parsed) ||
     isMountMgMessage(parsed) ||
     isUnmountMgMessage(parsed) ||
-    isThrowGrenadeMessage(parsed)
+    isThrowGrenadeMessage(parsed) ||
+    isRespawnMessage(parsed)
   ) {
     return parsed;
   }

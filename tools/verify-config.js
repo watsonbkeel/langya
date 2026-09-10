@@ -218,16 +218,40 @@ if (allies) {
 // ---------- gameplay.json ----------
 if (gameplay) {
   const p = gameplay.player || {};
-  if (p.medkitCount !== 2) err(`玩家初始血包 = ${p.medkitCount}，PRD 规定 2 个`);
-  if (p.canRespawn !== false) err('玩家 canRespawn 必须为 false（阵亡不复活，转观战）');
+  // 2026-09-10 用户要求：开局血包 5、手榴弹 5、两支长枪各 200 发备弹；真人首次阵亡可复活一次
+  if (p.medkitCount !== 5) err(`玩家初始血包 = ${p.medkitCount}，应为 5 个`);
+  if (p.canRespawn !== true) err('玩家 canRespawn 应为 true（真人首次阵亡可选择复活）');
+  if (p.respawnLimit !== 1) err(`玩家 respawnLimit = ${p.respawnLimit}，应为 1（只给一次机会）`);
+  if (p.spectateOnDeath !== true) err('玩家 spectateOnDeath 必须为 true（复活机会用完后转观战）');
   if (p.naturalRegen !== 0) err('玩家 naturalRegen 必须为 0（只能靠血包）');
   if (p.aimPitchMinDeg !== -60 || p.aimPitchMaxDeg !== 60) {
     err(`玩家俯仰范围应为 -60°~60°，当前为 ${p.aimPitchMinDeg}°~${p.aimPitchMaxDeg}°`);
   }
   if (weapons && p.defaultLoadout) {
-    const { primary, throwable } = p.defaultLoadout;
-    if (primary && !(weapons.player || {})[primary]) {
+    const { primary, secondary, throwable, throwableCount } = p.defaultLoadout;
+    const pw = weapons.player || {};
+    if (primary && !pw[primary]) {
       err(`默认主武器 "${primary}" 在 weapons.json 中不存在`);
+    }
+    if (!secondary) {
+      err('默认装备缺少 secondary（开局应有两支长枪）');
+    } else if (!pw[secondary]) {
+      err(`默认副武器 "${secondary}" 在 weapons.json 中不存在`);
+    } else if (secondary === primary) {
+      err('默认副武器不能与主武器相同');
+    } else if (pw[secondary].isThrowable) {
+      err(`默认副武器 "${secondary}" 不能是投掷物`);
+    }
+    [primary, secondary].forEach((id) => {
+      if (id && pw[id] && pw[id].reserveAmmo !== 200) {
+        err(`开局长枪 "${id}" 备弹 = ${pw[id].reserveAmmo}，应为 200`);
+      }
+    });
+    if (throwableCount !== 5) {
+      err(`开局手榴弹 = ${throwableCount}，应为 5`);
+    }
+    if (throwable && pw[throwable] && pw[throwable].count !== throwableCount) {
+      err(`weapons.json 中 "${throwable}".count = ${pw[throwable].count}，与 gameplay throwableCount ${throwableCount} 不一致`);
     }
     if (throwable && !(weapons.player || {})[throwable]) {
       err(`默认投掷物 "${throwable}" 在 weapons.json 中不存在`);

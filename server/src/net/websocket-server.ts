@@ -348,6 +348,15 @@ export class GameWebSocketServer {
               runtime.battle.tryUsePlayerMedkit(playerId),
           );
           return;
+        case CLIENT_MESSAGE_TYPES.respawn:
+          this.handlePlayerAction(
+            session,
+            message.payload.clientTick,
+            'respawn',
+            (runtime, playerId) =>
+              runtime.battle.tryRespawnPlayer(playerId),
+          );
+          return;
         case CLIENT_MESSAGE_TYPES.switchWeapon:
           this.handlePlayerAction(
             session,

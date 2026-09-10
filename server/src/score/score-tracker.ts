@@ -142,6 +142,16 @@ export class ScoreTracker {
     score.deathAtSec = Math.max(0, deathAtSec);
   }
 
+  /**
+   * 复活：重新计为存活，生存时长按局末重新结算（MVP 只在存活者中产生）。
+   * 之前的击杀/命中等战绩保留，不清零。
+   */
+  markRevived(occupantId: string): void {
+    const score = this.requireScore(occupantId);
+    score.alive = true;
+    score.deathAtSec = undefined;
+  }
+
   createScoreboard(endedAtSec: number): readonly ScoreboardEntry[] {
     return [...this.scores.values()]
       .sort(

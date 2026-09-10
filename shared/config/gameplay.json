@@ -10,15 +10,17 @@
     "aimPitchMinDeg": -60,
     "aimPitchMaxDeg": 60,
     "crouchHitboxMultiplier": 0.6,
-    "medkitCount": 2,
-    "canRespawn": false,
+    "medkitCount": 5,
+    "canRespawn": true,
+    "respawnLimit": 1,
     "spectateOnDeath": true,
     "defaultLoadout": {
       "primary": "liaoshi13",
+      "secondary": "lee-enfield",
       "throwable": "grenade",
-      "throwableCount": 4
+      "throwableCount": 5
     },
-    "comment": "阵亡不复活，转观战模式（可切换视角）。蹲下受击面积减少 40%"
+    "comment": "2026-09-10 调整：开局两支长枪各配 200 发备弹、手榴弹 5、血包 5。真人玩家首次阵亡可选择复活一次（respawnLimit），点确认立即满血并重置为开局装备；用完后转观战。AI 队友不复活。蹲下受击面积减少 40%"
   },
 
   "server": {

@@ -550,6 +550,144 @@ describe('M2BattleSession', () => {
     assert.equal(player?.grenadesRemaining, 0);
   });
 
+  it('开局装备：两支长枪各 200 发备弹、手榴弹 5、血包 5，随身枪不再摆武器架', () => {
+    const { battle } = createM2BattleRuntime(
+      config,
+      'player-loadout',
+      '测试玩家',
+      11,
+    );
+    const { primary, secondary, throwableCount } =
+      config.gameplay.player.defaultLoadout;
+    assert.ok(secondary);
+    const snapshot = battle.createSnapshot(0, 0);
+    const player = snapshot.payload.allies.find((ally) => !ally.isBot);
+    assert.ok(player);
+
+    assert.deepEqual([...player.availableWeaponIds].sort(), [primary, secondary].sort());
+    assert.equal(player.weapon.weaponId, primary);
+    assert.equal(player.weapon.reserveAmmo, 200);
+    assert.equal(player.grenadesRemaining, throwableCount);
+    assert.equal(player.grenadesRemaining, 5);
+    assert.equal(player.medkitsRemaining, 5);
+    assert.equal(player.respawnsRemaining, 1);
+
+    assert.equal(battle.switchPlayerWeapon(secondary), undefined);
+    const switched = battle
+      .createSnapshot(1, 0)
+      .payload.allies.find((ally) => !ally.isBot);
+    assert.equal(switched?.weapon.weaponId, secondary);
+    assert.equal(switched?.weapon.reserveAmmo, 200);
+
+    const rackWeaponIds = snapshot.payload.items
+      .filter((item) => item.kind === 'weapon_rack')
+      .map((item) => (item.kind === 'weapon_rack' ? item.weaponId : ''));
+    assert.equal(rackWeaponIds.includes(primary), false);
+    assert.equal(rackWeaponIds.includes(secondary), false);
+    assert.ok(rackWeaponIds.length > 0);
+  });
+
+  it('真人首次阵亡可复活一次：满血、装备重置、回防守位；第二次拒绝', () => {
+    // 队友命中率归零，避免敌人先被打光；真人不开枪，等着被打死。
+    const fragileConfig = {
+      ...config,
+      allies: {
+        ...config.allies,
+        bot: {
+          ...config.allies.bot,
+          accuracy: 0,
+          accuracyLongRange: 0,
+        },
+      },
+    };
+    const { battle, tickRateHz } = createM2BattleRuntime(
+      fragileConfig,
+      'player-respawn',
+      '测试玩家',
+      12,
+    );
+    const { primary, secondary, throwableCount } =
+      config.gameplay.player.defaultLoadout;
+    battle.update(0, 0, 0);
+    // 活着时不能复活
+    assert.equal(battle.tryRespawnPlayer(), 'invalid_state');
+
+    // 先消耗一些资源并切到副武器，验证复活后被重置
+    assert.equal(battle.tryUsePlayerMedkit(), 'unavailable');
+    battle.throwGrenade(
+      {
+        type: 'throw_grenade',
+        payload: {
+          originPos: battle.playerPosition,
+          dirVec: { x: 0, y: 0, z: -1 },
+          force: 1,
+          clientTick: 1,
+        },
+      },
+      0,
+    );
+    assert.equal(battle.switchPlayerWeapon(secondary!), undefined);
+
+    // 让敌人把真人打死（队友命中率归零，避免敌人先被打光）
+    const stepMs = 1000 / tickRateHz;
+    const routeIds = Object.keys(
+      config.waves.routes,
+    ) as (keyof typeof config.waves.routes)[];
+    const spawnPressure = () => {
+      for (let index = 0; index < config.waves.maxAliveEnemies; index += 1) {
+        battle.spawnEnemy('rifleman', routeIds[index % routeIds.length]!, 1, 0);
+      }
+    };
+    spawnPressure();
+    let nowMs = 0;
+    let tick = 2;
+    while (battle.playerAlive && nowMs < 120_000) {
+      battle.update(stepMs / 1000, tick, nowMs);
+      nowMs += stepMs;
+      tick += 1;
+    }
+    assert.equal(battle.playerAlive, false);
+    const deadSnapshot = battle
+      .createSnapshot(tick, nowMs)
+      .payload.allies.find((ally) => !ally.isBot);
+    assert.equal(deadSnapshot?.respawnsRemaining, 1);
+    const scoreBefore = battle.createScoreboard().find(
+      (entry) => entry.occupantId === 'player-respawn',
+    );
+    assert.equal(scoreBefore?.alive, false);
+
+    assert.equal(battle.tryRespawnPlayer(), undefined);
+    assert.equal(battle.playerAlive, true);
+    assert.equal(battle.playerHp, config.gameplay.player.maxHp);
+    const revived = battle
+      .createSnapshot(tick + 1, nowMs)
+      .payload.allies.find((ally) => !ally.isBot);
+    assert.ok(revived);
+    assert.equal(revived.weapon.weaponId, primary);
+    assert.equal(revived.weapon.reserveAmmo, 200);
+    assert.equal(revived.grenadesRemaining, throwableCount);
+    assert.equal(revived.medkitsRemaining, config.gameplay.player.medkitCount);
+    assert.equal(revived.respawnsRemaining, undefined);
+    assert.deepEqual(
+      [...revived.availableWeaponIds].sort(),
+      [primary, secondary].sort(),
+    );
+    const scoreAfter = battle.createScoreboard().find(
+      (entry) => entry.occupantId === 'player-respawn',
+    );
+    assert.equal(scoreAfter?.alive, true);
+
+    // 第二次死亡不能再复活
+    spawnPressure();
+    while (battle.playerAlive && nowMs < 300_000) {
+      battle.update(stepMs / 1000, tick, nowMs);
+      nowMs += stepMs;
+      tick += 1;
+    }
+    assert.equal(battle.playerAlive, false);
+    assert.equal(battle.tryRespawnPlayer(), 'no_resource');
+  });
+
   it('重机枪挂载后锁定移动、限制射界并记录专属击杀', () => {
     const { battle } = createM2BattleRuntime(
       config,

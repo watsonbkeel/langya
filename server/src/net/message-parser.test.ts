@@ -138,6 +138,10 @@ describe('parseClientMessage', () => {
           clientTick: 7,
         },
       },
+      {
+        type: 'respawn',
+        payload: { clientTick: 8 },
+      },
     ];
 
     assert.deepEqual(
@@ -174,6 +178,10 @@ describe('parseClientMessage', () => {
       {
         type: 'use_medkit',
         payload: { clientTick: -1 },
+      },
+      {
+        type: 'respawn',
+        payload: {},
       },
     ];
 

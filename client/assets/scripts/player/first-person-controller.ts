@@ -189,6 +189,16 @@ export class FirstPersonController {
     this.spectatorMode = false;
   }
 
+  /** 阵亡后要点屏幕按钮（复活），锁着鼠标则光标不可见、点不到，先释放。 */
+  releasePointerLock(): void {
+    if (
+      typeof document !== 'undefined' &&
+      document.pointerLockElement !== null
+    ) {
+      document.exitPointerLock();
+    }
+  }
+
   /** 大厅显示时关闭战斗输入，进入战斗后再打开。 */
   setLobbyMode(active: boolean): void {
     this.lobbyMode = active;

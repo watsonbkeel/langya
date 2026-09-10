@@ -24,20 +24,47 @@ export class PlayerWeaponInventory<
   >;
   private readonly states = new Map<string, WeaponRuntimeState>();
   private readonly availableIds = new Set<string>();
+  /** 开局默认装备：第一项为主武器，其余为随身副武器。复活时按这个名单重置。 */
+  private readonly loadoutIds: readonly string[];
   private equippedId: string;
 
   constructor(
     configs: Readonly<Record<string, TConfig>>,
     initialWeaponId: string,
+    extraWeaponIds: readonly string[] = [],
   ) {
-    const initialConfig = configs[initialWeaponId];
-    if (!initialConfig) {
+    if (!configs[initialWeaponId]) {
       throw new Error(`初始武器 "${initialWeaponId}" 不存在`);
     }
+    for (const weaponId of extraWeaponIds) {
+      if (!configs[weaponId]) {
+        throw new Error(`默认副武器 "${weaponId}" 不存在`);
+      }
+    }
     this.configs = configs;
+    this.loadoutIds = [
+      initialWeaponId,
+      ...extraWeaponIds.filter((id) => id !== initialWeaponId),
+    ];
     this.equippedId = initialWeaponId;
-    this.availableIds.add(initialWeaponId);
-    this.states.set(initialWeaponId, createWeaponState(initialConfig));
+    this.reset();
+  }
+
+  /**
+   * 回到开局装备：丢掉战中捡的枪，默认武器弹药全部装满，切回主武器。
+   * 复活时调用（PRD：“点一下就立即满血复活，装备重置”）。
+   */
+  reset(): void {
+    this.states.clear();
+    this.availableIds.clear();
+    for (const weaponId of this.loadoutIds) {
+      this.availableIds.add(weaponId);
+      this.states.set(
+        weaponId,
+        createWeaponState(this.requireConfig(weaponId)),
+      );
+    }
+    this.equippedId = this.loadoutIds[0]!;
   }
 
   get currentWeaponId(): string {

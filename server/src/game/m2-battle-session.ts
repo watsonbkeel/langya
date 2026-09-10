@@ -108,8 +108,14 @@ export interface M2PlayerConfig {
   readonly crouchSpeed: number;
   readonly crouchHitboxMultiplier: number;
   readonly medkitCount: number;
+  /** 真人阵亡后是否允许选择复活（AI 队友不受此影响，永不复活）。 */
+  readonly canRespawn?: boolean;
+  /** 每人每局可复活次数，缺省 1。 */
+  readonly respawnLimit?: number;
   readonly defaultLoadout: {
     readonly primary: string;
+    /** 开局随身的第二支长枪；缺省只带主武器。 */
+    readonly secondary?: string;
     readonly throwable: string;
     readonly throwableCount: number;
   };
@@ -246,6 +252,8 @@ interface MutablePlayer {
   readonly weapons: PlayerWeaponInventory<M2PlayerWeaponConfig>;
   grenadesRemaining: number;
   medkitsRemaining: number;
+  /** 本局已用掉的复活次数。 */
+  respawnsUsed: number;
   /**
    * 掉线超时后由 AI 托管（PRD 7.3）。
    * 席位归属不变，血量弹药战绩仍算这个人的，只是决策换成 AI 做。
@@ -358,6 +366,14 @@ export class M2BattleSession<
       (options.config.enemyHitbox.torsoStartM +
         options.config.enemyHitbox.headStartM) /
       2;
+    // 开局随身的第二支长枪（gameplay.defaultLoadout.secondary）。
+    const secondaryId = options.config.player.defaultLoadout.secondary;
+    const secondaryWeaponIds =
+      secondaryId !== undefined &&
+      secondaryId !== options.config.playerWeapon.weaponId &&
+      options.config.playerWeapons[secondaryId] !== undefined
+        ? [secondaryId]
+        : [];
     // 所有真人席位统一建模：单人时只有一个，联机时最多五个。
     // 每个真人各自持有血量、位置、弹药与背包，互不共享。
     for (const seat of this.room.seats) {
@@ -390,10 +406,12 @@ export class M2BattleSession<
         weapons: new PlayerWeaponInventory(
           options.config.playerWeapons,
           options.config.playerWeapon.weaponId,
+          secondaryWeaponIds,
         ),
         grenadesRemaining:
           options.config.player.defaultLoadout.throwableCount,
         medkitsRemaining: options.config.player.medkitCount,
+        respawnsUsed: 0,
         autopilot: false,
       });
     }
@@ -472,10 +490,11 @@ export class M2BattleSession<
         this.playerEyeHeightM,
       ),
     );
+    // 开局已随身的枪（主+副）不再摆武器架，否则玩家看到却捡不了。
     this.weaponRacks = createWeaponRacks(
       this.room.id,
       options.config.playerWeapons,
-      options.config.playerWeapon.weaponId,
+      [options.config.playerWeapon.weaponId, ...secondaryWeaponIds],
       options.config.routes,
     );
   }
@@ -894,6 +913,57 @@ export class M2BattleSession<
     return undefined;
   }
 
+  /** 该真人本局还剩几次复活机会（AI 队友恒为 0）。 */
+  getRespawnsRemaining(playerId: string): number {
+    const participant = this.players.get(playerId);
+    if (!participant || this.config.player.canRespawn !== true) {
+      return 0;
+    }
+    return Math.max(
+      0,
+      (this.config.player.respawnLimit ?? 1) - participant.respawnsUsed,
+    );
+  }
+
+  /**
+   * 真人阵亡后主动选择复活：立即满血、回到席位防守点、装备重置为开局配置。
+   * 只对真人开放，且每局次数受 respawnLimit 限制；比赛未开始/已结束时拒绝。
+   */
+  tryRespawnPlayer(
+    playerId: string = this.player.id,
+  ): ActionRejectReason | undefined {
+    const participant = this.players.get(playerId);
+    if (!participant) {
+      return 'invalid_state';
+    }
+    if (this.config.player.canRespawn !== true) {
+      return 'unavailable';
+    }
+    if (this.startedAtMs === undefined) {
+      return 'invalid_state';
+    }
+    if (participant.hp > 0) {
+      return 'invalid_state';
+    }
+    if (this.getRespawnsRemaining(playerId) === 0) {
+      return 'no_resource';
+    }
+    participant.respawnsUsed += 1;
+    participant.hp = participant.maxHp;
+    participant.position = { ...participant.guardPosition };
+    participant.aimYaw = 0;
+    participant.aimPitch = 0;
+    participant.isCrouch = false;
+    participant.moveDirX = 0;
+    participant.moveDirY = 0;
+    participant.weapons.reset();
+    participant.grenadesRemaining =
+      this.config.player.defaultLoadout.throwableCount;
+    participant.medkitsRemaining = this.config.player.medkitCount;
+    this.scoreTracker.markRevived(participant.id);
+    return undefined;
+  }
+
   pickupItem(
     itemId: string,
     nowMs: number,
@@ -1292,6 +1362,9 @@ export class M2BattleSession<
           const seat = this.getSeatByOccupantId(participant.id);
           const mountedMachineGun =
             this.machineGunController.getMounted(participant.id);
+          const respawnsRemaining = this.getRespawnsRemaining(
+            participant.id,
+          );
           return {
             id: participant.id,
             isBot: false,
@@ -1314,6 +1387,7 @@ export class M2BattleSession<
               ? {}
               : { mountedMgId: mountedMachineGun.id }),
             ...(participant.autopilot ? { autopilot: true } : {}),
+            ...(respawnsRemaining > 0 ? { respawnsRemaining } : {}),
             weapon: this.getPlayerWeaponState(participant),
           };
         }),
@@ -2305,14 +2379,14 @@ function deflectDirection(direction: Vector3): Vector3 {
 function createWeaponRacks<TRouteId extends string>(
   roomId: string,
   weapons: Readonly<Record<string, M2PlayerWeaponConfig>>,
-  defaultWeaponId: string,
+  loadoutWeaponIds: readonly string[],
   routes: readonly RouteLayout<TRouteId>[],
 ): readonly WeaponRackItemState[] {
   if (routes.length === 0) {
     throw new Error('生成武器架至少需要一条防守路线');
   }
   return Object.values(weapons)
-    .filter((weapon) => weapon.weaponId !== defaultWeaponId)
+    .filter((weapon) => !loadoutWeaponIds.includes(weapon.weaponId))
     .map((weapon, index) => {
       const route = routes[index % routes.length];
       if (!route) {
