@@ -55,6 +55,24 @@ const REJECT_TEXT: Readonly<
 /** 房间码只允许大写字母和数字，长度由服务器决定，这里只做输入侧净化。 */
 const ROOM_CODE_PATTERN = /[^A-Z0-9]/g;
 
+/**
+ * 大厅按钮的统一尺寸（设计分辨率 1280x720 下的像素）。
+ * 纯排版常量，不是玩法数值，所以不进 shared/config。
+ */
+const ENTRY_BUTTON_WIDTH = 360;
+const PAIR_BUTTON_WIDTH = 220;
+/** 并排两个按钮时各自离中线的距离：半宽 + 一半间距。 */
+const PAIR_BUTTON_OFFSET_X = PAIR_BUTTON_WIDTH / 2 + 14;
+const BUTTON_HEIGHT = 52;
+const BUTTON_ROW_GAP = 16;
+const BUTTON_RADIUS = 10;
+
+interface ButtonStyle {
+  readonly width?: number;
+  /** 空心描边样式，给次级操作用；实心留给每屏唯一的主操作。 */
+  readonly outline?: boolean;
+}
+
 export class RoomView {
   private readonly root: Node;
   private readonly presentation: PresentationConfig;
@@ -194,17 +212,19 @@ export class RoomView {
       this.roomPanel,
       'RoomReadyButton',
       '我准备好了',
-      new Vec3(-gap * 2.2, buttonRowY, 0),
+      new Vec3(-PAIR_BUTTON_OFFSET_X, buttonRowY, 0),
       '#45B7C9',
       () => this.handlers.onPlayerReady(),
+      { width: PAIR_BUTTON_WIDTH, outline: true },
     );
     this.startButton = this.createButton(
       this.roomPanel,
       'RoomStartButton',
       '开始战斗',
-      new Vec3(gap * 2.2, buttonRowY, 0),
+      new Vec3(PAIR_BUTTON_OFFSET_X, buttonRowY, 0),
       '#D9B86C',
       () => this.handlers.onStartMatch(),
+      { width: PAIR_BUTTON_WIDTH },
     );
 
     this.bindKeyboard();
@@ -435,43 +455,67 @@ export class RoomView {
     this.setStage('entry');
   }
 
+  /**
+   * 进入方式：一个主按钮（单人）+ 一组次级按钮（联机）。
+   * 按钮之间留 ENTRY_BUTTON_PITCH 的行距（按钮高 + 16px 空隙），
+   * 单人与联机之间再插一行小字分隔，避免四个按钮糊成一块。
+   */
   private buildEntryPanel(): void {
     const gap = this.presentation.reportLineGapPx;
+    const width = ENTRY_BUTTON_WIDTH;
+    const pitch = BUTTON_HEIGHT + BUTTON_ROW_GAP;
+    // 提示文字在 gap*2（下沿约 72px），主按钮上沿留 ~16px 空隙。
+    const soloY = gap * 0.7;
+    const dividerY = soloY - BUTTON_HEIGHT / 2 - BUTTON_ROW_GAP - 6;
+    const firstMultiY = dividerY - BUTTON_ROW_GAP - 6 - BUTTON_HEIGHT / 2;
+
     this.createButton(
       this.entryPanel,
       'SoloButton',
       '单人上阵（4 名 AI 队友）',
-      new Vec3(0, gap * 0.8, 0),
+      new Vec3(0, soloY, 0),
       '#D9B86C',
       () => this.handlers.onSoloStart(),
+      { width },
+    );
+    this.createLabel(
+      this.entryPanel,
+      'EntryDivider',
+      '—— 或与同伴联机 ——',
+      this.presentation.helpFontSizePx,
+      new Vec3(0, dividerY, 0),
+      '#8FA3AD',
     );
     this.createButton(
       this.entryPanel,
       'CreateRoomButton',
       '创建房间',
-      new Vec3(0, 0, 0),
+      new Vec3(0, firstMultiY, 0),
       '#45B7C9',
       () => this.handlers.onCreateRoom(),
+      { width, outline: true },
     );
     this.createButton(
       this.entryPanel,
       'JoinRoomButton',
       '输入房间码加入',
-      new Vec3(0, -gap * 0.8, 0),
+      new Vec3(0, firstMultiY - pitch, 0),
       '#45B7C9',
       () => {
         this.codeInput = '';
         this.refreshCodeInput();
         this.setStage('joining');
       },
+      { width, outline: true },
     );
     this.createButton(
       this.entryPanel,
       'QuickMatchButton',
       '快速匹配',
-      new Vec3(0, -gap * 1.6, 0),
+      new Vec3(0, firstMultiY - pitch * 2, 0),
       '#45B7C9',
       () => this.handlers.onQuickMatch(),
+      { width, outline: true },
     );
   }
 
@@ -481,17 +525,19 @@ export class RoomView {
       this.joinPanel,
       'JoinConfirmButton',
       '确认加入',
-      new Vec3(-gap * 2, -gap * 0.6, 0),
+      new Vec3(-PAIR_BUTTON_OFFSET_X, -gap * 0.6, 0),
       '#D9B86C',
       () => this.submitCode(),
+      { width: PAIR_BUTTON_WIDTH },
     );
     this.createButton(
       this.joinPanel,
       'JoinBackButton',
       '返回',
-      new Vec3(gap * 2, -gap * 0.6, 0),
+      new Vec3(PAIR_BUTTON_OFFSET_X, -gap * 0.6, 0),
       '#8FA3AD',
       () => this.setStage('entry'),
+      { width: PAIR_BUTTON_WIDTH, outline: true },
     );
   }
 
@@ -575,6 +621,10 @@ export class RoomView {
     return node;
   }
 
+  /**
+   * 圆角按钮。默认实心（主操作）；`outline` 为描边空心（次级操作），
+   * 同一屏里主次一眼能分开。宽度不传时用统一的 ENTRY_BUTTON_WIDTH。
+   */
   private createButton(
     parent: Node,
     name: string,
@@ -582,9 +632,10 @@ export class RoomView {
     position: Vec3,
     colorHex: string,
     onClick: () => void,
+    style: ButtonStyle = {},
   ): Node {
-    const width = this.presentation.reportLineFontSizePx * 12;
-    const height = this.presentation.reportLineFontSizePx * 2;
+    const width = style.width ?? ENTRY_BUTTON_WIDTH;
+    const height = BUTTON_HEIGHT;
     const node = new Node(name);
     this.setUiLayer(node);
     node.setParent(parent);
@@ -592,12 +643,26 @@ export class RoomView {
     node.addComponent(UITransform).setContentSize(width, height);
 
     const background = node.addComponent(Graphics);
-    background.fillColor = Color.fromHEX(new Color(), colorHex);
-    background.rect(-width / 2, -height / 2, width, height);
-    background.fill();
+    const accent = Color.fromHEX(new Color(), colorHex);
+    if (style.outline) {
+      // 空心：半透明深底 + 2px 主题色描边，文字用主题色。
+      const fill = Color.fromHEX(new Color(), '#183040');
+      fill.a = 160;
+      background.fillColor = fill;
+      background.strokeColor = accent;
+      background.lineWidth = 2;
+      background.roundRect(-width / 2, -height / 2, width, height, BUTTON_RADIUS);
+      background.fill();
+      background.stroke();
+    } else {
+      background.fillColor = accent;
+      background.roundRect(-width / 2, -height / 2, width, height, BUTTON_RADIUS);
+      background.fill();
+    }
 
     const button = node.addComponent(Button);
     button.transition = Button.Transition.SCALE;
+    button.zoomScale = 1.04;
     node.on(Button.EventType.CLICK, onClick, this);
 
     const labelNode = new Node(`${name}Label`);
@@ -611,7 +676,7 @@ export class RoomView {
     label.horizontalAlign = Label.HorizontalAlign.CENTER;
     label.verticalAlign = Label.VerticalAlign.CENTER;
     label.overflow = Label.Overflow.NONE;
-    label.color = Color.fromHEX(new Color(), '#183040');
+    label.color = style.outline ? accent : Color.fromHEX(new Color(), '#183040');
     return node;
   }
 
