@@ -31,7 +31,7 @@ const GROUND_UV_REPEAT = 8;
 /**
  * 地面网格的采样边长（米）。
  * 2m 在 60m x 150m 的战场上约 30 x 75 格，
- * 既能把 14° 的坡面画得平滑，也不会把顶点数推到移动端吃不消的量级。
+ * 既能把 18° 的坡面画得平滑，也不会把顶点数推到移动端吃不消的量级。
  */
 const GROUND_SEGMENT_SIZE_M = 2;
 
@@ -54,8 +54,23 @@ const ROUTE_MARKER_FILL_RATIO = 0.45;
 /** 路线标记的不透明度（0-255）。压低到让岩石地面清晰透出。 */
 const ROUTE_MARKER_OPACITY = 90;
 
-const COVER_HEIGHT_M = 1.4;
-const MACHINE_GUN_NEST_HEIGHT_M = 2.15;
+/**
+ * 工事 billboard 的世界尺寸（米）。
+ *
+ * 贴图已用 tools/asset-pipeline/crop-transparent-margins.py 裁掉四周透明边距，
+ * 内容底边 = 画布底边，因此「面片底边贴地」就等于「工事贴地」
+ * （2026-09-10 修复：原 512×512 整图上下各留 ~26% 空白，工事看起来悬空 0.4–0.55m）。
+ *
+ * 宽高比尽量贴近贴图本身（石垒 485×236 ≈ 2.05、机枪工事 485×250 ≈ 1.94），
+ * 原先 8m×1.4m 把石垒横向拉成 6 倍宽的条纹，这里一并收敛。
+ */
+// 工事贴图已用 tools/asset-pipeline/crop-transparent-margins.py 裁掉透明边距，
+// 内容底边即画布底边；下列宽高按裁后贴图真实比例取值（石垒 485×236≈2.06，
+// 机枪工事 485×250≈1.94），比例不一致会把石头横向拉成条纹。
+const COVER_WIDTH_M = 3.3;
+const COVER_HEIGHT_M = 1.6;
+const MACHINE_GUN_NEST_WIDTH_M = 4.85;
+const MACHINE_GUN_NEST_HEIGHT_M = 2.5;
 
 /**
  * M4 纯客户端场景装饰。
@@ -219,7 +234,6 @@ export class M4SceneDecorations {
   private createCoverLine(): void {
     const width = this.gameplay.arena.widthM;
     const depth = this.gameplay.arena.depthM;
-    const coverWidth = width / 7.5;
     const positions: readonly [number, number][] = [
       [-width * 0.38, -depth * 0.16],
       [-width * 0.17, -depth * 0.28],
@@ -235,7 +249,7 @@ export class M4SceneDecorations {
         x,
         terrainHeightAt(x, z) + COVER_HEIGHT_M / 2,
         z,
-        coverWidth,
+        COVER_WIDTH_M,
         COVER_HEIGHT_M,
       );
     });
@@ -252,7 +266,7 @@ export class M4SceneDecorations {
         x,
         terrainHeightAt(x, nestZ) + MACHINE_GUN_NEST_HEIGHT_M / 2,
         nestZ,
-        width / 7,
+        MACHINE_GUN_NEST_WIDTH_M,
         MACHINE_GUN_NEST_HEIGHT_M,
       );
     }

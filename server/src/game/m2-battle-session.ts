@@ -2342,7 +2342,14 @@ function createMachineGunPlacements<TRouteId extends string>(
         // guardPosition.y 已是该点的地面高度，机枪射击点再抬到射手视线高度
         y: route.guardPosition.y + eyeHeightM,
       },
-      baseYaw: yawToward(route.guardPosition, route.spawnPosition),
+      // 射界中线正对山下（-z），而不是本路出生点：三条路线平行向下，
+      // 配合 weapons.json 的 yawLimitDeg 才能把隔壁路线近处（z≈-20，偏角约 76°）
+      // 的敌人也收进视野，否则换到另一个机枪位后会被看不见的敌人打死。
+      baseYaw: yawToward(route.guardPosition, {
+        x: route.guardPosition.x,
+        y: route.guardPosition.y,
+        z: route.guardPosition.z - 1,
+      }),
     };
   });
 }

@@ -40,7 +40,7 @@ const TIMEOUT_MS = 15000;
 const HILLTOP_HEIGHT_M = 20;
 const SLOPE_RUN_M = 130;
 const SUMMIT_FLAT_DEPTH_M = 10;
-const RIDGE_FALLOFF_M = 2.5;
+const RIDGE_FALLOFF_M = 1.5;
 const RIDGE_HALF_WIDTH_M = 40;
 
 const clamp01 = (v) => (v <= 0 ? 0 : v >= 1 ? 1 : v);
@@ -51,7 +51,9 @@ const smoothStep = (t) => {
 const depthRatio = (z) => {
   const downhill = -z - SUMMIT_FLAT_DEPTH_M;
   if (downhill <= 0) return 1;
-  return 1 - smoothStep(downhill / (SLOPE_RUN_M - SUMMIT_FLAT_DEPTH_M));
+  // 凹形剖面 (1 - t)²，与 shared/terrain.ts 2026-09-10 改动一致
+  const remaining = 1 - clamp01(downhill / (SLOPE_RUN_M - SUMMIT_FLAT_DEPTH_M));
+  return remaining * remaining;
 };
 const terrainHeightAt = (x, z) => {
   const base = HILLTOP_HEIGHT_M * depthRatio(z);

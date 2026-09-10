@@ -53,6 +53,20 @@ const REPORT_BOTTOM_MARGIN_PX = 36;
 /** 「向英雄致敬」与按钮之间的空白 */
 const REPORT_TRIBUTE_GAP_PX = 28;
 
+/**
+ * 受击方向指示：准心周围一段红色弧，指向子弹飞来的方向。
+ * 重机枪上阵时视角被锁在射界内，玩家往往看不到射手；没有方向提示就只能挨打。
+ */
+const DAMAGE_DIRECTION_RADIUS_PX = 96;
+const DAMAGE_DIRECTION_ARC_DEG = 50;
+const DAMAGE_DIRECTION_LINE_WIDTH_PX = 9;
+const DAMAGE_DIRECTION_HOLD_SEC = 1.1;
+
+function normalizeDegrees(value: number): number {
+  const normalized = ((((value + 180) % 360) + 360) % 360) - 180;
+  return normalized === -180 ? 180 : normalized;
+}
+
 export class M1Hud {
   private readonly root: Node;
   private readonly presentation: PresentationConfig;
@@ -67,6 +81,8 @@ export class M1Hud {
   private readonly hitLabel: Label;
   private readonly damageLabel: Label;
   private readonly vignetteOpacity: UIOpacity;
+  private readonly damageDirectionNode: Node;
+  private readonly damageDirectionOpacity: UIOpacity;
   private readonly medkitFlashOpacity: UIOpacity;
   private readonly routeLabel: Label;
   private readonly calloutLabel: Label;
@@ -266,6 +282,10 @@ export class M1Hud {
       '#FFD56A',
     );
     this.vignetteOpacity = this.createDamageVignette();
+    this.damageDirectionNode = this.createDamageDirectionArc();
+    this.damageDirectionOpacity = this.damageDirectionNode.getComponent(
+      UIOpacity,
+    ) as UIOpacity;
     this.medkitFlashOpacity = this.createEdgeFlash(
       presentation.medkitGlowColor,
     );
@@ -728,7 +748,15 @@ export class M1Hud {
     }
   }
 
-  showDamage(): void {
+  /**
+   * 受击反馈。`fromDir` 是从自己指向射手的世界坐标单位向量（服务端下发），
+   * `viewYawDeg` 是当前相机水平朝向；两者合起来算出射手在屏幕上的方位。
+   * 不传方向则只闪整屏红边。
+   */
+  showDamage(fromDir?: { x: number; z: number }, viewYawDeg?: number): void {
+    if (fromDir && viewYawDeg !== undefined) {
+      this.showDamageDirection(fromDir, viewYawDeg);
+    }
     Tween.stopAllByTarget(this.vignetteOpacity);
     this.vignetteOpacity.opacity = 255;
     tween(this.vignetteOpacity)
@@ -745,12 +773,38 @@ export class M1Hud {
       .start();
   }
 
+  private showDamageDirection(
+    fromDir: { x: number; z: number },
+    viewYawDeg: number,
+  ): void {
+    const planar = Math.hypot(fromDir.x, fromDir.z);
+    if (planar < 1e-4) {
+      return;
+    }
+    // 与 FirstPersonController.getAimDirection 同一套约定：
+    // 相机前方 = (-sin(yaw), -cos(yaw))，yaw 逆时针为正（向左转）。
+    const attackerYaw =
+      (Math.atan2(-fromDir.x, -fromDir.z) * 180) / Math.PI;
+    // 射手相对相机前方的偏角：正 = 屏幕左侧，负 = 右侧。
+    const relative = normalizeDegrees(attackerYaw - viewYawDeg);
+    // Graphics 的角度系：0° 指向 +x（屏幕右），逆时针为正，屏幕上方 = 90°。
+    // 前方（relative=0）对应屏幕上方；左侧（relative>0）逆时针转到屏幕左。
+    this.damageDirectionNode.setRotationFromEuler(0, 0, relative);
+    Tween.stopAllByTarget(this.damageDirectionOpacity);
+    this.damageDirectionOpacity.opacity = 255;
+    tween(this.damageDirectionOpacity)
+      .delay(DAMAGE_DIRECTION_HOLD_SEC * 0.45)
+      .to(DAMAGE_DIRECTION_HOLD_SEC * 0.55, { opacity: 0 })
+      .start();
+  }
+
   destroy(): void {
     for (const timer of this.temporaryLabelTimers.values()) {
       clearTimeout(timer);
     }
     this.temporaryLabelTimers.clear();
     Tween.stopAllByTarget(this.vignetteOpacity);
+    Tween.stopAllByTarget(this.damageDirectionOpacity);
     Tween.stopAllByTarget(this.medkitFlashOpacity);
     void this.calloutAudioContext?.close();
     this.calloutAudioContext = null;
@@ -1002,6 +1056,33 @@ export class M1Hud {
     const opacity = node.addComponent(UIOpacity);
     opacity.opacity = 0;
     return opacity;
+  }
+
+  /**
+   * 准心外圈一段红弧，默认画在屏幕正上方（即「前方」），
+   * 受击时整个节点按射手方位旋转，省去每次重画 Graphics。
+   */
+  private createDamageDirectionArc(): Node {
+    const node = new Node('DamageDirection');
+    this.setUiLayer(node);
+    node.setParent(this.root);
+    node.setPosition(0, 0, 0);
+    const graphics = node.addComponent(Graphics);
+    const halfArc = (DAMAGE_DIRECTION_ARC_DEG / 2) * (Math.PI / 180);
+    const startAngle = Math.PI / 2 - halfArc;
+    const endAngle = Math.PI / 2 + halfArc;
+    // 先画一层深色底边让红弧在亮天空上也看得清。
+    graphics.strokeColor = new Color(30, 8, 8, 200);
+    graphics.lineWidth = DAMAGE_DIRECTION_LINE_WIDTH_PX + 4;
+    graphics.arc(0, 0, DAMAGE_DIRECTION_RADIUS_PX, startAngle, endAngle, true);
+    graphics.stroke();
+    graphics.strokeColor = Color.fromHEX(new Color(), '#E53935');
+    graphics.lineWidth = DAMAGE_DIRECTION_LINE_WIDTH_PX;
+    graphics.arc(0, 0, DAMAGE_DIRECTION_RADIUS_PX, startAngle, endAngle, true);
+    graphics.stroke();
+    const opacity = node.addComponent(UIOpacity);
+    opacity.opacity = 0;
+    return node;
   }
 
   private createEdgeFlash(colorHex: string): UIOpacity {

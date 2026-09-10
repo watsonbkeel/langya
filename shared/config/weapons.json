@@ -130,7 +130,7 @@
       "overheatSec": 6.0,
       "cooldownSec": 4.0,
       "reloadSec": 8.0,
-      "yawLimitDeg": 70,
+      "yawLimitDeg": 85,
       "pitchMinDeg": -50,
       "pitchMaxDeg": 15,
       "hitboxMultiplier": 1.3,
@@ -143,7 +143,7 @@
         "firstPersonHandsFire": "weapons/fp/type92-hmg-hands-fire",
         "icon": "weapons/icons/type92-hmg"
       },
-      "comment": "AI 队友不可使用，保留给真人玩家"
+      "comment": "AI 队友不可使用，保留给真人玩家。yawLimitDeg 85：机枪位在 x=±20，隔壁路线近处（x=∓20,z=−20）偏角 76°，70° 会把近身敌人锁在视野外"
     }
   }
 }

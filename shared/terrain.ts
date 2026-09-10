@@ -45,8 +45,14 @@ export const SLOPE_RUN_M = 130;
  */
 export const SUMMIT_FLAT_DEPTH_M = 10;
 
-/** 横向坡度：越靠两侧越低，形成山脊感而非一块平板。 */
-const RIDGE_FALLOFF_M = 2.5;
+/**
+ * 横向坡度：越靠两侧越低，形成山脊感而非一块平板。
+ *
+ * 2026-09-10 由 2.5 降到 1.5：山脊落差越大，从一侧机枪位（x=±20）望向对侧
+ * 路线时越容易被中线鼓起的脊背挡住。实测 2.5 时 x=20 看 x=-24 仅 49/60 个
+ * 采样点可见，1.5 时全部可见；1.5 仍能保留两侧缓降的山脊轮廓。
+ */
+const RIDGE_FALLOFF_M = 1.5;
 
 /** 山脊横向影响的半宽（米），超出后不再继续下降。 */
 const RIDGE_HALF_WIDTH_M = 40;
@@ -70,6 +76,15 @@ function smoothStep(t: number): number {
 /**
  * 纵深方向的高度比例（0 = 山脚，1 = 山顶）。
  * z >= -SUMMIT_FLAT_DEPTH_M 的区间是山顶平台，恒为 1。
+ *
+ * 坡面剖面用**凹形**曲线 (1 - t)²：紧贴山顶平台处最陡（约 18°），越往山脚越缓。
+ *
+ * 为什么不用 smoothStep 凸形剖面（2026-09-10 改）：
+ * 凸坡会在山顶平台外缘鼓出一道「地平线」，玩家站在阵地（z=-10，眼高 0.95m）
+ * 只能看到坡面最近约 38m，40~130m 处的敌人全部被坡体本身遮挡；但敌人 AI
+ * 在 180m 内就会开火，导致「一个敌人都看不到就被打死」。凹坡从山顶任一点
+ * 到三条路线全程视线无遮挡（实测 60/60 采样点可见），也更符合「居高临下」的
+ * 阵地防守体验。山顶平台与坡面交接处的折角由地面网格 2m 分段吹平，对 AI 爬坡无影响。
  */
 function depthRatio(z: number): number {
   const distanceDownhill = -z - SUMMIT_FLAT_DEPTH_M;
@@ -80,7 +95,8 @@ function depthRatio(z: number): number {
   if (slopeSpan <= 0) {
     return 1;
   }
-  return 1 - smoothStep(distanceDownhill / slopeSpan);
+  const remaining = 1 - clamp01(distanceDownhill / slopeSpan);
+  return remaining * remaining;
 }
 
 /**

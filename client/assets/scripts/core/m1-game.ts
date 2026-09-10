@@ -865,7 +865,12 @@ export class M1Game {
   private onAllyDamaged(message: AllyDamagedMessage): void {
     this.allyDamageEvents += 1;
     if (this.playerId !== null && message.payload.allyId === this.playerId) {
-      this.hud.showDamage();
+      // 带上射手方向：上了重机枪视角被锁在射界内时，玩家常常看不到
+      // 是谁在打自己，准心旁的红弧至少告诉他子弹从哪边来。
+      this.hud.showDamage(
+        message.payload.fromDir,
+        this.controller.getInputState().aimYaw,
+      );
     } else {
       this.allyRenderer.flashDamaged(message.payload.allyId);
       this.hud.flashAllyDamage(message.payload.allyId);

@@ -29,8 +29,8 @@
     "ambientGroundColor": "#5A5246",
     "ambientSkyIllum": 14000,
     "fogColor": "#C7D2DA",
-    "fogStartM": 55,
-    "fogEndM": 260,
+    "fogStartM": 90,
+    "fogEndM": 320,
     "shadowColor": "#1E2A3266",
     "mountainLayers": [
       {
