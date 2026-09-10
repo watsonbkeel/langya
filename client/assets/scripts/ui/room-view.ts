@@ -75,6 +75,7 @@ export class RoomView {
   private readonly readyButton: Node;
   private readonly startButton: Node;
   private readonly reconnectLabel: Label;
+  private readonly loadingLabel: Label;
 
   private stage: RoomViewStage = 'entry';
   /** 动员页只看一次；没看完之前，所有回 entry 的请求都停在动员页。 */
@@ -132,6 +133,15 @@ export class RoomView {
       // 放到动员页按钮下方，重连提示在任何阶段都不压正文。
       new Vec3(0, -gap * 7.2, 0),
       '#D9B86C',
+    );
+    // 素材预加载进度：贴底、小字、灰色，不抢正文；装完就清空。
+    this.loadingLabel = this.createLabel(
+      this.root,
+      'RoomLoading',
+      '',
+      presentation.helpFontSizePx,
+      new Vec3(0, -presentation.designHeight / 2 + gap * 0.9, 0),
+      '#8FA3AD',
     );
 
     this.briefingPanel = this.createPanel('RoomBriefingPanel');
@@ -248,6 +258,11 @@ export class RoomView {
   /** 断线重连过程中的独立提示，不占用大厅主提示位。 */
   setReconnectNotice(text: string): void {
     this.reconnectLabel.string = text;
+  }
+
+  /** 战斗素材预加载进度，屏幕底部小字；传空串即隐藏。 */
+  setLoadingNotice(text: string): void {
+    this.loadingLabel.string = text;
   }
 
   renderRoomState(payload: RoomStatePayload, selfId: string | null): void {

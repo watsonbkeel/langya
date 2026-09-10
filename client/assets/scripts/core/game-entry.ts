@@ -1,6 +1,7 @@
 import { _decorator, Component } from 'cc';
 
 import { loadM1GameConfig } from '../config/game-config';
+import { tuneDownloader } from './asset-preloader';
 import { M1Game } from './m1-game';
 
 const { ccclass } = _decorator;
@@ -11,6 +12,8 @@ export class GameEntry extends Component {
   private initializationErrorElement: HTMLElement | null = null;
 
   onLoad(): void {
+    // 必须先于第一个 resources.load，否则并发上限已经按默认值排队。
+    tuneDownloader();
     void this.initialize();
   }
 

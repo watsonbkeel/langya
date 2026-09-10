@@ -39,6 +39,7 @@ import { M7Environment } from '../level/m7-environment';
 import { M1Hud } from '../ui/m1-hud';
 import { RoomView } from '../ui/room-view';
 import { WeaponView } from '../weapon/weapon-view';
+import { AssetPreloader, type PreloadProgress } from './asset-preloader';
 
 /** 重连凭证存在会话级存储：刷新页面能回原席位，关掉标签页则不保留。 */
 const RECONNECT_TOKEN_KEY = 'langyashan.reconnectToken';
@@ -113,6 +114,9 @@ export class M1Game {
   private readonly worldInteractions: M3WorldInteractions;
   private readonly sceneDecorations: M4SceneDecorations;
   private readonly environment: M7Environment;
+  private readonly preloader: AssetPreloader;
+  /** 素材没装完时玩家已经点了上阵/开局，装完自动补发。 */
+  private deferredStart: (() => void) | null = null;
   private readonly pendingShots = new Map<number, number>();
   private readonly inputIntervalSec: number;
   private inputAccumulatorSec = 0;
@@ -216,8 +220,10 @@ export class M1Game {
       config.allies.seatCount,
       {
         onSoloStart: () => {
-          this.roomView.setHint('正在建立单人战场…');
-          this.netClient.joinSolo(this.playerName);
+          this.startWhenAssetsReady(() => {
+            this.roomView.setHint('正在建立单人战场…');
+            this.netClient.joinSolo(this.playerName);
+          });
         },
         onCreateRoom: () => {
           this.roomView.setHint('正在创建房间…');
@@ -236,8 +242,10 @@ export class M1Game {
           this.netClient.playerReady();
         },
         onStartMatch: () => {
-          this.roomView.setHint('正在开局…');
-          this.netClient.startMatch();
+          this.startWhenAssetsReady(() => {
+            this.roomView.setHint('正在开局…');
+            this.netClient.startMatch();
+          });
         },
       },
     );
@@ -351,12 +359,51 @@ export class M1Game {
       onMatchEnd: (message) => this.onMatchEnd(message),
     });
 
+    // 各渲染器已经把自己的贴图排进下载队列，这里只是把剩下的也拉起来，
+    // 并把总进度露给大厅：玩家读动员页的这几十秒正好拿来装素材。
+    this.preloader = new AssetPreloader({
+      onProgress: (progress) => this.renderPreloadProgress(progress),
+      onComplete: () => {
+        this.roomView.setLoadingNotice('');
+        const deferred = this.deferredStart;
+        this.deferredStart = null;
+        deferred?.();
+      },
+    });
+    this.preloader.start();
+
     if (typeof window !== 'undefined') {
       window.__LANGYASHAN_M1__ = {
         getState: () => this.getDebugState(),
       };
     }
     this.publishDebugState();
+  }
+
+  private renderPreloadProgress(progress: PreloadProgress): void {
+    if (progress.done || progress.total === 0) {
+      this.roomView.setLoadingNotice('');
+      return;
+    }
+    this.roomView.setLoadingNotice(
+      `正在装载战场素材 ${progress.finished} / ${progress.total}`,
+    );
+  }
+
+  /**
+   * 素材就绪就立刻执行；没就绪先挂起，装完自动补发。
+   * 不这样做的话，手快的玩家会进入一片灰白的战场。
+   */
+  private startWhenAssetsReady(action: () => void): void {
+    if (this.preloader.isDone()) {
+      action();
+      return;
+    }
+    this.deferredStart = action;
+    const progress = this.preloader.getProgress();
+    this.roomView.setHint(
+      `战场素材还在装载（${progress.finished} / ${progress.total}），装完自动上阵`,
+    );
   }
 
   connect(): void {
@@ -638,6 +685,8 @@ export class M1Game {
   }
 
   destroy(): void {
+    this.deferredStart = null;
+    this.preloader.dispose();
     this.cancelScheduledReconnect();
     this.netClient.setOpenHandler(null);
     this.netClient.disconnect();
