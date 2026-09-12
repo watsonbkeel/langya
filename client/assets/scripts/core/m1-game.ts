@@ -658,8 +658,16 @@ export class M1Game {
     }
     this.controller.update(deltaTime);
     this.inputAccumulatorSec += deltaTime;
-    while (this.inputAccumulatorSec >= this.inputIntervalSec) {
-      this.inputAccumulatorSec -= this.inputIntervalSec;
+    // 每帧最多发送一次 input_state。
+    // 早期用 while 补发漏掉的 tick，但掉帧或标签页切回时 deltaTime 会突然变大，
+    // 单帧一次性 burst 出十几条 input_state，撞上服务端反作弊的输入频率上限后被踢下线。
+    // 输入是「最新状态」而非增量指令，补发旧状态没有意义，所以直接丢弃积压：
+    // 余量最多保留一个间隔，保证恢复流畅又不会产生突发流量。
+    if (this.inputAccumulatorSec >= this.inputIntervalSec) {
+      this.inputAccumulatorSec = Math.min(
+        this.inputAccumulatorSec - this.inputIntervalSec,
+        this.inputIntervalSec,
+      );
       if (
         this.connected &&
         this.playerAlive &&

@@ -90,6 +90,39 @@ describe('MessageRateLimiter', () => {
     assert.equal(third.shouldKick, true);
   });
 
+  it('长时间没再超限后累计次数衰减，偶发抖动不会攒成踢出', () => {
+    const limiter = createLimiter({ violationsBeforeKick: 3 });
+
+    // 第 1 秒：卡一次，攒下 1 次超限
+    for (let index = 0; index < CONFIG.inputMessagesPerSec; index += 1) {
+      limiter.check('conn-1', 'input', 1000);
+    }
+    assert.equal(limiter.check('conn-1', 'input', 1000).violations, 1);
+
+    // 隔了很久（超过衰减时长）才再卡一次，应重新从 1 开始计，而不是累加到 2
+    const laterMs = 1000 + 60_000;
+    for (let index = 0; index < CONFIG.inputMessagesPerSec; index += 1) {
+      limiter.check('conn-1', 'input', laterMs);
+    }
+    const verdict = limiter.check('conn-1', 'input', laterMs);
+    assert.equal(verdict.violations, 1);
+    assert.equal(verdict.shouldKick, false);
+  });
+
+  it('持续洪水不受衰减影响，仍会被踢出', () => {
+    const limiter = createLimiter({ violationsBeforeKick: 3 });
+    // 连续三秒每秒都灌爆输入桶：每次超限间隔仅 1 秒，远小于衰减时长
+    for (let second = 0; second < 3; second += 1) {
+      const nowMs = 1000 + second * 1000;
+      for (let index = 0; index < CONFIG.inputMessagesPerSec; index += 1) {
+        limiter.check('conn-1', 'input', nowMs);
+      }
+      const verdict = limiter.check('conn-1', 'input', nowMs);
+      assert.equal(verdict.violations, second + 1);
+      assert.equal(verdict.shouldKick, second === 2);
+    }
+  });
+
   it('不同连接的计数互相隔离', () => {
     const limiter = createLimiter();
     for (let index = 0; index < CONFIG.inputMessagesPerSec; index += 1) {

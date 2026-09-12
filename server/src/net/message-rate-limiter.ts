@@ -21,6 +21,15 @@ export interface MessageRateLimitConfig {
   readonly violationsBeforeKick: number;
 }
 
+/**
+ * 超限计数的衰减时长：连续这么久没有再超限，就把累计次数清零。
+ *
+ * 不衰减的话，正常玩家整局零星攒下的几次超限会一直累加，
+ * 打得够久必然摸到踢出阈值——那不是反作弊，是定时炸弹。
+ * 真正的攻击流量是持续的，根本等不到衰减窗口过去。
+ */
+const VIOLATION_DECAY_MS = 10_000;
+
 /** 限流分桶。协议里的消息类型很多，只有热路径需要单独设限。 */
 export type RateLimitBucket = 'input' | 'fire' | 'other';
 
@@ -49,6 +58,7 @@ export class MessageRateLimiter {
   private readonly config: MessageRateLimitConfig;
   private readonly windows = new Map<string, WindowState>();
   private readonly violations = new Map<string, number>();
+  private readonly lastViolationMs = new Map<string, number>();
 
   constructor(config: MessageRateLimitConfig) {
     assertPositiveInteger(
@@ -103,8 +113,12 @@ export class MessageRateLimiter {
       };
     }
 
-    const violations = (this.violations.get(connectionId) ?? 0) + 1;
+    const previousMs = this.lastViolationMs.get(connectionId);
+    const decayed =
+      previousMs !== undefined && nowMs - previousMs >= VIOLATION_DECAY_MS;
+    const violations = decayed ? 1 : (this.violations.get(connectionId) ?? 0) + 1;
     this.violations.set(connectionId, violations);
+    this.lastViolationMs.set(connectionId, nowMs);
     return {
       allowed: false,
       reason,
@@ -117,6 +131,7 @@ export class MessageRateLimiter {
   forget(connectionId: string): void {
     this.windows.delete(connectionId);
     this.violations.delete(connectionId);
+    this.lastViolationMs.delete(connectionId);
   }
 
   /** 仅用于测试与运维观察。 */
