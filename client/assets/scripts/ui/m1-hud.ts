@@ -111,6 +111,7 @@ export class M1Hud {
   private restartHandler: (() => void) | null = null;
   private respawnHandler: (() => void) | null = null;
   private readonly respawnPrompt: Node;
+  private readonly respawnTitleLabel: Label;
   private weaponName = '步枪';
   private routeHighlightSequence = 0;
   private lowHealthActive = false;
@@ -299,18 +300,19 @@ export class M1Hud {
       presentation.medkitGlowColor,
     );
     this.createCrosshair();
-    // 复活提示：首次阵亡时在屏幕中央亮出，点一下即满血复活 + 装备重置。
+    // 复活提示：阵亡且服务器还有名额时在屏幕中央亮出，点一下即满血复活 + 装备重置。
     // 排在断网遮罩之前，断网时仍被遮罩盖住。
     this.respawnPrompt = new Node('RespawnPrompt');
     this.setUiLayer(this.respawnPrompt);
     this.respawnPrompt.setParent(this.root);
-    this.createOverlayLabel(
+    // 文案里的剩余次数在 showRespawnPrompt 里按实际名额刷新，不写死。
+    this.respawnTitleLabel = this.createOverlayLabel(
       this.respawnPrompt,
       'RespawnTitle',
       presentation.reportLineFontSizePx,
       presentation.spectatorOffsetYPx - presentation.reportLineGapPx * 1.5,
       '#FFD56A',
-    ).string = '你已阵亡，还有一次复活机会';
+    );
     this.createPrimaryButton(
       this.respawnPrompt,
       'RespawnButton',
@@ -526,7 +528,8 @@ export class M1Hud {
     this.respawnHandler = handler;
   }
 
-  showRespawnPrompt(): void {
+  showRespawnPrompt(remaining: number): void {
+    this.respawnTitleLabel.string = `你已阵亡，还有 ${remaining} 次复活机会`;
     this.respawnPrompt.active = true;
   }
 

@@ -321,8 +321,8 @@ async function main() {
       `血包 5（实际 ${selfAlly.medkitsRemaining}）`,
     );
     check(
-      selfAlly.respawnsRemaining === 1,
-      `真人带 1 次复活名额（实际 ${selfAlly.respawnsRemaining}）`,
+      selfAlly.respawnsRemaining === 20,
+      `真人带 20 次复活名额（实际 ${selfAlly.respawnsRemaining}）`,
     );
   }
   // 活着时请求复活必须被拒（invalid_state），证明服务端认识 respawn 消息。

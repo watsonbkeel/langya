@@ -218,10 +218,11 @@ if (allies) {
 // ---------- gameplay.json ----------
 if (gameplay) {
   const p = gameplay.player || {};
-  // 2026-09-10 用户要求：开局血包 5、手榴弹 5、两支长枪各 200 发备弹；真人首次阵亡可复活一次
+  // 2026-09-10 用户要求：开局血包 5、手榴弹 5、两支长枪各 200 发备弹
+  // 2026-09-14 用户要求：真人每局复活名额放宽到 20 次
   if (p.medkitCount !== 5) err(`玩家初始血包 = ${p.medkitCount}，应为 5 个`);
-  if (p.canRespawn !== true) err('玩家 canRespawn 应为 true（真人首次阵亡可选择复活）');
-  if (p.respawnLimit !== 1) err(`玩家 respawnLimit = ${p.respawnLimit}，应为 1（只给一次机会）`);
+  if (p.canRespawn !== true) err('玩家 canRespawn 应为 true（真人阵亡可选择复活）');
+  if (p.respawnLimit !== 20) err(`玩家 respawnLimit = ${p.respawnLimit}，应为 20（每局 20 次复活机会）`);
   if (p.spectateOnDeath !== true) err('玩家 spectateOnDeath 必须为 true（复活机会用完后转观战）');
   if (p.naturalRegen !== 0) err('玩家 naturalRegen 必须为 0（只能靠血包）');
   if (p.aimPitchMinDeg !== -60 || p.aimPitchMaxDeg !== 60) {

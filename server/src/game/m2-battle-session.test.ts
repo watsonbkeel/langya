@@ -570,7 +570,7 @@ describe('M2BattleSession', () => {
     assert.equal(player.grenadesRemaining, throwableCount);
     assert.equal(player.grenadesRemaining, 5);
     assert.equal(player.medkitsRemaining, 5);
-    assert.equal(player.respawnsRemaining, 1);
+    assert.equal(player.respawnsRemaining, config.gameplay.player.respawnLimit);
 
     assert.equal(battle.switchPlayerWeapon(secondary), undefined);
     const switched = battle
@@ -589,8 +589,17 @@ describe('M2BattleSession', () => {
 
   it('真人首次阵亡可复活一次：满血、装备重置、回防守位；第二次拒绝', () => {
     // 队友命中率归零，避免敌人先被打光；真人不开枪，等着被打死。
+    // 本用例专门覆盖「名额用尽后转观战」这条分支，所以把 respawnLimit 压回 1：
+    // 否则全局配置放宽到 20 次后，第二次死亡仍有剩余名额，走不到 no_resource。
     const fragileConfig = {
       ...config,
+      gameplay: {
+        ...config.gameplay,
+        player: {
+          ...config.gameplay.player,
+          respawnLimit: 1,
+        },
+      },
       allies: {
         ...config.allies,
         bot: {
@@ -650,7 +659,10 @@ describe('M2BattleSession', () => {
     const deadSnapshot = battle
       .createSnapshot(tick, nowMs)
       .payload.allies.find((ally) => !ally.isBot);
-    assert.equal(deadSnapshot?.respawnsRemaining, 1);
+    assert.equal(
+      deadSnapshot?.respawnsRemaining,
+      fragileConfig.gameplay.player.respawnLimit,
+    );
     const scoreBefore = battle.createScoreboard().find(
       (entry) => entry.occupantId === 'player-respawn',
     );
@@ -667,6 +679,7 @@ describe('M2BattleSession', () => {
     assert.equal(revived.weapon.reserveAmmo, 200);
     assert.equal(revived.grenadesRemaining, throwableCount);
     assert.equal(revived.medkitsRemaining, config.gameplay.player.medkitCount);
+    // 名额用尽（respawnLimit 为 1 时已耗尽）后不再下发 respawnsRemaining
     assert.equal(revived.respawnsRemaining, undefined);
     assert.deepEqual(
       [...revived.availableWeaponIds].sort(),

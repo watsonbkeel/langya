@@ -1127,7 +1127,7 @@ export class M1Game {
   }
 
   /**
-   * 真人首次阵亡且服务器还给复活名额时，亮出复活按钮并释放鼠标锁（锁着点不到按钮）。
+   * 真人阵亡且服务器还给复活名额时，亮出复活按钮并释放鼠标锁（锁着点不到按钮）。
    * 名额用完（respawnsRemaining 缺省）则只走观战。
    */
   private updateRespawnPrompt(player: AllyState | undefined): void {
@@ -1137,7 +1137,7 @@ export class M1Game {
       return;
     }
     if (!this.hud.respawnPromptVisible) {
-      this.hud.showRespawnPrompt();
+      this.hud.showRespawnPrompt(remaining);
       this.controller.releasePointerLock();
     }
   }
