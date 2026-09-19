@@ -173,6 +173,21 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * 只等待、不记失败的轮询。用于「先后顺序不稳定、但迟早会到」的消息：
+ * 等不到时把判定交给后面的 check，让它报出更具体的原因。
+ */
+async function poll(predicate, timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) {
+      return true;
+    }
+    await sleep(50);
+  }
+  return false;
+}
+
 async function waitFor(label, predicate, timeoutMs = 6000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -209,6 +224,10 @@ async function main() {
       protocolVersion: PROTOCOL_VERSION,
     });
     await waitFor('单人局开局', () => solo.matchStart !== undefined);
+    // room_action_result 与 match_start 的到达先后不稳定：本地直连时
+    // 前者先到，走 WSS + 中转 Nginx 时后者可能先到。凭证是否下发与它们的
+    // 顺序无关，所以这里单独再等一次，避免把「还没到」误判成「没下发」。
+    await poll(() => solo.reconnectToken !== undefined, 3000);
 
     // 1. 单人开局必须下发重连凭证，否则刷新页面这一局就找不回来了
     check(
