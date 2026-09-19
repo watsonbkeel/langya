@@ -99,6 +99,65 @@ describe('MultiplayerRoom', () => {
     );
   });
 
+  it('房间状态带上房主的稳定身份，重连后不变', () => {
+    const room = new MultiplayerRoom({
+      roomCode: 'AB12',
+      hostId: 'player-1',
+      hostName: '玩家一',
+      config,
+    });
+
+    const hostPlayerId = room.seats[0]?.occupant?.id;
+    assert.ok(hostPlayerId);
+    // 客户端靠它判断要不要显示「开始战斗」，不能是会变的连接 id。
+    assert.equal(room.toRoomState().payload.hostPlayerId, hostPlayerId);
+    assert.notEqual(room.toRoomState().payload.hostPlayerId, 'player-1');
+
+    const token = room.seats[0]?.occupant?.reconnectToken;
+    assert.ok(token);
+    room.markDisconnected('player-1');
+    room.reconnect('player-1-new', token);
+    // 房主换了连接，稳定身份不变，且 hostId 要跟上新连接否则开局会被判 not_host。
+    assert.equal(room.toRoomState().payload.hostPlayerId, hostPlayerId);
+    assert.deepEqual(room.start('player-1-new'), { accepted: true });
+  });
+
+  it('房主掉线后把房主交给还在线的真人', () => {
+    const room = new MultiplayerRoom({
+      roomCode: 'AB12',
+      hostId: 'player-1',
+      hostName: '玩家一',
+      config,
+    });
+    room.createHuman('player-2', '玩家二');
+
+    assert.equal(room.hasConnectedHuman(), true);
+    // 房主还在线时不做任何迁移。
+    assert.equal(room.reassignHostIfNeeded(), false);
+
+    room.markDisconnected('player-1');
+    assert.equal(room.reassignHostIfNeeded(), true);
+    assert.equal(room.hostPlayerId, room.seats[1]?.occupant?.id);
+    // 迁移后新房主必须真的能开局，否则房间就是个开不了的死房。
+    assert.deepEqual(room.start('player-2'), { accepted: true });
+  });
+
+  it('所有真人都掉线的房间不再有在线真人，可被回收', () => {
+    const room = new MultiplayerRoom({
+      roomCode: 'AB12',
+      hostId: 'player-1',
+      hostName: '玩家一',
+      config,
+    });
+    room.createHuman('player-2', '玩家二');
+    room.markDisconnected('player-1');
+    room.markDisconnected('player-2');
+
+    assert.equal(room.hasConnectedHuman(), false);
+    // 没有在线真人可接手时不做无意义的迁移。
+    assert.equal(room.reassignHostIfNeeded(), false);
+  });
+
   it('列出真人席位表供战斗会话开局使用', () => {
     const room = new MultiplayerRoom({
       roomCode: 'AB12',

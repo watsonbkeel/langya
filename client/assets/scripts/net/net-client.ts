@@ -256,6 +256,8 @@ function isRoomStateMessage(value: unknown): value is RoomStateMessage {
     (value.payload.status === 'forming' ||
       value.payload.status === 'active' ||
       value.payload.status === 'ended') &&
+    (value.payload.hostPlayerId === undefined ||
+      typeof value.payload.hostPlayerId === 'string') &&
     Array.isArray(value.payload.seats) &&
     value.payload.seats.every(isRoomSeatState)
   );

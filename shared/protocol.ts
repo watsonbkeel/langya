@@ -332,6 +332,13 @@ export interface RoomStatePayload {
   readonly roomId: string;
   readonly status: RoomStatus;
   readonly seats: readonly RoomSeatState[];
+  /**
+   * 房主的**稳定身份**（human:<uuid>），重连换连接也不变。
+   * 客户端据此决定是否显示「开始战斗」，不再自己猜：
+   * 快速匹配在没有可加入房间时会让玩家当房主，靠 action 猜必然猜错。
+   * 可选是为了兼容旧版本客户端/服务端的灰度期。
+   */
+  readonly hostPlayerId?: string;
 }
 
 export type RoomStateMessage = MessageEnvelope<

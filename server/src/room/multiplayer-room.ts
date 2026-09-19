@@ -68,17 +68,64 @@ export class MultiplayerRoom<TRouteId extends RouteId> {
   hostId: string;
   readonly seats: readonly MultiplayerSeat<TRouteId>[];
 
+  /** 房主席位序号，房主退出时可迁移到别的真人席位。 */
+  private hostSeat: number;
   private currentStatus: RoomStatus = 'forming';
 
   constructor(options: MultiplayerRoomOptions<TRouteId>) {
     validateConfig(options.config);
     this.id = options.roomCode;
     this.hostId = options.hostId;
+    this.hostSeat = options.config.playerDefaultSeat;
     this.seats = createSeats(options);
+  }
+
+  get hostSeatIndex(): number {
+    return this.hostSeat;
   }
 
   get status(): RoomStatus {
     return this.currentStatus;
+  }
+
+  /**
+   * 房主的稳定身份（human:<uuid>）。
+   * hostId 是 WebSocket 连接 id，重连就会变；要告诉客户端“谁是房主”
+   * 必须用这个不变的身份，否则重连后房主按钮会错乱。
+   */
+  get hostPlayerId(): string | undefined {
+    return this.seats[this.hostSeat]?.occupant?.id;
+  }
+
+  /** 房间里还有没有处于连接状态的真人。 */
+  hasConnectedHuman(): boolean {
+    return this.seats.some((seat) => seat.occupant?.connected === true);
+  }
+
+  /**
+   * 房主席位空了或人已掉线时，把房主交给还在线的真人。
+   *
+   * 不做迁移的话，房主关掉页面后这个 forming 房间就永远没人能点开始，
+   * 而快速匹配还会继续把新玩家塞进来——表现就是「联机进了房但开不了局」。
+   * 返回是否发生了迁移，调用方据此决定要不要广播房间状态。
+   */
+  reassignHostIfNeeded(): boolean {
+    if (this.currentStatus !== 'forming') {
+      return false;
+    }
+    const current = this.seats[this.hostSeat]?.occupant;
+    if (current && current.connected) {
+      return false;
+    }
+    const candidate = this.seats.find(
+      (seat) => seat.occupant?.connected === true,
+    );
+    if (!candidate || !candidate.occupant) {
+      return false;
+    }
+    this.hostSeat = candidate.index;
+    this.hostId = candidate.occupant.connectionId;
+    return true;
   }
 
   createHuman(
@@ -127,7 +174,8 @@ export class MultiplayerRoom<TRouteId extends RouteId> {
       connectionId: playerId,
       connected: true,
     };
-    if (seat.index === 0) {
+    // 房主重连换了连接 id，hostId 要跟着回写，否则他点「开始战斗」会被判 not_host。
+    if (seat.index === this.hostSeatIndex) {
       this.hostId = playerId;
     }
     return {
@@ -182,6 +230,9 @@ export class MultiplayerRoom<TRouteId extends RouteId> {
       payload: {
         roomId: this.id,
         status: this.currentStatus,
+        ...(this.hostPlayerId === undefined
+          ? {}
+          : { hostPlayerId: this.hostPlayerId }),
         seats: this.seats.map((seat) => ({
           seatIndex: seat.index,
           heroName: seat.heroName,

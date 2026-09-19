@@ -19,6 +19,7 @@ import {
   type PongMessage,
   type RoomAction,
   type RoomActionResultMessage,
+  type RoomStateMessage,
   type ServerMessage,
   type SnapshotMessage,
   type SupplyDropMessage,
@@ -67,7 +68,22 @@ interface ClientSession {
   lastInboundMessageType?: string;
   roomCode?: string;
   reconnectToken?: string;
+  /** 滑动窗口内被丢弃的异常输入帧数（见 noteInputAnomaly）。 */
+  inputAnomalies?: number;
+  /** 当前异常计数窗口的起点。 */
+  inputAnomalyWindowStartMs?: number;
 }
+
+/**
+ * 输入类消息异常的容忍窗口。
+ *
+ * 正常玩家也会在「重连补发、席位被 AI 托管、结算瞬间」这些边界上发出
+ * 服务端当下不接受的输入帧——那不是作弊，直接断开等于把人踢下线。
+ * 所以先丢弃该帧并计数，只有在 5 秒窗口内异常帧超过阈值（说明客户端
+ * 真的在持续发垃圾）才断开连接。
+ */
+const INPUT_ANOMALY_WINDOW_MS = 5_000;
+const INPUT_ANOMALY_KICK_THRESHOLD = 120;
 
 export class GameWebSocketServer {
   private readonly httpServer: Server;
@@ -295,14 +311,23 @@ export class GameWebSocketServer {
           return;
         }
         case CLIENT_MESSAGE_TYPES.inputState: {
+          // 输入帧是「最新状态」而不是增量指令，丢一帧没有任何副作用。
+          // 因此任何一种不可接受都只丢弃该帧 + 计数，绝不因为单帧异常踢人：
+          // 重连补发、席位被 AI 托管、结算瞬间的在途输入都会落到这里。
           const context = this.getBattleContext(session);
-          if (
-            !context ||
-            !this.acceptClientTick(session, message.payload.clientTick) ||
-            !context.runtime.battle.applyInput(message, context.playerId)
-          ) {
-            socket.close(1008, '输入状态无效');
+          if (!context) {
+            this.noteInputAnomaly(session, 'no_battle_context');
+            return;
           }
+          if (!this.acceptClientTick(session, message.payload.clientTick)) {
+            this.noteInputAnomaly(session, 'stale_client_tick');
+            return;
+          }
+          if (!context.runtime.battle.applyInput(message, context.playerId)) {
+            this.noteInputAnomaly(session, 'input_rejected');
+            return;
+          }
+          session.inputAnomalies = 0;
           return;
         }
         case CLIENT_MESSAGE_TYPES.fire: {
@@ -315,7 +340,9 @@ export class GameWebSocketServer {
             return;
           }
           if (!this.acceptClientTick(session, message.payload.clientTick)) {
-            socket.close(1008, 'clientTick 必须严格递增');
+            // 陈旧 tick 多半是重连/结算边界的在途消息，丢弃即可。
+            // 这里刻意不回 fireResult：伪造的回执会把 HUD 的弹药数写花。
+            this.noteInputAnomaly(session, 'stale_client_tick_fire');
             return;
           }
           this.sendFireResolution(
@@ -431,7 +458,12 @@ export class GameWebSocketServer {
         const room = this.roomManager.get(session.roomCode);
         if (room) {
           room.markDisconnected(session.id);
+          // 房主掉线时把房主交给还在线的真人，否则留下的人点不了开始。
+          room.reassignHostIfNeeded();
           this.broadcastRoomState(room);
+          // 还没开局的房间没有战斗运行时，stopBattleIfRoomEmpty 管不到它；
+          // 这里单独回收，避免空壳房永久占用房间码并被快速匹配选中。
+          this.disposeRoomIfAbandoned(room);
         }
         // PRD 7.3：先给 60 秒重连窗口，角色原地保留；
         // 超时由主循环把席位转给 AI 托管，对局继续。
@@ -516,12 +548,18 @@ export class GameWebSocketServer {
       this.sendRoomActionResult(session, 'quick_match', false, 'invalid_state');
       return;
     }
-    const room = this.roomManager
-      .listActive()
-      .find((candidate) =>
-        candidate.status === 'forming' &&
-        candidate.seats.some((seat) => seat.occupant === null),
-      ) ?? this.roomManager.create(session.id, playerName.trim());
+    // 只匹配「还在组队 + 有空位 + 至少还有一个真人在线」的房间。
+    // 少了最后一个条件，房主关掉页面后留下的空壳房会一直被匹配到，
+    // 新玩家进去等一个永远不会点开始的房主——这正是「联机用不了」的一种表现。
+    const room =
+      this.roomManager
+        .listActive()
+        .find(
+          (candidate) =>
+            candidate.status === 'forming' &&
+            candidate.seats.some((seat) => seat.occupant === null) &&
+            candidate.hasConnectedHuman(),
+        ) ?? this.roomManager.create(session.id, playerName.trim());
     if (room.hostId !== session.id) {
       const result = room.createHuman(session.id, playerName.trim());
       if (!result.accepted) {
@@ -657,7 +695,7 @@ export class GameWebSocketServer {
     // 沿用旧的递增校验会把人挡在门外。
     session.tickTracker.reset();
     this.send(session.socket, runtime.createMatchStart());
-    this.send(session.socket, runtime.battle.createRoomState());
+    this.send(session.socket, this.createBattleRoomState(room.id, runtime));
     const nowMs = Date.now();
     this.send(
       session.socket,
@@ -694,6 +732,26 @@ export class GameWebSocketServer {
     return session.roomCode
       ? this.roomManager.get(session.roomCode)
       : undefined;
+  }
+
+  /**
+   * 战斗中的 room_state 由 M2BattleSession 生成，它只认席位不认房主，
+   * 所以在这里统一补上房主的稳定身份，保证大厅阶段和战斗阶段下发的
+   * room_state 字段一致，客户端只按 hostPlayerId 判定房主。
+   */
+  private createBattleRoomState(
+    roomCode: string,
+    runtime: RoomBattleRuntime,
+  ): RoomStateMessage {
+    const message = runtime.battle.createRoomState();
+    const hostPlayerId = this.roomManager.get(roomCode)?.hostPlayerId;
+    if (hostPlayerId === undefined) {
+      return message;
+    }
+    return {
+      type: message.type,
+      payload: { ...message.payload, hostPlayerId },
+    };
   }
 
   private broadcastRoomState(room: MultiplayerRoom<M2RouteId>): void {
@@ -790,8 +848,18 @@ export class GameWebSocketServer {
       return;
     }
     session.joined = true;
+    // 单人局同样要把重连凭证交给客户端，否则刷新/断线后无法用
+    // reconnect 接回原席位，只能从头再来（问题②的一部分）。
+    this.sendRoomActionResult(
+      session,
+      'quick_match',
+      true,
+      undefined,
+      room.id,
+      session.reconnectToken,
+    );
     this.broadcastSnapshots();
-    this.send(session.socket, runtime.battle.createRoomState());
+    this.send(session.socket, this.createBattleRoomState(room.id, runtime));
     this.send(session.socket, runtime.createMatchStart());
     const nowMs = Date.now();
     this.send(
@@ -874,7 +942,7 @@ export class GameWebSocketServer {
           `graceSec=${this.projectConfig.gameplay.server.reconnectGraceSec}`,
       );
     }
-    this.broadcastToRoom(room.id, runtime.battle.createRoomState());
+    this.broadcastToRoom(room.id, this.createBattleRoomState(room.id, runtime));
   }
 
   /** 取会话所在房间的战斗上下文，含稳定战斗身份。 */
@@ -915,7 +983,10 @@ export class GameWebSocketServer {
       return;
     }
     if (!this.acceptClientTick(session, clientTick)) {
-      session.socket.close(1008, 'clientTick 必须严格递增');
+      // 动作类消息有独立回执，陈旧 tick 回一条 invalid_state 让客户端自己重试，
+      // 比直接断开连接友好得多（重连后客户端 tick 会从小值重新开始）。
+      this.noteInputAnomaly(session, 'stale_client_tick_action');
+      this.sendActionResult(session, clientTick, action, 'invalid_state');
       return;
     }
     this.sendActionResult(
@@ -959,6 +1030,41 @@ export class GameWebSocketServer {
     this.idleTimers.set(roomCode, timer);
   }
 
+  /**
+   * 回收「还没开局就没人了」的房间。
+   *
+   * stopBattleIfRoomEmpty 只管已开局的房间（它以战斗运行时为入口），
+   * 于是 forming 阶段建了又走的房间会永久留在 RoomManager 里：
+   * 占用房间码、被快速匹配选中、让后来的人进一个死房。
+   * 这里同样给满重连宽限期——玩家刷新页面时会短暂离线，不能立刻拆房。
+   */
+  private disposeRoomIfAbandoned(room: MultiplayerRoom<M2RouteId>): void {
+    if (room.status !== 'forming') {
+      return;
+    }
+    if (this.hasOnlineClient(room.id) || this.idleTimers.has(room.id)) {
+      return;
+    }
+    const graceMs =
+      this.projectConfig.gameplay.server.reconnectGraceSec * 1000;
+    const timer = setTimeout(() => {
+      this.idleTimers.delete(room.id);
+      const current = this.roomManager.get(room.id);
+      if (!current || current.status !== 'forming') {
+        return;
+      }
+      // 宽限期内有人回来就留着。
+      if (this.hasOnlineClient(room.id)) {
+        return;
+      }
+      current.markEnded();
+      this.roomManager.delete(room.id);
+      console.info(`[room_disposed] room=${room.id} reason=forming_abandoned`);
+    }, graceMs);
+    timer.unref?.();
+    this.idleTimers.set(room.id, timer);
+  }
+
   private hasOnlineClient(roomCode: string): boolean {
     for (const client of this.clients.values()) {
       if (client.roomCode === roomCode) {
@@ -983,6 +1089,8 @@ export class GameWebSocketServer {
     const room = this.roomManager.get(roomCode);
     if (room) {
       room.markEnded();
+      // 房间生命周期到此为止，从管理器移除，避免长期运行后 Map 只增不减。
+      this.roomManager.delete(roomCode);
     }
   }
 
@@ -1069,7 +1177,7 @@ export class GameWebSocketServer {
       startedAtMs: runtime.startedAtMs,
     });
 
-    this.broadcastToRoom(room.id, runtime.battle.createRoomState());
+    this.broadcastToRoom(room.id, this.createBattleRoomState(room.id, runtime));
     this.broadcastToRoom(
       room.id,
       runtime.battle.createSnapshot(
@@ -1094,6 +1202,44 @@ export class GameWebSocketServer {
     clientTick: number,
   ): boolean {
     return session.tickTracker.accept(clientTick);
+  }
+
+  /**
+   * 记录一帧被丢弃的异常输入。
+   *
+   * 设计取舍（问题①的根因修复）：旧实现只要有一帧输入不被接受就
+   * `close(1008)`，于是「重连后补发的旧 tick」「席位被 AI 托管期间的输入」
+   * 「结算瞬间还在路上的输入」全都会把正常玩家踢下线，表现就是偶发断线。
+   * 现在改成：丢弃该帧，并在 5 秒滑动窗口内计数；只有窗口内异常帧数超过
+   * 阈值（客户端持续发无效数据）才断开，正常的边界抖动不会触发。
+   */
+  private noteInputAnomaly(session: ClientSession, reason: string): void {
+    const now = Date.now();
+    const windowStart = session.inputAnomalyWindowStartMs ?? now;
+    if (now - windowStart > INPUT_ANOMALY_WINDOW_MS) {
+      session.inputAnomalyWindowStartMs = now;
+      session.inputAnomalies = 0;
+    } else if (session.inputAnomalyWindowStartMs === undefined) {
+      session.inputAnomalyWindowStartMs = now;
+    }
+    const count = (session.inputAnomalies ?? 0) + 1;
+    session.inputAnomalies = count;
+
+    // 日志按次数降频：第 1 次和每到阈值 1/4 时各打一条，避免刷爆日志。
+    if (count === 1 || count % Math.floor(INPUT_ANOMALY_KICK_THRESHOLD / 4) === 0) {
+      this.logSocketEvent('warn', 'input_dropped', session, {
+        reason,
+        anomalies: count,
+      });
+    }
+
+    if (count >= INPUT_ANOMALY_KICK_THRESHOLD) {
+      this.logSocketEvent('warn', 'input_anomaly_kick', session, {
+        reason,
+        anomalies: count,
+      });
+      session.socket.close(1008, '输入数据持续无效');
+    }
   }
 
   private sendFireResolution(
@@ -1208,7 +1354,10 @@ export class GameWebSocketServer {
 
     const runtime = this.battles.get(roomCode);
     if (roomStateChanged && runtime) {
-      this.broadcastToRoom(roomCode, runtime.battle.createRoomState());
+      this.broadcastToRoom(
+        roomCode,
+        this.createBattleRoomState(roomCode, runtime),
+      );
     }
   }
 

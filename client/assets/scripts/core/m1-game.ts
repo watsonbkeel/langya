@@ -176,8 +176,18 @@ export class M1Game {
   private roomCode: string | null = null;
   private reconnectToken: string | null = null;
   private isHost = false;
+  /** 服务端下发的房主稳定身份，与 playerId 比对得出 isHost。 */
+  private hostPlayerId: string | null = null;
   private matchStarted = false;
   private reconnectPending = false;
+  /**
+   * 本次连接是否已经拿到战斗身份和第一份世界快照。
+   *
+   * 掉线重连后 playerAlive 等旧状态还留在内存里，如果不等恢复完成就继续
+   * 发 input_state，这些帧会落在服务端「尚未入座」的窗口里被丢掉，
+   * 白白累积异常计数。每次连接状态变化都重置。
+   */
+  private battleSynced = false;
   /** 战斗中掉线的时间点，用来在断网遮罩上显示重连剩余秒数。 */
   private combatDisconnectedAtMs: number | null = null;
   private battleCryShown = false;
@@ -440,7 +450,11 @@ export class M1Game {
   }
 
   private onDisconnected(code: number): void {
-    // 1008 是服务器主动踢人（限流 / 非法输入），重连没有意义。
+    // 连接没了，之前那一份战斗同步状态作废，重连后要重新等快照。
+    this.battleSynced = false;
+    // 1008 是服务器主动踢人（限流 / 持续无效输入），重连没有意义。
+    // 注意：偶发的单帧无效输入服务端已经改成丢弃不踢，所以真收到 1008
+    // 基本只剩「消息频率超限」和「持续发垃圾」两类，确实不该自动重连。
     if (code === 1008 || this.matchEnded) {
       this.clearStoredToken();
       if (this.matchStarted && !this.matchEnded) {
@@ -533,7 +547,11 @@ export class M1Game {
       this.hud.setCombatFocus(false, '已回到阵地 · 点击画面继续战斗');
       return;
     }
-    this.enterCombat();
+    // 这里**不再直接 enterCombat**：重连的房间可能还在组队（玩家刷新了
+    // 等待页面），直接进战斗会让房间界面凭空消失。
+    // 服务端紧接着必定补发 room_state，由它的 status 决定去大厅还是去战场。
+    this.roomView.setStage('room');
+    this.roomView.setHint('已重新连上，正在恢复房间状态…');
   }
 
   private onRoomActionResult(message: RoomActionResultMessage): void {
@@ -571,18 +589,19 @@ export class M1Game {
     }
 
     if (payload.action === 'create_room') {
-      this.isHost = true;
-      this.roomView.setHost(true);
+      // 建房的一定是房主，先乐观显示；随后到达的 room_state 会用
+      // hostPlayerId 复核一次，两者一致所以不会闪。
+      this.setHost(true);
       this.roomView.setStage('room');
       this.roomView.setHint('把房间码告诉同伴，人齐后点开始战斗');
     } else if (
       payload.action === 'join_room' ||
       payload.action === 'quick_match'
     ) {
-      this.isHost = false;
-      this.roomView.setHost(false);
+      // 这里**不写死** isHost：快速匹配在无房可进时服务端会让玩家当房主。
+      // 真正的房主身份等 room_state.hostPlayerId 下发后再定。
       this.roomView.setStage('room');
-      this.roomView.setHint('已进入房间，等待房主开始');
+      this.roomView.setHint('已进入房间，等待开始');
     } else if (payload.action === 'reconnect') {
       this.onReconnected();
     } else if (payload.action === 'player_ready') {
@@ -670,6 +689,10 @@ export class M1Game {
       );
       if (
         this.connected &&
+        // 重连后要等身份和世界快照都回来才发输入：
+        // 否则这些帧会打在服务端「还没入座」的窗口上，被白白丢弃。
+        this.battleSynced &&
+        this.playerId !== null &&
         this.playerAlive &&
         !this.matchEnded &&
         this.matchPhase !== 'ended'
@@ -734,20 +757,70 @@ export class M1Game {
     // 入座后服务端才会带上战斗身份；大厅阶段没有，保持 null。
     // 注意不要在这里回退成 clientId —— 两者不是一套 id，混用会认错人。
     this.playerId = message.payload.connection.playerId ?? null;
+    // 身份是后到的：如果 room_state 先到，这里补判一次房主。
+    this.refreshHostFlag();
+  }
+
+  /** 已知房主身份 + 已知自己身份时，才敢下结论。两者任一后到都要补判。 */
+  private refreshHostFlag(): void {
+    if (this.hostPlayerId === null || this.playerId === null) {
+      return;
+    }
+    this.setHost(this.hostPlayerId === this.playerId);
   }
 
   private onRoomState(message: RoomStateMessage): void {
     this.roomSeatCount = message.payload.seats.length;
     this.roomCode = message.payload.roomId;
+    // 房主身份以服务端下发的稳定 playerId 为准。
+    // 之前按「发起的是建房还是加入」来猜，快速匹配在没有可加入房间时
+    // 服务端会让玩家当房主，客户端却把自己当成客人，开始按钮就不见了。
+    if (message.payload.hostPlayerId !== undefined) {
+      this.hostPlayerId = message.payload.hostPlayerId;
+      this.refreshHostFlag();
+    }
     this.roomView.renderRoomState(message.payload, this.playerId);
-    // 服务器说这局已经开打，大厅就该让位。
+    // 服务器说这局已经开打，大厅就该让位；还在组队就要留在大厅，
+    // 刷新页面重连回一个 forming 房间时不能误把人丢进战斗画面。
     if (message.payload.status === 'active') {
       this.enterCombat();
+    } else if (message.payload.status === 'forming') {
+      this.returnToLobby();
     }
     this.publishDebugState();
   }
 
+  private setHost(isHost: boolean): void {
+    this.isHost = isHost;
+    this.roomView.setHost(isHost);
+  }
+
+  /**
+   * 回到「等待队友」的大厅状态。
+   *
+   * 重连到一个尚未开局的房间会走这里：之前无条件 enterCombat，
+   * 玩家刷新等待房间后会被丢进一个还没开始的战场，等于房间消失。
+   * forming 状态的房间广播很频繁（每次有人进出都发），所以只在
+   * 「当前以为自己在战斗中」时才做一次切换，避免反复覆盖提示文案。
+   */
+  private returnToLobby(): void {
+    if (!this.matchStarted) {
+      return;
+    }
+    this.matchStarted = false;
+    this.roomView.setStage('room');
+    this.roomView.setHint(
+      this.isHost
+        ? '把房间码告诉同伴，人齐后点开始战斗'
+        : '已进入房间，等待房主开始',
+    );
+    this.controller.setLobbyMode(true);
+    this.hud.setCombatFocus(false, '');
+  }
+
   private onWorldSnapshot(message: WorldSnapshotMessage): void {
+    // 收到第一份世界快照 = 本次连接的战斗状态已恢复，可以开始发输入了。
+    this.battleSynced = true;
     this.snapshotTick = message.payload.tick;
     this.latestAllies = message.payload.allies;
     const player = this.findPlayer(message.payload.allies);
