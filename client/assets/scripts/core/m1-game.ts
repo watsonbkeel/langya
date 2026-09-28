@@ -178,6 +178,8 @@ export class M1Game {
   private isHost = false;
   /** 服务端下发的房主稳定身份，与 playerId 比对得出 isHost。 */
   private hostPlayerId: string | null = null;
+  /** 重连后大厅提示还停在「正在恢复房间状态…」，等首份 forming room_state 来收尾。 */
+  private lobbyHintPendingRestore = false;
   private matchStarted = false;
   private reconnectPending = false;
   /**
@@ -552,6 +554,7 @@ export class M1Game {
     // 服务端紧接着必定补发 room_state，由它的 status 决定去大厅还是去战场。
     this.roomView.setStage('room');
     this.roomView.setHint('已重新连上，正在恢复房间状态…');
+    this.lobbyHintPendingRestore = true;
   }
 
   private onRoomActionResult(message: RoomActionResultMessage): void {
@@ -805,17 +808,29 @@ export class M1Game {
    */
   private returnToLobby(): void {
     if (!this.matchStarted) {
+      // 刷新等待房间重连后，onReconnected 留下的「正在恢复房间状态…」
+      // 在第一份 forming room_state 到达时收尾一次；之后的广播不再碰提示，
+      // 否则会盖掉「已准备」这类状态文案（线上实测那句话会一直挂着）。
+      if (this.lobbyHintPendingRestore) {
+        this.lobbyHintPendingRestore = false;
+        this.refreshLobbyHint();
+      }
       return;
     }
     this.matchStarted = false;
+    this.lobbyHintPendingRestore = false;
     this.roomView.setStage('room');
+    this.refreshLobbyHint();
+    this.controller.setLobbyMode(true);
+    this.hud.setCombatFocus(false, '');
+  }
+
+  private refreshLobbyHint(): void {
     this.roomView.setHint(
       this.isHost
         ? '把房间码告诉同伴，人齐后点开始战斗'
         : '已进入房间，等待房主开始',
     );
-    this.controller.setLobbyMode(true);
-    this.hud.setCombatFocus(false, '');
   }
 
   private onWorldSnapshot(message: WorldSnapshotMessage): void {
