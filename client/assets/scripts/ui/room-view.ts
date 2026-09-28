@@ -322,7 +322,7 @@ export class RoomView {
 
   destroy(): void {
     if (this.keyHandler && typeof window !== 'undefined') {
-      window.removeEventListener('keydown', this.keyHandler);
+      window.removeEventListener('keydown', this.keyHandler, true);
       this.keyHandler = null;
     }
     this.root.destroy();
@@ -552,6 +552,11 @@ export class RoomView {
   /**
    * Cocos 没有现成的轻量文本框，房间码这种短输入直接接管键盘事件即可，
    * 比引入 EditBox 预制体更符合「场景由代码生成」的约束。
+   *
+   * 必须挂在**捕获阶段**：引擎把 keydown 监听绑在 GameCanvas 上，且处理函数
+   * 第一行就 stopPropagation()。玩家一旦点过画布上的任何按钮，焦点就落在
+   * 画布上，之后的按键在冒泡阶段根本到不了 window——线上实测「输入房间码」
+   * 界面按键毫无反应就是这个原因。本地能用只是因为刚打开页面焦点还在 body。
    */
   private bindKeyboard(): void {
     if (typeof window === 'undefined') {
@@ -560,6 +565,7 @@ export class RoomView {
     this.keyHandler = (event: KeyboardEvent) => {
       if (this.stage === 'briefing') {
         if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
           this.acceptBriefing();
         }
         return;
@@ -568,14 +574,18 @@ export class RoomView {
         return;
       }
       if (event.key === 'Enter') {
+        event.preventDefault();
         this.submitCode();
         return;
       }
       if (event.key === 'Escape') {
+        event.preventDefault();
         this.setStage('entry');
         return;
       }
       if (event.key === 'Backspace') {
+        // 拦掉浏览器默认行为，否则个别浏览器会把 Backspace 当成「后退」。
+        event.preventDefault();
         this.codeInput = this.codeInput.slice(0, -1);
         this.refreshCodeInput();
         return;
@@ -588,7 +598,7 @@ export class RoomView {
         }
       }
     };
-    window.addEventListener('keydown', this.keyHandler);
+    window.addEventListener('keydown', this.keyHandler, true);
   }
 
   private refreshCodeInput(): void {
