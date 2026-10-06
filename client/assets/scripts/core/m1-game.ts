@@ -591,6 +591,19 @@ export class M1Game {
       this.writeStoredToken(payload.reconnectToken);
     }
 
+    // 入房回执可能晚于 active / match_start（单人开局已在线上复现）。
+    // 凭证仍需保存，但不能让迟到的大厅动作把战斗界面退回等待房间。
+    if (
+      this.matchStarted &&
+      (payload.action === 'create_room' ||
+        payload.action === 'join_room' ||
+        payload.action === 'quick_match')
+    ) {
+      this.enterCombat();
+      this.publishDebugState();
+      return;
+    }
+
     if (payload.action === 'create_room') {
       // 建房的一定是房主，先乐观显示；随后到达的 room_state 会用
       // hostPlayerId 复核一次，两者一致所以不会闪。
@@ -615,11 +628,12 @@ export class M1Game {
 
   /** 大厅收起、战斗输入接管。单人和多人走同一条路径。 */
   private enterCombat(): void {
+    // 隐藏大厅可重复执行；焦点提示等开局表现仍只执行一次。
+    this.roomView.setStage('hidden');
     if (this.matchStarted) {
       return;
     }
     this.matchStarted = true;
-    this.roomView.setStage('hidden');
     this.controller.setLobbyMode(false);
     this.hud.setCombatFocus(false, '点击画面进入战斗');
   }
